@@ -1808,59 +1808,7 @@ impl Home {
                 self.recovery_method_modal = None;
                 Task::none()
             }
-            Message::View(ViewMessage::ShowCreateCube(show)) => {
-                // A queued navigation event must not clear the name while a
-                // passkey ceremony or PIN creation task is using it.
-                if !show && self.creating_cube {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.restore_hub = false;
-                self.restore_phone = false;
-                if show {
-                    self.pending_bitcoin_import = None;
-                    self.create_network_menu = false;
-                    self.create_network_selection_pending = false;
-                    // Opening the form picks the default afresh: whether the
-                    // passkey path can demonstrate a backup depends on the
-                    // Connect session, which can change between visits.
-                    self.passkey_mode = self.default_passkey_mode();
-                }
-                // Both list screens navigate to the same form, so both carry
-                // the flag, including an empty Launcher on a fresh device.
-                let toggled = match &mut self.state {
-                    State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
-                        *create_cube = show;
-                        true
-                    }
-                    _ => false,
-                };
-                if toggled && !show {
-                    self.create_network_menu = false;
-                    self.create_network_selection_pending = false;
-                    self.pending_bitcoin_import = None;
-                    self.create_cube_name = coincube_ui::component::form::Value::default();
-                    self.create_cube_pin = pin_input::PinInput::new();
-                    self.create_cube_pin_confirm = pin_input::PinInput::new();
-                    // Back to the default unlock method — dismissing the
-                    // form discards the custody choice along with the rest
-                    // of the inputs, so reopening it starts from the same
-                    // state a first-time user sees.
-                    self.passkey_mode = self.default_passkey_mode();
-                    // Clear recovery words when exiting create cube flow
-                    for word in &mut self.recovery_words {
-                        word.clear();
-                        word.shrink_to_fit();
-                    }
-                    self.recovery_active_index = None;
-                    // Show every Cube when returning from an empty filter.
-                    if !self.has_cube_list() {
-                        self.catalog.filter = launcher_catalog::NetworkFilter::All;
-                        self.catalog.page = 0;
-                    }
-                }
-                Task::none()
-            }
+            Message::View(ViewMessage::ShowCreateCube(show)) => self.show_create_cube(show),
             Message::View(ViewMessage::ShowRestoreAllNetworks(all)) => {
                 self.restore_all_networks = all;
                 Task::none()
@@ -2001,149 +1949,7 @@ impl Home {
                 self.error = None;
                 Task::none()
             }
-            Message::View(ViewMessage::CreateCube) => {
-                if self.creating_cube {
-                    return Task::none();
-                }
-                if self.pending_bitcoin_import.is_some() && self.network != ChainId::Bitcoin {
-                    self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
-                    return Task::none();
-                }
-
-                if self.create_cube_name.value.trim().is_empty() {
-                    return Task::none();
-                }
-
-                // Enforce per-network Cube limit based on Connect account tier.
-                // Includes remote cubes (on server but not local) since the
-                // limit applies across all devices.
-                let cube_count = self.total_cube_count();
-                let limit = self.cube_limit();
-                if cube_count >= limit {
-                    self.error = Some(self.cube_limit_error());
-                    return Task::none();
-                }
-
-                // Defensive guard: even if `self.passkey_mode` somehow became
-                // true while the feature is disabled (stale state, manual
-                // toggle before a hot-reload, etc.), always fall through to
-                // the PIN flow when the compile-time flag is off.
-                let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_CREATION_AVAILABLE;
-
-                if !passkey_mode {
-                    // PIN-based flow: validate PIN
-                    if !self.create_cube_pin.is_complete() {
-                        self.error = Some("Please enter all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if !self.create_cube_pin_confirm.is_complete() {
-                        self.error = Some("Please confirm all 4 PIN digits".to_string());
-                        return Task::none();
-                    }
-                    if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
-                        self.error = Some("PIN codes do not match".to_string());
-                        return Task::none();
-                    }
-                }
-
-                self.creating_cube = true;
-                let cube_name = self.create_cube_name.value.trim().to_string();
-
-                // Pre-generate the UUID before the async task so that retries
-                // reuse the same identifier (idempotent creation). The
-                // PIN-based path re-reads it in `finalize_cube_creation`, which
-                // is what actually persists the Cube.
-                let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-
-                let without_recovery = if passkey_mode {
-                    // Passkey-based Cube creation.
-                    // On macOS: use the native AuthenticationServices framework
-                    //   (WKWebView doesn't have the entitlement to call WebAuthn).
-                    // On other platforms: fall back to the embedded webview ceremony.
-                    #[cfg(target_os = "macos")]
-                    {
-                        let user_id_bytes = cube_id.as_bytes().to_vec();
-                        match crate::services::passkey::macos::NativePasskeyCeremony::register(
-                            passkey_svc::RP_ID,
-                            &user_id_bytes,
-                            &cube_name,
-                        ) {
-                            Ok(ceremony) => {
-                                self.native_passkey_ceremony = Some(ceremony);
-                                Task::none()
-                            }
-                            Err(e) => {
-                                self.creating_cube = false;
-                                self.error = Some(coincube_ui::localized_format!(
-                                    "Failed to start passkey ceremony: {}",
-                                    "No se pudo iniciar la verificación con llave de acceso: {}",
-                                    e
-                                ));
-                                Task::none()
-                            }
-                        }
-                    }
-                    #[cfg(not(target_os = "macos"))]
-                    {
-                        let user_id = cube_id.to_string();
-                        let ceremony = PasskeyCeremony::new(CeremonyMode::Register {
-                            user_id,
-                            user_name: cube_name,
-                        });
-                        self.passkey_ceremony = Some(ceremony);
-                        // Extract the window ID so we can attach the webview
-                        iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
-                    }
-                } else {
-                    // PIN-based Cube creation, phase 1: generate the seed into
-                    // memory and hand it to the backup step.
-                    //
-                    // Nothing is written to disk here — not the seed file, not
-                    // the settings entry, not the OS-keystore device secret.
-                    // All of that is `finalize_cube_creation`, which runs only
-                    // once the user has demonstrated a backup or explicitly
-                    // bypassed. Abandoning the step therefore leaves no
-                    // half-created Cube and no orphaned keystore entry.
-                    //
-                    // Probe the keystore **here**, before a single word is
-                    // shown. `finalize_cube_creation` mints the real secret,
-                    // and if the keystore is unusable it refuses (I7) — but
-                    // refusing there means the user has already written down
-                    // twelve words and verified three of them, for a Cube that
-                    // will never exist. Probe early, mint late: `capability()`
-                    // writes and deletes a throwaway item, so it stakes no
-                    // claim on this Cube and leaves 3a's
-                    // no-writes-until-committed property intact.
-                    if let unlock::device_secret::Capability::Unavailable(why) =
-                        unlock::device_secret::capability()
-                    {
-                        self.creating_cube = false;
-                        self.error = Some(why);
-                        return Task::none();
-                    }
-                    match MasterSigner::generate(self.network.bitcoin_network()) {
-                        Ok(signer) => {
-                            self.creating_cube = false;
-                            self.error = None;
-                            self.enter_creation_backup(
-                                signer.words().iter().map(|w| w.to_string()).collect(),
-                            );
-                            Task::none()
-                        }
-                        Err(e) => {
-                            self.creating_cube = false;
-                            self.error = Some(coincube_ui::localized_format!(
-                                "Failed to generate master seed signer: {}",
-                                "No se pudo generar el firmante de la frase maestra: {}",
-                                e
-                            ));
-                            Task::none()
-                        }
-                    }
-                };
-
-                without_recovery
-            }
+            Message::View(ViewMessage::CreateCube) => self.begin_create_cube(),
             Message::StartRecovery => {
                 self.state = State::RecoveryInput;
                 self.recovery_active_index = None;
@@ -2303,142 +2109,7 @@ impl Home {
                 self.abandon_creation_backup();
                 Task::none()
             }
-            Message::CubeCreated(res) => {
-                self.creating_cube = false;
-                match res {
-                    Ok(cube) => {
-                        // UUID was consumed successfully — reset it so the next
-                        // cube creation starts with a fresh identifier.
-                        self.pending_cube_id = None;
-                        self.ghost_import = None;
-                        let ghost_claim = self.ghost_claim.take();
-                        // The operation identity is now durable on this exact
-                        // Cube. A fresh creation must not reuse it.
-                        self.pending_bitcoin_import = None;
-                        self.open_created_cube = None;
-                        self.open_after_registration = None;
-                        // Clear any previous error state
-                        self.error = None;
-                        // Reset form fields
-                        self.create_cube_name = coincube_ui::component::form::Value::default();
-                        self.create_cube_pin = pin_input::PinInput::new();
-                        self.create_cube_pin_confirm = pin_input::PinInput::new();
-                        // The creation-time backup step's copy of the seed has
-                        // done its job — scrub it. The step itself is replaced
-                        // just below, and `reload()` refreshes that list.
-                        self.scrub_creation_seed();
-                        self.scrub_creation_kit();
-                        self.reset_creation_backup_progress();
-                        // The passkey registration has been consumed by the
-                        // write; holding it would let a second finalize insert
-                        // a duplicate.
-                        self.pending_passkey_cube = None;
-                        // Off the backup hub now, not when the reload lands:
-                        // in between, its Continue and "I'll do this later"
-                        // would act on a Cube that is already written.
-                        let parked = std::mem::take(&mut self.creation_backup_cubes);
-                        if matches!(self.state, State::CreationBackup(_)) {
-                            self.state = State::Cubes {
-                                cubes: parked,
-                                create_cube: false,
-                                source: self.network,
-                            };
-                        }
-                        // Explicitly clear recovery words to prevent mnemonic from lingering in memory
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        let reload_task = self.reload();
-
-                        // If logged in, register the new cube with the Connect API.
-                        // A Cube whose Recovery Kit was made during creation is
-                        // already registered — the Kit could not have been
-                        // uploaded otherwise — and registering again would
-                        // create a duplicate server-side record.
-                        if cube.remote_synced {
-                            tracing::debug!(
-                                "Cube {} was registered by the creation Recovery Kit — \
-                                 skipping the post-creation registration",
-                                cube.id
-                            );
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
-                            *uuid == cube.id && *account != self.connect_account_id()
-                        }) {
-                            // A ghost's Cube reclaims a registration in the
-                            // account that listed it. Signed out or switched
-                            // since, it stays local: the catch-up sync
-                            // registers it once that account is back.
-                            tracing::warn!(
-                                "Cube {} reclaimed a Connect registration from another session; \
-                                 not registering it with the current account",
-                                cube.id
-                            );
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        } else if let Some(client) = self.connect_account.authenticated_client() {
-                            let cube_id = cube.id.clone();
-                            let cube_network = cube.network;
-                            let req = RegisterCubeRequest {
-                                uuid: cube.id.clone(),
-                                name: cube.name.clone(),
-                                network: cube.api_network_string(),
-                                // Monotonic upgrade-only report: a freshly-
-                                // created Cube has no Vault yet, so omit the
-                                // flag (server default `false`). It flips later
-                                // via the vault-creation re-report
-                                // (PLAN-duress-vault-gate PR 3).
-                                has_vault: cube.holds_vault().then_some(true),
-                                spark_stable_balance: cube.spark_stable_balance,
-                            };
-                            self.open_after_registration = Some(cube.id.clone());
-                            let register_task = Task::perform(
-                                async move {
-                                    client.register_cube(req).await.map_err(|e| e.to_string())
-                                },
-                                move |result| Message::CubeRemoteRegistered {
-                                    cube_id,
-                                    network: cube_network,
-                                    result,
-                                },
-                            );
-                            Task::batch([reload_task, register_task])
-                        } else {
-                            self.open_created_cube = Some(cube.id.clone());
-                            reload_task
-                        }
-                    }
-                    Err(e) => {
-                        self.ghost_claim = None;
-                        // Retain pending_cube_id so a retry reuses the same UUID,
-                        // unless a Kit was saved for it (`abandon_creation_backup`).
-                        // Clear recovery words on error too
-                        for word in &mut self.recovery_words {
-                            word.clear();
-                            word.shrink_to_fit();
-                        }
-                        self.recovery_active_index = None;
-                        // A failed write means no Cube exists, so the seed the
-                        // user was just shown is worthless — scrub it and send
-                        // them back to the create form, where the error below
-                        // is visible and a retry generates a fresh seed.
-                        if matches!(self.state, State::CreationBackup(_)) {
-                            self.abandon_creation_backup();
-                        } else {
-                            self.scrub_creation_seed();
-                        }
-                        self.error = Some(coincube_ui::localized_format!(
-                            "Failed to create Cube: {}",
-                            "No se pudo crear el Cube: {}",
-                            e
-                        ));
-                        Task::none()
-                    }
-                }
-            }
+            Message::CubeCreated(res) => self.cube_created(res),
             // --- Passkey ceremony flow ---
             Message::PasskeyWindowId(window_id) => {
                 if let Some(ceremony) = &mut self.passkey_ceremony {
@@ -3570,6 +3241,352 @@ impl Home {
 
             _ => self.update_delete_modal(message),
         }
+    }
+
+    fn show_create_cube(&mut self, show: bool) -> Task<Message> {
+        // A queued navigation event must not clear the name while a
+        // passkey ceremony or PIN creation task is using it.
+        if !show && self.creating_cube {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.restore_hub = false;
+        self.restore_phone = false;
+        if show {
+            self.pending_bitcoin_import = None;
+            self.create_network_menu = false;
+            self.create_network_selection_pending = false;
+            // Opening the form picks the default afresh: whether the
+            // passkey path can demonstrate a backup depends on the
+            // Connect session, which can change between visits.
+            self.passkey_mode = self.default_passkey_mode();
+        }
+        // Both list screens navigate to the same form, so both carry
+        // the flag, including an empty Launcher on a fresh device.
+        let toggled = match &mut self.state {
+            State::Cubes { create_cube, .. } | State::NoCube { create_cube } => {
+                *create_cube = show;
+                true
+            }
+            _ => false,
+        };
+        if toggled && !show {
+            self.create_network_menu = false;
+            self.create_network_selection_pending = false;
+            self.pending_bitcoin_import = None;
+            self.create_cube_name = coincube_ui::component::form::Value::default();
+            self.create_cube_pin = pin_input::PinInput::new();
+            self.create_cube_pin_confirm = pin_input::PinInput::new();
+            // Back to the default unlock method — dismissing the
+            // form discards the custody choice along with the rest
+            // of the inputs, so reopening it starts from the same
+            // state a first-time user sees.
+            self.passkey_mode = self.default_passkey_mode();
+            // Clear recovery words when exiting create cube flow
+            for word in &mut self.recovery_words {
+                word.clear();
+                word.shrink_to_fit();
+            }
+            self.recovery_active_index = None;
+            // Show every Cube when returning from an empty filter.
+            if !self.has_cube_list() {
+                self.catalog.filter = launcher_catalog::NetworkFilter::All;
+                self.catalog.page = 0;
+            }
+        }
+        Task::none()
+    }
+
+    fn begin_create_cube(&mut self) -> Task<Message> {
+        if self.creating_cube {
+            return Task::none();
+        }
+        if self.pending_bitcoin_import.is_some() && self.network != ChainId::Bitcoin {
+            self.set_error("Import a Bitcoin wallet from the Bitcoin Cube list.");
+            return Task::none();
+        }
+
+        if self.create_cube_name.value.trim().is_empty() {
+            return Task::none();
+        }
+
+        // Enforce per-network Cube limit based on Connect account tier.
+        // Includes remote cubes (on server but not local) since the
+        // limit applies across all devices.
+        let cube_count = self.total_cube_count();
+        let limit = self.cube_limit();
+        if cube_count >= limit {
+            self.error = Some(self.cube_limit_error());
+            return Task::none();
+        }
+
+        // Defensive guard: even if `self.passkey_mode` somehow became
+        // true while the feature is disabled (stale state, manual
+        // toggle before a hot-reload, etc.), always fall through to
+        // the PIN flow when the compile-time flag is off.
+        let passkey_mode = self.passkey_mode && feature_flags::PASSKEY_CREATION_AVAILABLE;
+
+        if !passkey_mode && !self.validate_creation_pin() {
+            return Task::none();
+        }
+
+        self.creating_cube = true;
+        let cube_name = self.create_cube_name.value.trim().to_string();
+
+        // Pre-generate the UUID before the async task so that retries
+        // reuse the same identifier (idempotent creation). The
+        // PIN-based path re-reads it in `finalize_cube_creation`, which
+        // is what actually persists the Cube.
+        let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
+
+        if passkey_mode {
+            self.start_creation_passkey(cube_id, cube_name)
+        } else {
+            self.start_pin_creation_backup()
+        }
+    }
+
+    fn validate_creation_pin(&mut self) -> bool {
+        // PIN-based flow: validate PIN
+        if !self.create_cube_pin.is_complete() {
+            self.error = Some("Please enter all 4 PIN digits".to_string());
+            return false;
+        }
+        if !self.create_cube_pin_confirm.is_complete() {
+            self.error = Some("Please confirm all 4 PIN digits".to_string());
+            return false;
+        }
+        if self.create_cube_pin.value() != self.create_cube_pin_confirm.value() {
+            self.error = Some("PIN codes do not match".to_string());
+            return false;
+        }
+        true
+    }
+
+    fn start_creation_passkey(&mut self, cube_id: uuid::Uuid, cube_name: String) -> Task<Message> {
+        // Passkey-based Cube creation.
+        // On macOS: use the native AuthenticationServices framework
+        //   (WKWebView doesn't have the entitlement to call WebAuthn).
+        // On other platforms: fall back to the embedded webview ceremony.
+        #[cfg(target_os = "macos")]
+        {
+            let user_id_bytes = cube_id.as_bytes().to_vec();
+            match crate::services::passkey::macos::NativePasskeyCeremony::register(
+                passkey_svc::RP_ID,
+                &user_id_bytes,
+                &cube_name,
+            ) {
+                Ok(ceremony) => {
+                    self.native_passkey_ceremony = Some(ceremony);
+                    Task::none()
+                }
+                Err(e) => {
+                    self.creating_cube = false;
+                    self.error = Some(coincube_ui::localized_format!(
+                        "Failed to start passkey ceremony: {}",
+                        "No se pudo iniciar la verificación con llave de acceso: {}",
+                        e
+                    ));
+                    Task::none()
+                }
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let user_id = cube_id.to_string();
+            let ceremony = PasskeyCeremony::new(CeremonyMode::Register {
+                user_id,
+                user_name: cube_name,
+            });
+            self.passkey_ceremony = Some(ceremony);
+            // Extract the window ID so we can attach the webview
+            iced_wry::extract_window_id(None).map(Message::PasskeyWindowId)
+        }
+    }
+
+    fn start_pin_creation_backup(&mut self) -> Task<Message> {
+        // PIN-based Cube creation, phase 1: generate the seed into
+        // memory and hand it to the backup step.
+        //
+        // Nothing is written to disk here — not the seed file, not
+        // the settings entry, not the OS-keystore device secret.
+        // All of that is `finalize_cube_creation`, which runs only
+        // once the user has demonstrated a backup or explicitly
+        // bypassed. Abandoning the step therefore leaves no
+        // half-created Cube and no orphaned keystore entry.
+        //
+        // Probe the keystore **here**, before a single word is
+        // shown. `finalize_cube_creation` mints the real secret,
+        // and if the keystore is unusable it refuses (I7) — but
+        // refusing there means the user has already written down
+        // twelve words and verified three of them, for a Cube that
+        // will never exist. Probe early, mint late: `capability()`
+        // writes and deletes a throwaway item, so it stakes no
+        // claim on this Cube and leaves 3a's
+        // no-writes-until-committed property intact.
+        if let unlock::device_secret::Capability::Unavailable(why) =
+            unlock::device_secret::capability()
+        {
+            self.creating_cube = false;
+            self.error = Some(why);
+            return Task::none();
+        }
+        match MasterSigner::generate(self.network.bitcoin_network()) {
+            Ok(signer) => {
+                self.creating_cube = false;
+                self.error = None;
+                self.enter_creation_backup(signer.words().iter().map(|w| w.to_string()).collect());
+                Task::none()
+            }
+            Err(e) => {
+                self.creating_cube = false;
+                self.error = Some(coincube_ui::localized_format!(
+                    "Failed to generate master seed signer: {}",
+                    "No se pudo generar el firmante de la frase maestra: {}",
+                    e
+                ));
+                Task::none()
+            }
+        }
+    }
+
+    fn cube_created(&mut self, res: Result<CubeSettings, String>) -> Task<Message> {
+        self.creating_cube = false;
+        match res {
+            Ok(cube) => self.apply_created_cube(cube),
+            Err(e) => self.handle_cube_creation_error(e),
+        }
+    }
+
+    fn apply_created_cube(&mut self, cube: CubeSettings) -> Task<Message> {
+        // UUID was consumed successfully — reset it so the next
+        // cube creation starts with a fresh identifier.
+        self.pending_cube_id = None;
+        self.ghost_import = None;
+        let ghost_claim = self.ghost_claim.take();
+        // The operation identity is now durable on this exact
+        // Cube. A fresh creation must not reuse it.
+        self.pending_bitcoin_import = None;
+        self.open_created_cube = None;
+        self.open_after_registration = None;
+        // Clear any previous error state
+        self.error = None;
+        // Reset form fields
+        self.create_cube_name = coincube_ui::component::form::Value::default();
+        self.create_cube_pin = pin_input::PinInput::new();
+        self.create_cube_pin_confirm = pin_input::PinInput::new();
+        // The creation-time backup step's copy of the seed has
+        // done its job — scrub it. The step itself is replaced
+        // just below, and `reload()` refreshes that list.
+        self.scrub_creation_seed();
+        self.scrub_creation_kit();
+        self.reset_creation_backup_progress();
+        // The passkey registration has been consumed by the
+        // write; holding it would let a second finalize insert
+        // a duplicate.
+        self.pending_passkey_cube = None;
+        // Off the backup hub now, not when the reload lands:
+        // in between, its Continue and "I'll do this later"
+        // would act on a Cube that is already written.
+        let parked = std::mem::take(&mut self.creation_backup_cubes);
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.state = State::Cubes {
+                cubes: parked,
+                create_cube: false,
+                source: self.network,
+            };
+        }
+        // Explicitly clear recovery words to prevent mnemonic from lingering in memory
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        let reload_task = self.reload();
+
+        // If logged in, register the new cube with the Connect API.
+        // A Cube whose Recovery Kit was made during creation is
+        // already registered — the Kit could not have been
+        // uploaded otherwise — and registering again would
+        // create a duplicate server-side record.
+        if cube.remote_synced {
+            tracing::debug!(
+                "Cube {} was registered by the creation Recovery Kit — \
+                 skipping the post-creation registration",
+                cube.id
+            );
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
+            *uuid == cube.id && *account != self.connect_account_id()
+        }) {
+            // A ghost's Cube reclaims a registration in the
+            // account that listed it. Signed out or switched
+            // since, it stays local: the catch-up sync
+            // registers it once that account is back.
+            tracing::warn!(
+                "Cube {} reclaimed a Connect registration from another session; \
+                 not registering it with the current account",
+                cube.id
+            );
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        } else if let Some(client) = self.connect_account.authenticated_client() {
+            let cube_id = cube.id.clone();
+            let cube_network = cube.network;
+            let req = RegisterCubeRequest {
+                uuid: cube.id.clone(),
+                name: cube.name.clone(),
+                network: cube.api_network_string(),
+                // Monotonic upgrade-only report: a freshly-
+                // created Cube has no Vault yet, so omit the
+                // flag (server default `false`). It flips later
+                // via the vault-creation re-report
+                // (PLAN-duress-vault-gate PR 3).
+                has_vault: cube.holds_vault().then_some(true),
+                spark_stable_balance: cube.spark_stable_balance,
+            };
+            self.open_after_registration = Some(cube.id.clone());
+            let register_task = Task::perform(
+                async move { client.register_cube(req).await.map_err(|e| e.to_string()) },
+                move |result| Message::CubeRemoteRegistered {
+                    cube_id,
+                    network: cube_network,
+                    result,
+                },
+            );
+            Task::batch([reload_task, register_task])
+        } else {
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
+        }
+    }
+
+    fn handle_cube_creation_error(&mut self, e: String) -> Task<Message> {
+        self.ghost_claim = None;
+        // Retain pending_cube_id so a retry reuses the same UUID,
+        // unless a Kit was saved for it (`abandon_creation_backup`).
+        // Clear recovery words on error too
+        for word in &mut self.recovery_words {
+            word.clear();
+            word.shrink_to_fit();
+        }
+        self.recovery_active_index = None;
+        // A failed write means no Cube exists, so the seed the
+        // user was just shown is worthless — scrub it and send
+        // them back to the create form, where the error below
+        // is visible and a retry generates a fresh seed.
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.abandon_creation_backup();
+        } else {
+            self.scrub_creation_seed();
+        }
+        self.error = Some(coincube_ui::localized_format!(
+            "Failed to create Cube: {}",
+            "No se pudo crear el Cube: {}",
+            e
+        ));
+        Task::none()
     }
 
     fn checked_result(&mut self, for_chain: ChainId, res: Result<State, String>) -> Task<Message> {
