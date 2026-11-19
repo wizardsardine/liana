@@ -6626,7 +6626,13 @@ impl App {
                 Message::ReceiveAddress(_) => {
                     let reread = panel.reread_after_reservation();
                     let route = self.route_dispatch(message);
-                    return Task::batch([route, reread]);
+                    let settled = self
+                        .panels
+                        .imported_bitcoin
+                        .as_mut()
+                        .map(|panel| panel.reread_if_reserved_elsewhere())
+                        .unwrap_or_else(Task::none);
+                    return Task::batch([route, reread, settled]);
                 }
                 _ => {}
             }
@@ -7217,10 +7223,12 @@ impl App {
                     ));
                 }
                 if let (true, Some(daemon)) = (address, self.daemon.clone()) {
+                    // An imported Vault's split address is reserved under the
+                    // shared lock, like every other Vault receive address.
+                    let (data_dir, wallet) = (self.cache.datadir_path.clone(), wallet.clone());
                     tasks.push(Task::perform(
                         async move {
-                            daemon
-                                .get_new_address()
+                            state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
                                 .await
                                 .map(|result| result.address.to_string())
                                 .map_err(|e| format!("Couldn't get an address: {}", e))
