@@ -1796,96 +1796,116 @@ impl GUI {
                 self.close_connect_sheet()
             }
             ConnectSheetMessage::SelectSection(section) => {
-                let origin = sheet.origin.clone();
-                let was_duress = matches!(
-                    sheet.page,
-                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                );
-                let section = if section == ConnectSheetSection::Duress
-                    && !self
-                        .connect_panel(&origin)
-                        .is_some_and(|account| account.is_authenticated() && account.show_duress())
-                {
-                    ConnectSheetSection::Account
-                } else {
-                    section
-                };
-                if was_duress && section != ConnectSheetSection::Duress {
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                if let Some(sheet) = &mut self.connect_sheet {
-                    sheet.page = ConnectSheetPage::Sections(section);
-                }
-                self.load_connect_section(&origin, section)
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.select_connect_sheet_section(origin, was_duress, section)
             }
             ConnectSheetMessage::OpenAuthentication { create_account } => {
-                if matches!(
-                    sheet.page,
-                    ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                ) {
-                    let origin = sheet.origin.clone();
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                if let Some(sheet) = &mut self.connect_sheet {
-                    sheet.page = ConnectSheetPage::Authentication;
-                }
-                let update =
-                    self.connect_sheet_message(ConnectSheetMessage::Account(if create_account {
-                        crate::app::view::ConnectAccountMessage::CreateAccount
-                    } else {
-                        crate::app::view::ConnectAccountMessage::Init
-                    }));
-                Task::batch([
-                    update,
-                    iced_runtime::task::widget(
-                        iced::advanced::widget::operation::focusable::focus(
-                            iced::advanced::widget::Id::new(
-                                crate::app::view::connect::EMAIL_INPUT_ID,
-                            ),
-                        ),
-                    ),
-                ])
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.open_connect_sheet_authentication(origin, was_duress, create_account)
             }
             ConnectSheetMessage::Account(message) => {
-                let origin = sheet.origin.clone();
-                let plan_navigation = matches!(
-                    &message,
-                    crate::app::view::ConnectAccountMessage::OpenPlanBilling
-                        | crate::app::view::ConnectAccountMessage::ComparePlans(_)
-                        | crate::app::view::ConnectAccountMessage::RenewCurrentPlan
-                );
-                if plan_navigation
-                    && matches!(
-                        sheet.page,
-                        ConnectSheetPage::Sections(ConnectSheetSection::Duress)
-                    )
-                {
-                    self.scrub_connect_sheet_duress(&origin);
-                }
-                let inner = match origin.source {
-                    tab::PreferencesSource::Home => {
-                        tab::Message::Launch(home::Message::View(if plan_navigation {
-                            home::ViewMessage::ConnectSheetAccount(message)
-                        } else {
-                            home::ViewMessage::ConnectAccount(message)
-                        }))
-                    }
-                    tab::PreferencesSource::App(_) => tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::ConnectAccount(message),
-                    )),
-                };
-                let task = self.update(Message::Pane(
-                    origin.pane,
-                    pane::Message::tab(origin.tab_id, inner),
-                ));
-                if plan_navigation && self.overlay_origin_is_current(&origin) {
-                    if let Some(sheet) = &mut self.connect_sheet {
-                        sheet.page = ConnectSheetPage::Sections(ConnectSheetSection::PlanBilling);
-                    }
-                }
-                task
+                let (origin, was_duress) = Self::connect_sheet_route(sheet);
+                self.dispatch_connect_sheet_account(origin, was_duress, message)
             }
         }
+    }
+
+    fn connect_sheet_route(sheet: &ConnectSheet) -> (OverlayOrigin, bool) {
+        (
+            sheet.origin.clone(),
+            matches!(
+                sheet.page,
+                ConnectSheetPage::Sections(ConnectSheetSection::Duress)
+            ),
+        )
+    }
+
+    fn select_connect_sheet_section(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        section: ConnectSheetSection,
+    ) -> Task<Message> {
+        let section = if section == ConnectSheetSection::Duress
+            && !self
+                .connect_panel(&origin)
+                .is_some_and(|account| account.is_authenticated() && account.show_duress())
+        {
+            ConnectSheetSection::Account
+        } else {
+            section
+        };
+        if was_duress && section != ConnectSheetSection::Duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        if let Some(sheet) = &mut self.connect_sheet {
+            sheet.page = ConnectSheetPage::Sections(section);
+        }
+        self.load_connect_section(&origin, section)
+    }
+
+    fn open_connect_sheet_authentication(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        create_account: bool,
+    ) -> Task<Message> {
+        if was_duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        if let Some(sheet) = &mut self.connect_sheet {
+            sheet.page = ConnectSheetPage::Authentication;
+        }
+        let update = self.connect_sheet_message(ConnectSheetMessage::Account(if create_account {
+            crate::app::view::ConnectAccountMessage::CreateAccount
+        } else {
+            crate::app::view::ConnectAccountMessage::Init
+        }));
+        Task::batch([
+            update,
+            iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                iced::advanced::widget::Id::new(crate::app::view::connect::EMAIL_INPUT_ID),
+            )),
+        ])
+    }
+
+    fn dispatch_connect_sheet_account(
+        &mut self,
+        origin: OverlayOrigin,
+        was_duress: bool,
+        message: crate::app::view::ConnectAccountMessage,
+    ) -> Task<Message> {
+        let plan_navigation = matches!(
+            &message,
+            crate::app::view::ConnectAccountMessage::OpenPlanBilling
+                | crate::app::view::ConnectAccountMessage::ComparePlans(_)
+                | crate::app::view::ConnectAccountMessage::RenewCurrentPlan
+        );
+        if plan_navigation && was_duress {
+            self.scrub_connect_sheet_duress(&origin);
+        }
+        let inner = match origin.source {
+            tab::PreferencesSource::Home => {
+                tab::Message::Launch(home::Message::View(if plan_navigation {
+                    home::ViewMessage::ConnectSheetAccount(message)
+                } else {
+                    home::ViewMessage::ConnectAccount(message)
+                }))
+            }
+            tab::PreferencesSource::App(_) => tab::Message::Run(AppMessage::View(
+                crate::app::view::Message::ConnectAccount(message),
+            )),
+        };
+        let task = self.update(Message::Pane(
+            origin.pane,
+            pane::Message::tab(origin.tab_id, inner),
+        ));
+        if plan_navigation && self.overlay_origin_is_current(&origin) {
+            if let Some(sheet) = &mut self.connect_sheet {
+                sheet.page = ConnectSheetPage::Sections(ConnectSheetSection::PlanBilling);
+            }
+        }
+        task
     }
 
     fn scrub_connect_sheet_duress(&mut self, origin: &OverlayOrigin) {
