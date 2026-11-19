@@ -274,20 +274,10 @@ fn history_match(
 ) -> HistoryMatch {
     let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
     let mut in_progress = false;
-    for p in payments.iter().filter(|p| {
-        is_outgoing(&p.direction)
-            && p.timestamp as i64 >= floor
-            && match pending.token_amount {
-                // A token payment's sats figure is zero: match its token amount.
-                Some(token_amount) => p.token_amount == Some(token_amount),
-                None => p.amount_sat.unsigned_abs() == pending.amount_sat,
-            }
-            // Another invoice's payment is not this one.
-            && match (pending.invoice.as_deref(), p.details.invoice.as_deref()) {
-                (Some(ours), Some(theirs)) => same_invoice(ours, theirs),
-                _ => true,
-            }
-    }) {
+    for p in payments
+        .iter()
+        .filter(|p| matches_pending_send(p, pending, floor))
+    {
         if p.status.eq_ignore_ascii_case("completed") {
             // Identity unconfirmed: the row names no invoice to compare.
             if pending.invoice.is_some() && p.details.invoice.is_none() {
@@ -305,6 +295,25 @@ fn history_match(
     } else {
         HistoryMatch::None
     }
+}
+
+fn matches_pending_send(
+    p: &coincube_spark_protocol::PaymentSummary,
+    pending: &PendingSend,
+    floor: i64,
+) -> bool {
+    is_outgoing(&p.direction)
+        && p.timestamp as i64 >= floor
+        && match pending.token_amount {
+            // A token payment's sats figure is zero: match its token amount.
+            Some(token_amount) => p.token_amount == Some(token_amount),
+            None => p.amount_sat.unsigned_abs() == pending.amount_sat,
+        }
+        // Another invoice's payment is not this one.
+        && match (pending.invoice.as_deref(), p.details.invoice.as_deref()) {
+            (Some(ours), Some(theirs)) => same_invoice(ours, theirs),
+            _ => true,
+        }
 }
 
 /// What the history says about the payment the bridge accepted as
