@@ -3457,6 +3457,48 @@ impl GUI {
         }
     }
 
+    fn open_app_preferences(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        source: tab::PreferencesSource,
+    ) -> Task<Message> {
+        let current_source = self.panes.get(pane_id).and_then(|pane| {
+            pane.tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .and_then(tab::Tab::preferences_source)
+        });
+        if current_source != Some(source) {
+            return Task::none();
+        }
+        let focus = Some(iced::advanced::widget::Id::new(match source {
+            tab::PreferencesSource::Home => "tenshu.launcher.catalog:control:settings",
+            tab::PreferencesSource::App(_) => crate::app::view::nav::shell::APP_PREFERENCES_ID,
+        }));
+        let Some(origin) = self.overlay_origin(focus) else {
+            return Task::none();
+        };
+        if origin.pane != pane_id || origin.tab_id != tab_id || origin.source != source {
+            return Task::none();
+        }
+        self.preferences_sheet = Some(PreferencesSheet {
+            origin,
+            page: PreferencesPageState::default(),
+            worldview_changed: None,
+            about: about::AboutState::default(),
+            diagnostics: diagnostics::DiagnosticsState::load(&self.config.coincube_directory),
+        });
+        self.connect_sheet = None;
+        self.publish_preferences_sheet();
+        Task::batch([
+            iced_runtime::task::widget(iced::advanced::widget::operation::focusable::focus(
+                iced::advanced::widget::Id::new("tenshu.preferences.close"),
+            )),
+            self.worldview_action(worldview::Action::Refresh),
+        ])
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3582,46 +3624,7 @@ impl GUI {
                 let tab::Message::OpenAppPreferences(source) = *inner else {
                     unreachable!();
                 };
-                let current_source = self.panes.get(pane_id).and_then(|pane| {
-                    pane.tabs
-                        .iter()
-                        .find(|tab| tab.id == tab_id)
-                        .and_then(tab::Tab::preferences_source)
-                });
-                if current_source != Some(source) {
-                    return Task::none();
-                }
-                let focus = Some(iced::advanced::widget::Id::new(match source {
-                    tab::PreferencesSource::Home => "tenshu.launcher.catalog:control:settings",
-                    tab::PreferencesSource::App(_) => {
-                        crate::app::view::nav::shell::APP_PREFERENCES_ID
-                    }
-                }));
-                let Some(origin) = self.overlay_origin(focus) else {
-                    return Task::none();
-                };
-                if origin.pane != pane_id || origin.tab_id != tab_id || origin.source != source {
-                    return Task::none();
-                }
-                self.preferences_sheet = Some(PreferencesSheet {
-                    origin,
-                    page: PreferencesPageState::default(),
-                    worldview_changed: None,
-                    about: about::AboutState::default(),
-                    diagnostics: diagnostics::DiagnosticsState::load(
-                        &self.config.coincube_directory,
-                    ),
-                });
-                self.connect_sheet = None;
-                self.publish_preferences_sheet();
-                Task::batch([
-                    iced_runtime::task::widget(
-                        iced::advanced::widget::operation::focusable::focus(
-                            iced::advanced::widget::Id::new("tenshu.preferences.close"),
-                        ),
-                    ),
-                    self.worldview_action(worldview::Action::Refresh),
-                ])
+                self.open_app_preferences(pane_id, tab_id, source)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
