@@ -707,21 +707,7 @@ impl Installer {
                 "Installer chain differs from the Cube chain".to_string(),
             ));
         }
-        // A claim target unlocks the same way as its source Cube (decision
-        // 2026-10-29): its seed file is the source Cube's mnemonic, written
-        // under the source's PIN, or for a passkey source under the password
-        // derived from the passkey's seed. With neither in this session the
-        // target could not be opened, so refuse here rather than at the write.
-        if let UserFlow::ClaimBlake2b { from_cube } = &user_flow {
-            if crate::app::session::seed_file_password(&from_cube.cube).is_none() {
-                return Err(Error::Unexpected(if from_cube.cube.is_passkey_cube() {
-                    "Unlock this Cube with its passkey again, then create the copy.".to_string()
-                } else {
-                    "Reopen this Cube and try again — its PIN isn't available in this session."
-                        .to_string()
-                }));
-            }
-        }
+        Self::validate_claim_seed_session(&user_flow)?;
         if chain.is_blake2b()
             && !matches!(
                 user_flow,
@@ -818,6 +804,47 @@ impl Installer {
         )
     }
 
+    fn validate_claim_seed_session(user_flow: &UserFlow) -> Result<(), Error> {
+        // A claim target unlocks the same way as its source Cube (decision
+        // 2026-10-29): its seed file is the source Cube's mnemonic, written
+        // under the source's PIN, or for a passkey source under the password
+        // derived from the passkey's seed. With neither in this session the
+        // target could not be opened, so refuse here rather than at the write.
+        if let UserFlow::ClaimBlake2b { from_cube } = user_flow {
+            if crate::app::session::seed_file_password(&from_cube.cube).is_none() {
+                return Err(Error::Unexpected(if from_cube.cube.is_passkey_cube() {
+                    "Unlock this Cube with its passkey again, then create the copy.".to_string()
+                } else {
+                    "Reopen this Cube and try again — its PIN isn't available in this session."
+                        .to_string()
+                }));
+            }
+        }
+        Ok(())
+    }
+
+    fn set_claim_context(context: &mut Context, user_flow: &UserFlow) {
+        // A claim target is a Cube of its own — its own id, its own Connect
+        // Cube, its own datadir (I7) — built from the source Cube's descriptor
+        // and seed. Both are settled here rather than collected by a step:
+        // there is nothing for the user to enter that the source Cube does not
+        // already answer.
+        if let UserFlow::ClaimBlake2b { from_cube } = user_flow {
+            // Derived from the source Cube, not minted: an install that fails
+            // after the seed write leaves a file bound to this id, and a retry
+            // with a fresh one could never open it. See `claim::target_cube_id`.
+            context.cube_id = Some(claim::target_cube_id(from_cube));
+            // Named here as well as minted: the installer's exit seam mints the
+            // Cube from `(cube_id, cube_name)` and falls back to a *fresh*
+            // UUID when either is absent — which would leave the target's seed
+            // file bound to a Cube id no Cube has, and nothing able to open it.
+            context.cube_name = Some(from_cube.default_target_alias());
+            context.descriptor = Some(from_cube.descriptor.clone());
+            context.wallet_alias = from_cube.default_target_alias();
+            context.claim_source = Some((**from_cube).clone());
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn build_for_chain(
         destination_path: CoincubeDirectory,
@@ -853,25 +880,7 @@ impl Installer {
             && cube_settings
                 .as_ref()
                 .is_some_and(|cube| cube.network == chain && cube.vault_wallet_id.is_none());
-        // A claim target is a Cube of its own — its own id, its own Connect
-        // Cube, its own datadir (I7) — built from the source Cube's descriptor
-        // and seed. Both are settled here rather than collected by a step:
-        // there is nothing for the user to enter that the source Cube does not
-        // already answer.
-        if let UserFlow::ClaimBlake2b { from_cube } = &user_flow {
-            // Derived from the source Cube, not minted: an install that fails
-            // after the seed write leaves a file bound to this id, and a retry
-            // with a fresh one could never open it. See `claim::target_cube_id`.
-            context.cube_id = Some(claim::target_cube_id(from_cube));
-            // Named here as well as minted: the installer's exit seam mints the
-            // Cube from `(cube_id, cube_name)` and falls back to a *fresh*
-            // UUID when either is absent — which would leave the target's seed
-            // file bound to a Cube id no Cube has, and nothing able to open it.
-            context.cube_name = Some(from_cube.default_target_alias());
-            context.descriptor = Some(from_cube.descriptor.clone());
-            context.wallet_alias = from_cube.default_target_alias();
-            context.claim_source = Some((**from_cube).clone());
-        }
+        Self::set_claim_context(&mut context, &user_flow);
         // Inherit the open Cube's PIN when the installer was launched from
         // inside one (`SetupVault` from the app or the loader). Every seed the
         // installer writes is encrypted, so without this there is nothing to
@@ -1370,31 +1379,7 @@ impl Installer {
             self.navigation_error = None;
         }
         match message {
-            Message::HardwareWallets(msg) => {
-                let update = matches!(&msg, &HardwareWalletMessage::List(_));
-                match self.hws.update(msg) {
-                    Ok(cmd) => {
-                        let task_1 = cmd.map(Message::HardwareWallets);
-                        let mut task_2 = Task::none();
-                        if update {
-                            task_2 = self
-                                .steps
-                                .get_mut(self.current)
-                                .expect("There is always a step")
-                                .update(
-                                    &mut self.hws,
-                                    // We notify downstream that the the list have been updated
-                                    Message::HardwareWalletUpdate,
-                                );
-                        }
-                        Task::batch(vec![task_1, task_2])
-                    }
-                    Err(e) => {
-                        error!("{}", e);
-                        Task::none()
-                    }
-                }
-            }
+            Message::HardwareWallets(msg) => self.update_hardware_wallets(msg),
             Message::Clipboard(s) => clipboard::write(s),
             Message::FocusAction(id) => iced::widget::operation::focus(id),
             Message::OpenUrl(url) => {
@@ -1409,159 +1394,149 @@ impl Installer {
                 self.restore_exit = Some(destination);
                 Task::done(Message::BackToApp(self.network))
             }
-            Message::Install => {
-                #[cfg(feature = "mcp-proposals")]
-                if self.context.mcp_proposal.is_some() {
-                    if self.proposal_install_dispatched {
-                        return Task::none();
-                    }
-                    self.proposal_install_dispatched = true;
-                }
-                // A restored Cube with no Vault is its seed alone.
-                if self.context.bitcoin_config.chain.is_blake2b()
-                    && self.context.descriptor.is_none()
-                    && self.context.recovered_signer.is_none()
-                {
-                    return Task::done(Message::Installed(
-                        None,
-                        Err(Error::Unexpected(
-                            "Bitcoin Blake2b requires a local Connect-backed Vault".into(),
-                        )),
-                    ));
-                }
-                let _cmd = self
-                    .steps
-                    .get_mut(self.current)
-                    .expect("There is always a step")
-                    .update(&mut self.hws, message);
-                if let Some(descriptor) = self.context.descriptor.as_ref() {
-                    let wallet_id = WalletId::generate(descriptor);
-                    let context = self.context.clone();
-                    let signer = self.signer.clone();
-                    let task = Task::perform(
-                        with_wallet_id(
-                            wallet_id.clone(),
-                            install_local_wallet(context, wallet_id, signer),
-                        ),
-                        |(id, res)| Message::Installed(Some(id), res.map(Some)),
-                    );
-                    if self.context.bitcoin_config.chain.is_blake2b() {
-                        let (task, handle) = task.abortable();
-                        self.fork_install_task = Some(handle.abort_on_drop());
-                        task
-                    } else {
-                        task
-                    }
-                } else {
-                    let ctx = self.context.clone();
-                    Task::perform(
-                        async move {
-                            // We must persist the recovered signer so the Cube signer and
-                            // Spark can load it from the datadir on next startup.
-                            // Even though there is no vault descriptor, the seed is needed.
-                            if ctx.restored_imported_wallet.is_some()
-                                && ctx.recovered_signer.is_none()
-                            {
-                                // Descriptor-only restore into an already unlocked
-                                // Cube: retain its seed and current credentials.
-                                if ctx.cube_id.is_none() {
-                                    return Err(Error::Unexpected(
-                                        "Imported wallet restore is missing its originating Cube."
-                                            .into(),
-                                    ));
-                                }
-                                return ensure_gui_config(
-                                    &ctx.coincube_directory
-                                        .network_directory(ctx.bitcoin_config.chain),
-                                    false,
-                                );
-                            }
-                            let recovered = ctx.recovered_signer.as_ref().ok_or_else(|| {
-                                Error::Unexpected(
-                                    "Seed-only install is missing the recovered signer".into(),
-                                )
-                            })?;
-                            let password = ctx.restore_pin.as_ref().ok_or_else(|| {
-                                Error::Unexpected(
-                                    "Seed-only install is missing the restore PIN".into(),
-                                )
-                            })?;
-
-                            persist_seed_only_install(
-                                recovered,
-                                &ctx.coincube_directory,
-                                ctx.bitcoin_config.chain,
-                                password.as_str(),
-                                ctx.seed_cube_id(),
-                                seed_device_secret(&ctx)?.as_ref(),
-                            )
-                        },
-                        |res| match res {
-                            Ok(_) => Message::Installed(None, Ok(None)),
-                            Err(e) => Message::Installed(None, Err(e)),
-                        },
-                    )
-                }
-            }
-            Message::Installed(wallet_id, Err(e)) => {
-                #[cfg(feature = "mcp-proposals")]
-                if self.context.mcp_proposal.is_some() {
-                    self.finish_proposal_failure(if matches!(e, Error::CreationAdmission(_)) {
-                        "No new installation was admitted. Return to the launcher and prepare a fresh proposal. Inspect any prior admitted attempt before retrying."
-                    } else {
-                        "Vault installation could not finish. Partial local data is retained. Return to the launcher and inspect the outcome before retrying."
-                    });
-                }
-                #[cfg(feature = "mcp-proposals")]
-                let may_cleanup = self.context.mcp_proposal.is_none()
-                    && !matches!(e, Error::CreationAdmission(_));
-                #[cfg(not(feature = "mcp-proposals"))]
-                let may_cleanup = true;
-                // A rejected admission owns no wallet to delete. An admitted
-                // proposal may have partial durable state: preserve it and its
-                // tombstone for inspection rather than guessing at rollback.
-                if let Some(wallet_id) = wallet_id.as_ref().filter(|_| may_cleanup) {
-                    let network_directory = self
-                        .context
-                        .coincube_directory
-                        .network_directory(self.context.bitcoin_config.chain);
-                    // In case of failure during install, block the thread to
-                    // deleted the data_dir/network directory in order to start clean again.
-                    warn!("Installation failed. Cleaning up the network directory.");
-                    if let Err(e) = Handle::current()
-                        .block_on(delete::delete_failed_install(&network_directory, wallet_id))
-                    {
-                        error!(
-                            "Failed to completely clean the network directory (path: '{}'): {}",
-                            network_directory.path().to_string_lossy(),
-                            e
-                        );
-                    } else {
-                        warn!(
-                            "Successfully cleaned network directory at '{}'.",
-                            network_directory.path().to_string_lossy()
-                        );
-                        #[cfg(feature = "mcp-proposals")]
-                        {
-                            // Keep the shared lease during cleanup. Ordinary
-                            // native setup may retry the same Context afterward.
-                            if let Ok(mut lease) = self.context.creation_lease.lock() {
-                                lease.take();
-                            }
-                        }
-                    }
-                }
-                self.steps
-                    .get_mut(self.current)
-                    .expect("There is always a step")
-                    .update(&mut self.hws, Message::Installed(wallet_id, Err(e)))
-            }
+            Message::Install => self.start_install(),
+            Message::Installed(wallet_id, Err(e)) => self.handle_install_failure(wallet_id, e),
             _ => self
                 .steps
                 .get_mut(self.current)
                 .expect("There is always a step")
                 .update(&mut self.hws, message),
         }
+    }
+
+    fn update_hardware_wallets(&mut self, msg: HardwareWalletMessage) -> Task<Message> {
+        let update = matches!(&msg, &HardwareWalletMessage::List(_));
+        match self.hws.update(msg) {
+            Ok(cmd) => {
+                let task_1 = cmd.map(Message::HardwareWallets);
+                let mut task_2 = Task::none();
+                if update {
+                    task_2 = self
+                        .steps
+                        .get_mut(self.current)
+                        .expect("There is always a step")
+                        .update(
+                            &mut self.hws,
+                            // We notify downstream that the the list have been updated
+                            Message::HardwareWalletUpdate,
+                        );
+                }
+                Task::batch(vec![task_1, task_2])
+            }
+            Err(e) => {
+                error!("{}", e);
+                Task::none()
+            }
+        }
+    }
+
+    fn start_install(&mut self) -> Task<Message> {
+        #[cfg(feature = "mcp-proposals")]
+        if self.context.mcp_proposal.is_some() {
+            if self.proposal_install_dispatched {
+                return Task::none();
+            }
+            self.proposal_install_dispatched = true;
+        }
+        // A restored Cube with no Vault is its seed alone.
+        if self.context.bitcoin_config.chain.is_blake2b()
+            && self.context.descriptor.is_none()
+            && self.context.recovered_signer.is_none()
+        {
+            return Task::done(Message::Installed(
+                None,
+                Err(Error::Unexpected(
+                    "Bitcoin Blake2b requires a local Connect-backed Vault".into(),
+                )),
+            ));
+        }
+        let _cmd = self
+            .steps
+            .get_mut(self.current)
+            .expect("There is always a step")
+            .update(&mut self.hws, Message::Install);
+        if let Some(descriptor) = self.context.descriptor.as_ref() {
+            let wallet_id = WalletId::generate(descriptor);
+            let context = self.context.clone();
+            let signer = self.signer.clone();
+            let task = Task::perform(
+                with_wallet_id(
+                    wallet_id.clone(),
+                    install_local_wallet(context, wallet_id, signer),
+                ),
+                |(id, res)| Message::Installed(Some(id), res.map(Some)),
+            );
+            if self.context.bitcoin_config.chain.is_blake2b() {
+                let (task, handle) = task.abortable();
+                self.fork_install_task = Some(handle.abort_on_drop());
+                task
+            } else {
+                task
+            }
+        } else {
+            let ctx = self.context.clone();
+            Task::perform(
+                async move { persist_no_descriptor_install(&ctx) },
+                |res| match res {
+                    Ok(_) => Message::Installed(None, Ok(None)),
+                    Err(e) => Message::Installed(None, Err(e)),
+                },
+            )
+        }
+    }
+
+    fn handle_install_failure(&mut self, wallet_id: Option<WalletId>, e: Error) -> Task<Message> {
+        #[cfg(feature = "mcp-proposals")]
+        if self.context.mcp_proposal.is_some() {
+            self.finish_proposal_failure(if matches!(e, Error::CreationAdmission(_)) {
+                "No new installation was admitted. Return to the launcher and prepare a fresh proposal. Inspect any prior admitted attempt before retrying."
+            } else {
+                "Vault installation could not finish. Partial local data is retained. Return to the launcher and inspect the outcome before retrying."
+            });
+        }
+        #[cfg(feature = "mcp-proposals")]
+        let may_cleanup =
+            self.context.mcp_proposal.is_none() && !matches!(e, Error::CreationAdmission(_));
+        #[cfg(not(feature = "mcp-proposals"))]
+        let may_cleanup = true;
+        // A rejected admission owns no wallet to delete. An admitted
+        // proposal may have partial durable state: preserve it and its
+        // tombstone for inspection rather than guessing at rollback.
+        if let Some(wallet_id) = wallet_id.as_ref().filter(|_| may_cleanup) {
+            let network_directory = self
+                .context
+                .coincube_directory
+                .network_directory(self.context.bitcoin_config.chain);
+            // In case of failure during install, block the thread to
+            // deleted the data_dir/network directory in order to start clean again.
+            warn!("Installation failed. Cleaning up the network directory.");
+            if let Err(e) = Handle::current()
+                .block_on(delete::delete_failed_install(&network_directory, wallet_id))
+            {
+                error!(
+                    "Failed to completely clean the network directory (path: '{}'): {}",
+                    network_directory.path().to_string_lossy(),
+                    e
+                );
+            } else {
+                warn!(
+                    "Successfully cleaned network directory at '{}'.",
+                    network_directory.path().to_string_lossy()
+                );
+                #[cfg(feature = "mcp-proposals")]
+                {
+                    // Keep the shared lease during cleanup. Ordinary
+                    // native setup may retry the same Context afterward.
+                    if let Ok(mut lease) = self.context.creation_lease.lock() {
+                        lease.take();
+                    }
+                }
+            }
+        }
+        self.steps
+            .get_mut(self.current)
+            .expect("There is always a step")
+            .update(&mut self.hws, Message::Installed(wallet_id, Err(e)))
     }
 
     /// Some steps are skipped because of contextual choice of the user, this
@@ -2338,6 +2313,42 @@ pub(crate) fn persist_cube_master_seed(
 
 /// Persist a seed-only (Vault-less) restore and ensure its GUI config exists.
 /// Retries use the same exact-file credential and mnemonic check as fresh Cubes.
+fn persist_no_descriptor_install(ctx: &Context) -> Result<(), Error> {
+    // We must persist the recovered signer so the Cube signer and
+    // Spark can load it from the datadir on next startup.
+    // Even though there is no vault descriptor, the seed is needed.
+    if ctx.restored_imported_wallet.is_some() && ctx.recovered_signer.is_none() {
+        // Descriptor-only restore into an already unlocked
+        // Cube: retain its seed and current credentials.
+        if ctx.cube_id.is_none() {
+            return Err(Error::Unexpected(
+                "Imported wallet restore is missing its originating Cube.".into(),
+            ));
+        }
+        return ensure_gui_config(
+            &ctx.coincube_directory
+                .network_directory(ctx.bitcoin_config.chain),
+            false,
+        );
+    }
+    let recovered = ctx.recovered_signer.as_ref().ok_or_else(|| {
+        Error::Unexpected("Seed-only install is missing the recovered signer".into())
+    })?;
+    let password = ctx
+        .restore_pin
+        .as_ref()
+        .ok_or_else(|| Error::Unexpected("Seed-only install is missing the restore PIN".into()))?;
+
+    persist_seed_only_install(
+        recovered,
+        &ctx.coincube_directory,
+        ctx.bitcoin_config.chain,
+        password.as_str(),
+        ctx.seed_cube_id(),
+        seed_device_secret(ctx)?.as_ref(),
+    )
+}
+
 fn persist_seed_only_install(
     recovered: &Signer,
     coincube_directory: &CoincubeDirectory,
@@ -2540,38 +2551,7 @@ fn installer_master(
         || Error::Unexpected("Unlock this Cube again before creating its Vault".into());
     let mut master = if matches!(flow, UserFlow::CreateWallet) {
         if let Some(cube) = cube {
-            if cube.id.is_empty() {
-                return Err(unavailable());
-            }
-            let fp = cube.master_signer_fingerprint.ok_or_else(unavailable)?;
-            // Both Bitcoin and fork unlock can retain an authenticated root.
-            // Resolve only this Cube's expected fingerprint; the constructor
-            // already checked its exact chain, and the root is verified below.
-            let cached = crate::app::session::unlocked_signer(&cube.id, fp);
-            let signer = if let Some(signer) = cached {
-                signer
-            } else {
-                // Seed-only restore legitimately opens a PIN-only session.
-                // Resolve its already-persisted master without asynchronously
-                // attaching another secret to the global cache. Passkey Cubes
-                // must never treat a per-Vault file or stale PIN as their root.
-                if cube.is_passkey_cube() {
-                    return Err(unavailable());
-                }
-                let pin = crate::app::session::pin_for(&cube.id).ok_or_else(unavailable)?;
-                crate::services::unlock::open_seed_by_fingerprint(
-                    datadir.path(),
-                    chain,
-                    fp,
-                    &pin,
-                    &cube.id,
-                )
-                .map_err(|_| unavailable())?
-            };
-            if signer.fingerprint(&bitcoin::secp256k1::Secp256k1::new()) != fp {
-                return Err(unavailable());
-            }
-            signer
+            scoped_installer_master(datadir, chain, cube)?
         } else {
             // Without a Cube there is no master to derive the Cube Key from.
             // Minting one here would create a root outside any Cube.
@@ -2584,6 +2564,41 @@ fn installer_master(
     };
     master.set_network(chain.bitcoin_network());
     Ok(master)
+}
+
+fn scoped_installer_master(
+    datadir: &CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    cube: &crate::app::settings::CubeSettings,
+) -> Result<coincube_core::signer::MasterSigner, Error> {
+    let unavailable =
+        || Error::Unexpected("Unlock this Cube again before creating its Vault".into());
+    if cube.id.is_empty() {
+        return Err(unavailable());
+    }
+    let fp = cube.master_signer_fingerprint.ok_or_else(unavailable)?;
+    // Both Bitcoin and fork unlock can retain an authenticated root.
+    // Resolve only this Cube's expected fingerprint; the constructor
+    // already checked its exact chain, and the root is verified below.
+    let cached = crate::app::session::unlocked_signer(&cube.id, fp);
+    let signer = if let Some(signer) = cached {
+        signer
+    } else {
+        // Seed-only restore legitimately opens a PIN-only session.
+        // Resolve its already-persisted master without asynchronously
+        // attaching another secret to the global cache. Passkey Cubes
+        // must never treat a per-Vault file or stale PIN as their root.
+        if cube.is_passkey_cube() {
+            return Err(unavailable());
+        }
+        let pin = crate::app::session::pin_for(&cube.id).ok_or_else(unavailable)?;
+        crate::services::unlock::open_seed_by_fingerprint(datadir.path(), chain, fp, &pin, &cube.id)
+            .map_err(|_| unavailable())?
+    };
+    if signer.fingerprint(&bitcoin::secp256k1::Secp256k1::new()) != fp {
+        return Err(unavailable());
+    }
+    Ok(signer)
 }
 
 #[cfg(all(test, feature = "mcp-proposals"))]
@@ -2908,58 +2923,72 @@ mod cube_signer_tests {
                     "wrong-fingerprint",
                     "wrong-seed",
                 ] {
-                    crate::app::session::close();
-                    let mut cube =
-                        CubeSettings::new("synthetic".into(), chain).with_master_signer(fp);
-                    if missing == "fingerprint" {
-                        cube.master_signer_fingerprint = None;
-                    }
-                    if missing != "session" {
-                        let session_cube = if missing == "wrong-cube" {
-                            "another-cube"
-                        } else {
-                            &cube.id
-                        };
-                        let session_fp = if missing == "wrong-fingerprint" {
-                            bitcoin::bip32::Fingerprint::from([0; 4])
-                        } else {
-                            fp
-                        };
-                        let seed = if missing == "wrong-seed" {
-                            MasterSigner::generate(Network::Bitcoin).unwrap()
-                        } else {
-                            master.try_clone().unwrap()
-                        };
-                        crate::app::session::store_unlocked_signer(session_cube, session_fp, seed);
-                    }
-                    let root =
-                        std::env::temp_dir().join(format!("signer-761-{}", uuid::Uuid::new_v4()));
-                    // A Cube signer handle, even carrying the expected key, cannot
-                    // supply principal/session binding for a locked or different Cube.
-                    let signer = CubeSigner::new(master.try_clone().unwrap());
-                    let mut connect = crate::services::coincube::CoincubeClient::new();
-                    connect.set_token("synthetic-installer-token");
-                    let result = Installer::try_new_for_chain(
-                        CoincubeDirectory::new(root.clone()),
+                    assert_installer_refuses_unbound_master(
                         chain,
-                        UserFlow::CreateWallet,
-                        true,
-                        Some(cube),
-                        Some(signer),
-                        None,
                         developer_mode,
-                        Some(connect),
+                        missing,
+                        &master,
+                        fp,
                     );
-                    assert!(
-                        matches!(result, Err(Error::Unexpected(ref message)) if message.contains("Unlock this Cube")),
-                        "{:?}: {}",
-                        chain,
-                        missing
-                    );
-                    assert!(!root.exists());
                 }
             }
         }
+    }
+
+    fn assert_installer_refuses_unbound_master(
+        chain: crate::chain::ChainId,
+        developer_mode: bool,
+        missing: &str,
+        master: &MasterSigner,
+        fp: bitcoin::bip32::Fingerprint,
+    ) {
+        crate::app::session::close();
+        let mut cube = CubeSettings::new("synthetic".into(), chain).with_master_signer(fp);
+        if missing == "fingerprint" {
+            cube.master_signer_fingerprint = None;
+        }
+        if missing != "session" {
+            let session_cube = if missing == "wrong-cube" {
+                "another-cube"
+            } else {
+                &cube.id
+            };
+            let session_fp = if missing == "wrong-fingerprint" {
+                bitcoin::bip32::Fingerprint::from([0; 4])
+            } else {
+                fp
+            };
+            let seed = if missing == "wrong-seed" {
+                MasterSigner::generate(Network::Bitcoin).unwrap()
+            } else {
+                master.try_clone().unwrap()
+            };
+            crate::app::session::store_unlocked_signer(session_cube, session_fp, seed);
+        }
+        let root = std::env::temp_dir().join(format!("signer-761-{}", uuid::Uuid::new_v4()));
+        // A Cube signer handle, even carrying the expected key, cannot
+        // supply principal/session binding for a locked or different Cube.
+        let signer = CubeSigner::new(master.try_clone().unwrap());
+        let mut connect = crate::services::coincube::CoincubeClient::new();
+        connect.set_token("synthetic-installer-token");
+        let result = Installer::try_new_for_chain(
+            CoincubeDirectory::new(root.clone()),
+            chain,
+            UserFlow::CreateWallet,
+            true,
+            Some(cube),
+            Some(signer),
+            None,
+            developer_mode,
+            Some(connect),
+        );
+        assert!(
+            matches!(result, Err(Error::Unexpected(ref message)) if message.contains("Unlock this Cube")),
+            "{:?}: {}",
+            chain,
+            missing
+        );
+        assert!(!root.exists());
     }
 
     #[test]
