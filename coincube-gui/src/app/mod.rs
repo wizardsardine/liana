@@ -2369,6 +2369,41 @@ struct VaultHistoryProbe {
 }
 
 impl VaultHistoryProbe {
+    async fn verify_full_recovery(
+        &self,
+        node: &coincubed::config::BitcoindConfig,
+        wallet_path: &str,
+        job: &crate::node::history::Recovery,
+    ) -> Option<()> {
+        let binding = crate::node::retention::managed_binding(
+            &self.data_dir,
+            self.chain.bitcoin_network(),
+            self.chain,
+            node,
+            wallet_path,
+            &self.wallet.inheritance_descriptor()?.to_string(),
+        )
+        .ok()?;
+        job.validate(&binding).ok()?;
+        let rpc = crate::node::history::NodeRpc::new(node, wallet_path, self.chain)
+            .await
+            .ok()?;
+        rpc.check_chain(self.chain.bitcoin_network()).await.ok()?;
+        if rpc.block_hash(job.target).await.ok()? != job.target_hash {
+            return None;
+        }
+        if rpc
+            .call(true, "getwalletinfo", serde_json::json!([]))
+            .await
+            .ok()?["scanning"]
+            .as_bool()
+            != Some(false)
+        {
+            return None;
+        }
+        Some(())
+    }
+
     /// How far back this Vault's history reaches, or `None` if the daemon
     /// could not say.
     ///
@@ -2424,32 +2459,7 @@ impl VaultHistoryProbe {
                 Ok(Some(job))
                     if job.phase == crate::node::history::Phase::Complete && job.start == 0 =>
                 {
-                    let binding = crate::node::retention::managed_binding(
-                        &self.data_dir,
-                        self.chain.bitcoin_network(),
-                        self.chain,
-                        node,
-                        &wallet_path,
-                        &self.wallet.inheritance_descriptor()?.to_string(),
-                    )
-                    .ok()?;
-                    job.validate(&binding).ok()?;
-                    let rpc = crate::node::history::NodeRpc::new(node, &wallet_path, self.chain)
-                        .await
-                        .ok()?;
-                    rpc.check_chain(self.chain.bitcoin_network()).await.ok()?;
-                    if rpc.block_hash(job.target).await.ok()? != job.target_hash {
-                        return None;
-                    }
-                    if rpc
-                        .call(true, "getwalletinfo", serde_json::json!([]))
-                        .await
-                        .ok()?["scanning"]
-                        .as_bool()
-                        != Some(false)
-                    {
-                        return None;
-                    }
+                    self.verify_full_recovery(node, &wallet_path, &job).await?;
                     // A full Core scan permits handoff. Its durable records are
                     // replayed by local daemon startup before retiring the marker.
                     rescan_owed = false;
