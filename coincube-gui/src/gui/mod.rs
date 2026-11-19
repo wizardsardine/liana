@@ -6696,6 +6696,31 @@ mod fork_auth_dispatch_tests {
         }
     }
 
+    async fn apply_installer_probe_results(
+        gui: &mut GUI,
+        task: Task<Message>,
+    ) -> HashSet<(pane_grid::Pane, usize)> {
+        let mut checked = HashSet::new();
+        if let Some(mut stream) = iced_runtime::task::into_stream(task) {
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    if !matches!(&message, Message::Pane(_, pane::Message::Tab(_, inner))
+                        if matches!(inner.as_ref(), tab::Message::Launch(home::Message::Checked { .. })))
+                    {
+                        continue;
+                    }
+                    if let Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) = &message {
+                        checked.insert((*pane_id, *tab_id));
+                    }
+                    // Apply the real directory-probe completion through the
+                    // same GUI seam. Do not execute emitted account Init.
+                    let _ = gui.update(message);
+                }
+            }
+        }
+        checked
+    }
+
     async fn check_auth_dispatch() {
         use crate::app::view::ConnectAccountMessage;
         for auth in [
@@ -6763,24 +6788,7 @@ mod fork_auth_dispatch_tests {
                 source,
                 pane::Message::tab(1, account_message),
             ));
-            let mut checked = HashSet::new();
-            if let Some(mut stream) = iced_runtime::task::into_stream(task) {
-                while let Some(action) = stream.next().await {
-                    if let iced_runtime::Action::Output(message) = action {
-                        if !matches!(&message, Message::Pane(_, pane::Message::Tab(_, inner))
-                            if matches!(inner.as_ref(), tab::Message::Launch(home::Message::Checked { .. })))
-                        {
-                            continue;
-                        }
-                        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) = &message {
-                            checked.insert((*pane_id, *tab_id));
-                        }
-                        // Apply the real directory-probe completion through the
-                        // same GUI seam. Do not execute emitted account Init.
-                        let _ = gui.update(message);
-                    }
-                }
-            }
+            let checked = apply_installer_probe_results(&mut gui, task).await;
             assert_eq!(
                 checked.len(),
                 3,
