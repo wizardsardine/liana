@@ -1420,46 +1420,8 @@ impl Tab {
         originated: bool,
         capability_revoked: bool,
     ) -> Task<Message> {
-        if !capability_revoked {
-            match &mut self.state {
-                State::App(app)
-                    if app.cube_settings().network.is_blake2b() && !app.requires_connect() =>
-                {
-                    app.on_local_auth_change(originated);
-                    return Task::none();
-                }
-                State::Loader(loader)
-                    if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
-                {
-                    loader.connect_client = None;
-                    return Task::none();
-                }
-                State::PinEntry(pin)
-                    if pin.cube().network.is_blake2b() && !pin.requires_connect() =>
-                {
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &mut pin.on_success;
-                    *connect_client = None;
-                    return Task::none();
-                }
-                State::PasskeyUnlock(unlock)
-                    if unlock.cube().network.is_blake2b() && !unlock.requires_connect() =>
-                {
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &mut unlock.on_success;
-                    *connect_client = None;
-                    return Task::none();
-                }
-                State::Installer(installer)
-                    if installer.context.fork_local_vault_allowed()
-                        && !installer.context.use_coincube_connect =>
-                {
-                    installer.context.coincube_client = None;
-                    installer.context.connect_jwt = None;
-                    return Task::none();
-                }
-                _ => {}
-            }
+        if !capability_revoked && self.clear_local_fork_auth(originated) {
+            return Task::none();
         }
         self.fork_session_generation = self.fork_session_generation.wrapping_add(1);
         self.fork_save_task.take();
@@ -1551,6 +1513,46 @@ impl Tab {
             self.state = state;
         }
         command
+    }
+
+    fn clear_local_fork_auth(&mut self, originated: bool) -> bool {
+        match &mut self.state {
+            State::App(app)
+                if app.cube_settings().network.is_blake2b() && !app.requires_connect() =>
+            {
+                app.on_local_auth_change(originated);
+                true
+            }
+            State::Loader(loader)
+                if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
+            {
+                loader.connect_client = None;
+                true
+            }
+            State::PinEntry(pin) if pin.cube().network.is_blake2b() && !pin.requires_connect() => {
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &mut pin.on_success;
+                *connect_client = None;
+                true
+            }
+            State::PasskeyUnlock(unlock)
+                if unlock.cube().network.is_blake2b() && !unlock.requires_connect() =>
+            {
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &mut unlock.on_success;
+                *connect_client = None;
+                true
+            }
+            State::Installer(installer)
+                if installer.context.fork_local_vault_allowed()
+                    && !installer.context.use_coincube_connect =>
+            {
+                installer.context.coincube_client = None;
+                installer.context.connect_jwt = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn accepts_fork_generation(&self, generation: u64) -> bool {
