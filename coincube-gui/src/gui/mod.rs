@@ -3084,97 +3084,102 @@ impl GUI {
         }
     }
 
-    fn update_message(&mut self, message: Message) -> Task<Message> {
-        match message {
-            // we get this message only once at startup
-            Message::Window(id) => {
-                self.window_id = id;
-                let screen = self.query_screen_size();
-                // Common case: if there is an already saved screen size we reuse it
-                let size = if let (Some(id), Some(WindowConfig { width, height })) =
-                    (id, &self.window_config)
-                {
-                    window::resize(
-                        id,
-                        self.zoomed(Size {
-                            width: *width,
-                            height: *height,
-                        }),
-                    )
-                // Initial startup: we maximize the screen in order to know the max usable screen area
-                } else if let Some(id) = &self.window_id {
-                    window::maximize(*id, true)
+    fn initialize_window(&mut self, id: Option<Id>) -> Task<Message> {
+        self.window_id = id;
+        let screen = self.query_screen_size();
+        // Common case: if there is an already saved screen size we reuse it
+        let size =
+            if let (Some(id), Some(WindowConfig { width, height })) = (id, &self.window_config) {
+                window::resize(
+                    id,
+                    self.zoomed(Size {
+                        width: *width,
+                        height: *height,
+                    }),
+                )
+            // Initial startup: we maximize the screen in order to know the max usable screen area
+            } else if let Some(id) = &self.window_id {
+                window::maximize(*id, true)
+            } else {
+                Task::none()
+            };
+        Task::batch([screen, size])
+    }
+
+    fn apply_screen_size(&mut self, size: Option<Size>, zoom: Zoom) -> Task<Message> {
+        // Iced measures the answer at the zoom in effect when it runs
+        // the query, after the rest of its batch. If the zoom changed
+        // since it was asked, the tag no longer scales it: ask again.
+        if zoom != self.current_zoom() {
+            return self.query_screen_size();
+        }
+        if let Some(size) = size {
+            // Rounded: f32 scaling puts a 1536-point screen at 1535.9999.
+            self.zoom.screen_width = Some((size.width * zoom.factor()).round());
+        }
+        Task::none()
+    }
+
+    fn apply_window_size(&mut self, monitor_size: Size) -> Task<Message> {
+        // Iced reports the size in zoomed units; record it at 100% so
+        // a zoom change between launches keeps the window's size.
+        let monitor_size = monitor_size * self.current_zoom().factor();
+        // A resize can come from a move to another screen.
+        let screen = self.query_screen_size();
+        let cloned_cfg = self.window_config.clone();
+        let resized = match (cloned_cfg, &self.window_init, &self.window_id) {
+            // no previous screen size recorded && window maximized
+            (None, Some(false), Some(id)) => {
+                self.window_init = Some(true);
+                let mut batch = vec![window::maximize(*id, false)];
+                let new_size = if monitor_size.height >= 1200.0 {
+                    let size = Size {
+                        width: 1200.0,
+                        height: 950.0,
+                    };
+                    batch.push(window::resize(*id, self.zoomed(size)));
+                    size
                 } else {
-                    Task::none()
+                    batch.push(window::resize(
+                        *id,
+                        self.zoomed(iced::window::Settings::default().size),
+                    ));
+                    iced::window::Settings::default().size
                 };
-                Task::batch([screen, size])
+                self.window_config = Some(WindowConfig {
+                    width: new_size.width,
+                    height: new_size.height,
+                });
+                Task::batch(batch)
             }
-            Message::ScreenSize(size, zoom) => {
-                // Iced measures the answer at the zoom in effect when it runs
-                // the query, after the rest of its batch. If the zoom changed
-                // since it was asked, the tag no longer scales it: ask again.
-                if zoom != self.current_zoom() {
-                    return self.query_screen_size();
-                }
-                if let Some(size) = size {
-                    // Rounded: f32 scaling puts a 1536-point screen at 1535.9999.
-                    self.zoom.screen_width = Some((size.width * zoom.factor()).round());
+            // we already have a record of the last window size and we update it
+            (Some(WindowConfig { width, height }), _, _) => {
+                if width != monitor_size.width || height != monitor_size.height {
+                    if let Some(cfg) = &mut self.window_config {
+                        cfg.width = monitor_size.width;
+                        cfg.height = monitor_size.height;
+                    }
                 }
                 Task::none()
             }
-            Message::WindowSize(monitor_size) => {
-                // Iced reports the size in zoomed units; record it at 100% so
-                // a zoom change between launches keeps the window's size.
-                let monitor_size = monitor_size * self.current_zoom().factor();
-                // A resize can come from a move to another screen.
-                let screen = self.query_screen_size();
-                let cloned_cfg = self.window_config.clone();
-                let resized = match (cloned_cfg, &self.window_init, &self.window_id) {
-                    // no previous screen size recorded && window maximized
-                    (None, Some(false), Some(id)) => {
-                        self.window_init = Some(true);
-                        let mut batch = vec![window::maximize(*id, false)];
-                        let new_size = if monitor_size.height >= 1200.0 {
-                            let size = Size {
-                                width: 1200.0,
-                                height: 950.0,
-                            };
-                            batch.push(window::resize(*id, self.zoomed(size)));
-                            size
-                        } else {
-                            batch.push(window::resize(
-                                *id,
-                                self.zoomed(iced::window::Settings::default().size),
-                            ));
-                            iced::window::Settings::default().size
-                        };
-                        self.window_config = Some(WindowConfig {
-                            width: new_size.width,
-                            height: new_size.height,
-                        });
-                        Task::batch(batch)
-                    }
-                    // we already have a record of the last window size and we update it
-                    (Some(WindowConfig { width, height }), _, _) => {
-                        if width != monitor_size.width || height != monitor_size.height {
-                            if let Some(cfg) = &mut self.window_config {
-                                cfg.width = monitor_size.width;
-                                cfg.height = monitor_size.height;
-                            }
-                        }
-                        Task::none()
-                    }
-                    // we ignore the first notification about initial window size it will always be
-                    // the default one
-                    _ => {
-                        if self.window_init.is_none() {
-                            self.window_init = Some(false);
-                        }
-                        Task::none()
-                    }
-                };
-                Task::batch([screen, resized])
+            // we ignore the first notification about initial window size it will always be
+            // the default one
+            _ => {
+                if self.window_init.is_none() {
+                    self.window_init = Some(false);
+                }
+                Task::none()
             }
+        };
+        Task::batch([screen, resized])
+    }
+
+    fn update_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            // we get this message only once at startup
+            Message::Window(id) => self.initialize_window(id),
+            Message::ScreenSize(size, zoom) => self.apply_screen_size(size, zoom),
+            Message::WindowSize(monitor_size) => self.apply_window_size(monitor_size),
             Message::WindowMoved => self.query_screen_size(),
             Message::CtrlC
             | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
