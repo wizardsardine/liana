@@ -64,7 +64,6 @@ const PREPARE_TTL: Duration = Duration::from_secs(300);
 /// How often the sweep task wakes up to evict expired prepares.
 const PREPARE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
-/// Run the stdin/stdout server until EOF on stdin or a `shutdown` RPC.
 async fn write_outbound_frames(mut rx: tokio::sync::mpsc::UnboundedReceiver<Frame>) {
     let mut stdout = tokio::io::stdout();
     while let Some(frame) = rx.recv().await {
@@ -85,6 +84,7 @@ async fn write_outbound_frames(mut rx: tokio::sync::mpsc::UnboundedReceiver<Fram
     }
 }
 
+/// Run the stdin/stdout server until EOF on stdin or a `shutdown` RPC.
 pub async fn run(receive_only: bool) -> anyhow::Result<()> {
     // Single writer task: serializes all stdout writes so responses and
     // events never interleave mid-line. We talk to it over an unbounded
