@@ -8445,10 +8445,8 @@ impl App {
 
     fn route_node_observation(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::PendingBitcoindLog(log) => {
-                if let Some(line) = log {
-                    self.cache.node_bitcoind_last_log = Some(line);
-                }
+            Message::PendingBitcoindLog(Some(line)) => {
+                self.cache.node_bitcoind_last_log = Some(line);
             }
             Message::SetInternalBitcoind(bitcoind) => {
                 if let Some(settings) = self.panels.vault_settings.as_mut() {
