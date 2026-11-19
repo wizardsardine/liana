@@ -387,251 +387,31 @@ pub fn update(
             )
         }
         RecoveryAlertsMessage::StatusLoaded(res, gen) => {
-            // Drop a load that resolved after the session changed (logout /
-            // account switch) so we never write the prior account's vault id +
-            // status into the freshly-reset state.
-            if gen != session_generation {
-                return Task::none();
-            }
-            ra.loading = false;
-            ra.loaded_once = true;
-            match res {
-                Ok((vid, recipients, status)) => {
-                    // Cache the freshly-loaded status. Both the alerts state and
-                    // the escrow tier derive from its `escrowed_artifacts`, so
-                    // the reload reflects the true server selection (including
-                    // changes made on another device). See `escrow_tier`.
-                    ra.apply_status_loaded(vid, recipients, status);
-                }
-                Err(e) => {
-                    // A missing Connect vault (the cube has no vault yet, or a
-                    // previously-resolved vault was removed) surfaces as a
-                    // not-found error; treat it as "nothing to monitor" rather
-                    // than a hard error so the card degrades gracefully. Clear
-                    // any cached vault id and status too: otherwise
-                    // `recovery_heartbeat_task` would keep POSTing heartbeats
-                    // (level != Off && vault_id set) to a vault Connect no
-                    // longer has, even though the card now shows nothing to
-                    // monitor. A later successful load re-resolves both.
-                    if e.to_lowercase().contains("not found") {
-                        ra.no_vault = true;
-                        ra.clear_vault();
-                    } else {
-                        ra.error = Some(e);
-                    }
-                }
-            }
-            Task::none()
+            apply_alerts_status(ra, res, gen, session_generation)
         }
         RecoveryAlertsMessage::ToggleAlerts(on) => {
-            // The alerts toggle keys off the (universal after API PR 3)
-            // `recovery_alerts` entitlement — kept as defense-in-depth. The card
-            // only renders the toggle when entitled, so this guard is belt-and-braces.
-            if !entitled {
-                ra.error = Some("Recovery alerts aren't available on this plan.".to_string());
-                return Task::none();
-            }
-            ra.error = None;
-            if on {
-                // Turning alerts ON alone: no escrow involved. No-op if already on.
-                if ra.alerts_on() {
-                    return Task::none();
-                }
-                let (Some(client), Some(_vault_id), Some(server_cube_id)) =
-                    (client, ra.vault_id, server_cube_id)
-                else {
-                    ra.error = Some(
-                        "Couldn't find this Vault on Connect yet — try again in a moment."
-                            .to_string(),
-                    );
-                    return Task::none();
-                };
-                ra.submitting = true;
-                Task::perform(
-                    async move {
-                        enable_alerts(&client, server_cube_id)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| {
-                        // No escrow change → `None` (no PIN re-show on failure).
-                        ra_msg(RecoveryAlertsMessage::ChangeResult(
-                            res,
-                            session_generation,
-                            None,
-                        ))
-                    },
-                )
-            } else {
-                // Turning alerts OFF is destructive when a kit is escrowed, so
-                // open the confirm dialog rather than acting silently. No-op if
-                // already off.
-                if !ra.alerts_on() {
-                    return Task::none();
-                }
-                ra.confirming_alerts_off = true;
-                Task::none()
-            }
+            toggle_alerts(ra, on, client, server_cube_id, entitled, session_generation)
         }
         RecoveryAlertsMessage::CancelAlertsOff => {
             ra.confirming_alerts_off = false;
             Task::none()
         }
         RecoveryAlertsMessage::ConfirmAlertsOff => {
-            if !entitled || !ra.confirming_alerts_off {
-                return Task::none();
-            }
-            // Escrow can't outlive alerts (invariant: escrow present ⟹ alerts
-            // on), so turning alerts off deletes any kit too. Delete unless we're
-            // *certain* nothing is escrowed (`Some(Off)`): when the tier is
-            // unknown (older API that doesn't report it), delete anyway — the
-            // escrow DELETE is idempotent (404 = success), so this is free
-            // insurance against ever stranding escrow with monitoring off.
-            let also_delete_escrow = !matches!(ra.escrow_tier(), Some(EscrowTier::Off));
-            let (Some(client), Some(_vault_id), Some(server_cube_id)) =
-                (client, ra.vault_id, server_cube_id)
-            else {
-                ra.error = Some(
-                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
-                );
-                return Task::none();
-            };
-            ra.submitting = true;
-            ra.confirming_alerts_off = false;
-            ra.error = None;
-            Task::perform(
-                async move {
-                    disable_alerts(&client, server_cube_id, also_delete_escrow)
-                        .await
-                        .map_err(|e| e.to_string())
-                },
-                move |res| {
-                    // Resulting escrow tier is Off; `Some(Off)` (not FullCube) so
-                    // a failure never spuriously re-shows the PIN entry.
-                    ra_msg(RecoveryAlertsMessage::ChangeResult(
-                        res,
-                        session_generation,
-                        Some(EscrowTier::Off),
-                    ))
-                },
-            )
+            confirm_alerts_off(ra, client, server_cube_id, entitled, session_generation)
         }
-        RecoveryAlertsMessage::SelectEscrow(tier) => {
-            // Re-picking the tier whose PIN we're already collecting is a
-            // no-op. Returning before the reset below matters: the card
-            // highlights Full Cube while `awaiting_pin`, and that highlighted
-            // button is pressable, so without this a stray click would wipe the
-            // digits typed so far and hide the field.
-            if ra.awaiting_pin && matches!(tier, EscrowTier::FullCube) {
-                return Task::none();
-            }
-            ra.awaiting_pin = false;
-            ra.pin.clear();
-            ra.cancel_pin_attempt();
-            ra.submitting = false;
-            if !escrow_entitled {
-                ra.error =
-                    Some("An encrypted recovery kit is part of the Estate plan.".to_string());
-                return Task::none();
-            }
-            // Skip a no-op re-select of the *known* current tier. When it's
-            // unknown on this device (`None`, older API), any selection proceeds
-            // so the owner can confirm/change it.
-            if ra.escrow_tier() == Some(tier) {
-                return Task::none();
-            }
-            // `ra.vault_id` is checked (not used further) as the "does Connect
-            // know about a Vault for this cube yet" gate — escrow/monitoring
-            // calls below are cube-scoped and never need the vault id itself.
-            let (Some(client), Some(_vault_id), Some(server_cube_id)) =
-                (client, ra.vault_id, server_cube_id)
-            else {
-                ra.error = Some(
-                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
-                );
-                return Task::none();
-            };
-            match tier {
-                EscrowTier::Off => {
-                    // "Nothing — alerts only": delete the escrow set, keep alerts.
-                    ra.submitting = true;
-                    ra.error = None;
-                    Task::perform(
-                        async move {
-                            disable_escrow(&client, server_cube_id)
-                                .await
-                                .map_err(|e| e.to_string())
-                        },
-                        move |res| {
-                            ra_msg(RecoveryAlertsMessage::ChangeResult(
-                                res,
-                                session_generation,
-                                Some(EscrowTier::Off),
-                            ))
-                        },
-                    )
-                }
-                EscrowTier::VaultOnly => {
-                    // Descriptor-only escrow needs no seed (no PIN). Build the
-                    // descriptor blob from the live wallet and enrol. `enroll_escrow`
-                    // turns alerts on too, so this auto-enables alerts when off.
-                    let Some(descriptor_json) =
-                        descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
-                    else {
-                        ra.error = Some(
-                            "This Vault's descriptor isn't available on this device, so recovery \
-                             escrow can't be set up here."
-                                .to_string(),
-                        );
-                        return Task::none();
-                    };
-                    ra.submitting = true;
-                    ra.error = None;
-                    // Connect blinding (PR D3): the recovery-recipient list now
-                    // serves envelopes, so sealing needs this Cube's encryption
-                    // key to read the keyholder xpubs first.
-                    let cube_enc_key = cache.cube_encryption_key.clone();
-                    let network = cache.chain();
-                    Task::perform(
-                        async move {
-                            enroll_escrow(
-                                &client,
-                                server_cube_id,
-                                cube_enc_key.as_deref(),
-                                network.bitcoin_network(),
-                                descriptor_json,
-                                None,
-                            )
-                            .await
-                            .map_err(|e| e.to_string())
-                        },
-                        move |res| {
-                            ra_msg(RecoveryAlertsMessage::ChangeResult(
-                                res,
-                                session_generation,
-                                Some(EscrowTier::VaultOnly),
-                            ))
-                        },
-                    )
-                }
-                EscrowTier::FullCube => {
-                    // Full-Cube escrows the seed too — re-confirm the PIN before
-                    // exporting it. Collect the PIN; `ConfirmFullCube` enrols.
-                    if wallet.is_none() {
-                        ra.error = Some(
-                            "This Vault isn't available on this device, so full-Cube escrow can't \
-                             be set up here."
-                                .to_string(),
-                        );
-                        return Task::none();
-                    }
-                    ra.error = None;
-                    ra.awaiting_pin = true;
-                    ra.pin.clear();
-                    Task::none()
-                }
-            }
-        }
+        RecoveryAlertsMessage::SelectEscrow(tier) => select_escrow(
+            ra,
+            tier,
+            EscrowTargets {
+                client,
+                server_cube_id,
+                wallet,
+            },
+            escrow_entitled,
+            session_generation,
+            cache,
+            local_cube_id,
+        ),
         RecoveryAlertsMessage::EscrowPinChanged(pin) => {
             ra.pin = pin;
             Task::none()
@@ -644,74 +424,19 @@ pub fn update(
             ra.error = None;
             Task::none()
         }
-        RecoveryAlertsMessage::FullCubePinReady(attempt, generation) => {
-            if generation != session_generation || ra.pin_attempt != Some(attempt) || !ra.submitting
-            {
-                return Task::none();
-            }
-            let seed_json = ra.take_seed_for_upload(attempt, generation, session_generation);
-            let (Some(seed_json), Some(client), Some(_), Some(server_cube_id)) =
-                (seed_json, client, ra.vault_id, server_cube_id)
-            else {
-                ra.cancel_pin_attempt();
-                ra.submitting = false;
-                ra.error = Some("Full-Cube PIN result expired. Try again.".into());
-                return Task::none();
-            };
-            let Some(descriptor_json) =
-                descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
-            else {
-                ra.cancel_pin_attempt();
-                ra.submitting = false;
-                ra.error = Some("This Vault's descriptor isn't available on this device.".into());
-                return Task::none();
-            };
-            let cube_enc_key = cache.cube_encryption_key.clone();
-            let network = cache.chain();
-            // Admission has consumed the private seed slot. Retain its
-            // cancellation token until the network task checks it, so a
-            // subsequent tier change can still suppress an unstarted upload.
-            ra.pin_attempt = None;
-            ra.upload_attempt = Some(attempt);
-            let cancelled = Arc::clone(&ra.pin_cancelled);
-            Task::perform(
-                async move {
-                    if cancelled.load(Ordering::Acquire) {
-                        return Err("Full-Cube enrollment was cancelled.".into());
-                    }
-                    enroll_escrow_cancelable(
-                        &client,
-                        server_cube_id,
-                        cube_enc_key.as_deref(),
-                        network.bitcoin_network(),
-                        descriptor_json,
-                        Some(seed_json),
-                        EscrowAdmission {
-                            should_cancel: || cancelled.load(Ordering::Acquire),
-                            start_upload: || {
-                                cancelled
-                                    .compare_exchange(
-                                        false,
-                                        true,
-                                        Ordering::AcqRel,
-                                        Ordering::Acquire,
-                                    )
-                                    .is_ok()
-                            },
-                        },
-                    )
-                    .await
-                    .map_err(|e| e.to_string())
-                },
-                move |res| {
-                    ra_msg(RecoveryAlertsMessage::FullCubeUploadResult(
-                        attempt,
-                        session_generation,
-                        res,
-                    ))
-                },
-            )
-        }
+        RecoveryAlertsMessage::FullCubePinReady(attempt, generation) => admit_full_cube_upload(
+            ra,
+            attempt,
+            generation,
+            EscrowTargets {
+                client,
+                server_cube_id,
+                wallet,
+            },
+            session_generation,
+            cache,
+            local_cube_id,
+        ),
         RecoveryAlertsMessage::FullCubeUploadResult(attempt, generation, result) => {
             if generation != session_generation || ra.upload_attempt != Some(attempt) {
                 return Task::none();
@@ -731,116 +456,18 @@ pub fn update(
             ra.apply_change(Err(error), Some(EscrowTier::FullCube));
             Task::none()
         }
-        RecoveryAlertsMessage::ConfirmFullCube => {
-            // Full-Cube is an escrow tier, so it's gated on `inheritanceEscrow`.
-            if !escrow_entitled || !ra.awaiting_pin {
-                return Task::none();
-            }
-            // We still require a resolved vault as a fast precondition, but
-            // `enroll_escrow` re-fetches and uses that vault's id, so we don't
-            // thread a (possibly stale) cached id through.
-            let (Some(_client), Some(_), Some(_server_cube_id)) =
-                (client, ra.vault_id, server_cube_id)
-            else {
-                ra.error = Some(
-                    "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
-                );
-                return Task::none();
-            };
-            let Some(_descriptor_json) =
-                descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
-            else {
-                ra.error =
-                    Some("This Vault's descriptor isn't available on this device.".to_string());
-                return Task::none();
-            };
-            // Unlock the seed with the entered PIN, build the seed blob, then
-            // enrol descriptor + seed. The mnemonic is wrapped in `Zeroizing`
-            // at the async boundary and never rides a message.
-            // `EscrowPin` is already zeroizing-backed; take it out (leaving an
-            // empty buffer) and let it drop inside the blocking task, wiping the
-            // PIN once the seed blob is built.
-            let pin = std::mem::take(&mut ra.pin);
-            let (seed_cube, selected_cube) =
-                match seed_blob_cube_with_settings(cache, local_cube_id) {
-                    Ok(c) => c,
-                    Err(e) => {
-                        ra.error = Some(e);
-                        return Task::none();
-                    }
-                };
-            let datadir = cache.datadir_path.path().to_path_buf();
-            let network = cache.chain();
-            let local_cube_id = local_cube_id.to_string();
-            ra.submitting = true;
-            ra.awaiting_pin = false;
-            ra.error = None;
-            let attempt = crate::app::cache::AppGeneration::next();
-            ra.pin_attempt = Some(attempt);
-            ra.pin_cancelled = Arc::new(AtomicBool::new(false));
-            ra.seed_slot = Arc::new(EscrowSeedSlot::default());
-            let cancelled = Arc::clone(&ra.pin_cancelled);
-            let slot = Arc::clone(&ra.seed_slot);
-            let app_generation = cache.app_generation;
-            Task::perform(
-                async move {
-                    let seed_trial = tokio::task::spawn_blocking(move || {
-                        build_seed_blob_json(
-                            &datadir,
-                            network,
-                            &local_cube_id,
-                            pin.as_str(),
-                            seed_cube,
-                            selected_cube,
-                            app_generation,
-                        )
-                    })
-                    .await
-                    .map_err(|e| format!("PIN task failed: {}", e));
-                    match seed_trial {
-                        Ok(Ok(SeedBlobOutcome::Duress(proof))) => FullCubeTaskResult::Duress(proof),
-                        Ok(Ok(SeedBlobOutcome::Ready(seed_json))) => {
-                            if cancelled.load(Ordering::Acquire) {
-                                FullCubeTaskResult::Expired
-                            } else if let Ok(mut staged) = slot.0.lock() {
-                                if cancelled.load(Ordering::Acquire) {
-                                    FullCubeTaskResult::Expired
-                                } else {
-                                    *staged = Some(seed_json);
-                                    FullCubeTaskResult::Ready
-                                }
-                            } else {
-                                FullCubeTaskResult::Expired
-                            }
-                        }
-                        Ok(Err(error)) | Err(error) => FullCubeTaskResult::Failed(error),
-                    }
-                },
-                move |res| match res {
-                    FullCubeTaskResult::Duress(proof) => {
-                        Message::View(view::Message::DuressActivateLocal(proof))
-                    }
-                    FullCubeTaskResult::Ready => ra_msg(RecoveryAlertsMessage::FullCubePinReady(
-                        attempt,
-                        session_generation,
-                    )),
-                    FullCubeTaskResult::Failed(error) => {
-                        ra_msg(RecoveryAlertsMessage::FullCubePinFailed(
-                            attempt,
-                            session_generation,
-                            error,
-                        ))
-                    }
-                    FullCubeTaskResult::Expired => {
-                        ra_msg(RecoveryAlertsMessage::FullCubePinFailed(
-                            attempt,
-                            session_generation,
-                            "Full-Cube PIN result expired. Try again.".into(),
-                        ))
-                    }
-                },
-            )
-        }
+        RecoveryAlertsMessage::ConfirmFullCube => confirm_full_cube(
+            ra,
+            EscrowTargets {
+                client,
+                server_cube_id,
+                wallet,
+            },
+            escrow_entitled,
+            session_generation,
+            cache,
+            local_cube_id,
+        ),
         RecoveryAlertsMessage::ChangeResult(res, gen, tier_change) => {
             // Drop a change that resolved after the session changed so a stale
             // result can't clobber a newer session's state.
@@ -858,6 +485,476 @@ pub fn update(
             Task::none()
         }
     }
+}
+
+struct EscrowTargets {
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+    wallet: Option<Arc<Wallet>>,
+}
+
+fn apply_alerts_status(
+    ra: &mut RecoveryAlerts,
+    res: Result<(u64, RecoveryRecipients, VaultMonitoringStatus), String>,
+    gen: u64,
+    session_generation: u64,
+) -> Task<Message> {
+    // Drop a load that resolved after the session changed (logout /
+    // account switch) so we never write the prior account's vault id +
+    // status into the freshly-reset state.
+    if gen != session_generation {
+        return Task::none();
+    }
+    ra.loading = false;
+    ra.loaded_once = true;
+    match res {
+        Ok((vid, recipients, status)) => {
+            // Cache the freshly-loaded status. Both the alerts state and
+            // the escrow tier derive from its `escrowed_artifacts`, so
+            // the reload reflects the true server selection (including
+            // changes made on another device). See `escrow_tier`.
+            ra.apply_status_loaded(vid, recipients, status);
+        }
+        Err(e) => {
+            // A missing Connect vault (the cube has no vault yet, or a
+            // previously-resolved vault was removed) surfaces as a
+            // not-found error; treat it as "nothing to monitor" rather
+            // than a hard error so the card degrades gracefully. Clear
+            // any cached vault id and status too: otherwise
+            // `recovery_heartbeat_task` would keep POSTing heartbeats
+            // (level != Off && vault_id set) to a vault Connect no
+            // longer has, even though the card now shows nothing to
+            // monitor. A later successful load re-resolves both.
+            if e.to_lowercase().contains("not found") {
+                ra.no_vault = true;
+                ra.clear_vault();
+            } else {
+                ra.error = Some(e);
+            }
+        }
+    }
+    Task::none()
+}
+
+fn toggle_alerts(
+    ra: &mut RecoveryAlerts,
+    on: bool,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+    entitled: bool,
+    session_generation: u64,
+) -> Task<Message> {
+    // The alerts toggle keys off the (universal after API PR 3)
+    // `recovery_alerts` entitlement — kept as defense-in-depth. The card
+    // only renders the toggle when entitled, so this guard is belt-and-braces.
+    if !entitled {
+        ra.error = Some("Recovery alerts aren't available on this plan.".to_string());
+        return Task::none();
+    }
+    ra.error = None;
+    if on {
+        // Turning alerts ON alone: no escrow involved. No-op if already on.
+        if ra.alerts_on() {
+            return Task::none();
+        }
+        let (Some(client), Some(_vault_id), Some(server_cube_id)) =
+            (client, ra.vault_id, server_cube_id)
+        else {
+            ra.error = Some(
+                "Couldn't find this Vault on Connect yet — try again in a moment.".to_string(),
+            );
+            return Task::none();
+        };
+        ra.submitting = true;
+        Task::perform(
+            async move {
+                enable_alerts(&client, server_cube_id)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |res| {
+                // No escrow change → `None` (no PIN re-show on failure).
+                ra_msg(RecoveryAlertsMessage::ChangeResult(
+                    res,
+                    session_generation,
+                    None,
+                ))
+            },
+        )
+    } else {
+        // Turning alerts OFF is destructive when a kit is escrowed, so
+        // open the confirm dialog rather than acting silently. No-op if
+        // already off.
+        if !ra.alerts_on() {
+            return Task::none();
+        }
+        ra.confirming_alerts_off = true;
+        Task::none()
+    }
+}
+
+fn confirm_alerts_off(
+    ra: &mut RecoveryAlerts,
+    client: Option<CoincubeClient>,
+    server_cube_id: Option<u64>,
+    entitled: bool,
+    session_generation: u64,
+) -> Task<Message> {
+    if !entitled || !ra.confirming_alerts_off {
+        return Task::none();
+    }
+    // Escrow can't outlive alerts (invariant: escrow present ⟹ alerts
+    // on), so turning alerts off deletes any kit too. Delete unless we're
+    // *certain* nothing is escrowed (`Some(Off)`): when the tier is
+    // unknown (older API that doesn't report it), delete anyway — the
+    // escrow DELETE is idempotent (404 = success), so this is free
+    // insurance against ever stranding escrow with monitoring off.
+    let also_delete_escrow = !matches!(ra.escrow_tier(), Some(EscrowTier::Off));
+    let (Some(client), Some(_vault_id), Some(server_cube_id)) =
+        (client, ra.vault_id, server_cube_id)
+    else {
+        ra.error =
+            Some("Couldn't find this Vault on Connect yet — try again in a moment.".to_string());
+        return Task::none();
+    };
+    ra.submitting = true;
+    ra.confirming_alerts_off = false;
+    ra.error = None;
+    Task::perform(
+        async move {
+            disable_alerts(&client, server_cube_id, also_delete_escrow)
+                .await
+                .map_err(|e| e.to_string())
+        },
+        move |res| {
+            // Resulting escrow tier is Off; `Some(Off)` (not FullCube) so
+            // a failure never spuriously re-shows the PIN entry.
+            ra_msg(RecoveryAlertsMessage::ChangeResult(
+                res,
+                session_generation,
+                Some(EscrowTier::Off),
+            ))
+        },
+    )
+}
+
+fn select_escrow(
+    ra: &mut RecoveryAlerts,
+    tier: EscrowTier,
+    targets: EscrowTargets,
+    escrow_entitled: bool,
+    session_generation: u64,
+    cache: &Cache,
+    local_cube_id: &str,
+) -> Task<Message> {
+    let EscrowTargets {
+        client,
+        server_cube_id,
+        wallet,
+    } = targets;
+    // Re-picking the tier whose PIN we're already collecting is a
+    // no-op. Returning before the reset below matters: the card
+    // highlights Full Cube while `awaiting_pin`, and that highlighted
+    // button is pressable, so without this a stray click would wipe the
+    // digits typed so far and hide the field.
+    if ra.awaiting_pin && matches!(tier, EscrowTier::FullCube) {
+        return Task::none();
+    }
+    ra.awaiting_pin = false;
+    ra.pin.clear();
+    ra.cancel_pin_attempt();
+    ra.submitting = false;
+    if !escrow_entitled {
+        ra.error = Some("An encrypted recovery kit is part of the Estate plan.".to_string());
+        return Task::none();
+    }
+    // Skip a no-op re-select of the *known* current tier. When it's
+    // unknown on this device (`None`, older API), any selection proceeds
+    // so the owner can confirm/change it.
+    if ra.escrow_tier() == Some(tier) {
+        return Task::none();
+    }
+    // `ra.vault_id` is checked (not used further) as the "does Connect
+    // know about a Vault for this cube yet" gate — escrow/monitoring
+    // calls below are cube-scoped and never need the vault id itself.
+    let (Some(client), Some(_vault_id), Some(server_cube_id)) =
+        (client, ra.vault_id, server_cube_id)
+    else {
+        ra.error =
+            Some("Couldn't find this Vault on Connect yet — try again in a moment.".to_string());
+        return Task::none();
+    };
+    match tier {
+        EscrowTier::Off => {
+            // "Nothing — alerts only": delete the escrow set, keep alerts.
+            ra.submitting = true;
+            ra.error = None;
+            Task::perform(
+                async move {
+                    disable_escrow(&client, server_cube_id)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                move |res| {
+                    ra_msg(RecoveryAlertsMessage::ChangeResult(
+                        res,
+                        session_generation,
+                        Some(EscrowTier::Off),
+                    ))
+                },
+            )
+        }
+        EscrowTier::VaultOnly => {
+            // Descriptor-only escrow needs no seed (no PIN). Build the
+            // descriptor blob from the live wallet and enrol. `enroll_escrow`
+            // turns alerts on too, so this auto-enables alerts when off.
+            let Some(descriptor_json) =
+                descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
+            else {
+                ra.error = Some(
+                    "This Vault's descriptor isn't available on this device, so recovery \
+                     escrow can't be set up here."
+                        .to_string(),
+                );
+                return Task::none();
+            };
+            ra.submitting = true;
+            ra.error = None;
+            // Connect blinding (PR D3): the recovery-recipient list now
+            // serves envelopes, so sealing needs this Cube's encryption
+            // key to read the keyholder xpubs first.
+            let cube_enc_key = cache.cube_encryption_key.clone();
+            let network = cache.chain();
+            Task::perform(
+                async move {
+                    enroll_escrow(
+                        &client,
+                        server_cube_id,
+                        cube_enc_key.as_deref(),
+                        network.bitcoin_network(),
+                        descriptor_json,
+                        None,
+                    )
+                    .await
+                    .map_err(|e| e.to_string())
+                },
+                move |res| {
+                    ra_msg(RecoveryAlertsMessage::ChangeResult(
+                        res,
+                        session_generation,
+                        Some(EscrowTier::VaultOnly),
+                    ))
+                },
+            )
+        }
+        EscrowTier::FullCube => {
+            // Full-Cube escrows the seed too — re-confirm the PIN before
+            // exporting it. Collect the PIN; `ConfirmFullCube` enrols.
+            if wallet.is_none() {
+                ra.error = Some(
+                    "This Vault isn't available on this device, so full-Cube escrow can't \
+                     be set up here."
+                        .to_string(),
+                );
+                return Task::none();
+            }
+            ra.error = None;
+            ra.awaiting_pin = true;
+            ra.pin.clear();
+            Task::none()
+        }
+    }
+}
+
+fn admit_full_cube_upload(
+    ra: &mut RecoveryAlerts,
+    attempt: crate::app::cache::AppGeneration,
+    generation: u64,
+    targets: EscrowTargets,
+    session_generation: u64,
+    cache: &Cache,
+    local_cube_id: &str,
+) -> Task<Message> {
+    let EscrowTargets {
+        client,
+        server_cube_id,
+        wallet,
+    } = targets;
+    if generation != session_generation || ra.pin_attempt != Some(attempt) || !ra.submitting {
+        return Task::none();
+    }
+    let seed_json = ra.take_seed_for_upload(attempt, generation, session_generation);
+    let (Some(seed_json), Some(client), Some(_), Some(server_cube_id)) =
+        (seed_json, client, ra.vault_id, server_cube_id)
+    else {
+        ra.cancel_pin_attempt();
+        ra.submitting = false;
+        ra.error = Some("Full-Cube PIN result expired. Try again.".into());
+        return Task::none();
+    };
+    let Some(descriptor_json) =
+        descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
+    else {
+        ra.cancel_pin_attempt();
+        ra.submitting = false;
+        ra.error = Some("This Vault's descriptor isn't available on this device.".into());
+        return Task::none();
+    };
+    let cube_enc_key = cache.cube_encryption_key.clone();
+    let network = cache.chain();
+    // Admission has consumed the private seed slot. Retain its
+    // cancellation token until the network task checks it, so a
+    // subsequent tier change can still suppress an unstarted upload.
+    ra.pin_attempt = None;
+    ra.upload_attempt = Some(attempt);
+    let cancelled = Arc::clone(&ra.pin_cancelled);
+    Task::perform(
+        async move {
+            if cancelled.load(Ordering::Acquire) {
+                return Err("Full-Cube enrollment was cancelled.".into());
+            }
+            enroll_escrow_cancelable(
+                &client,
+                server_cube_id,
+                cube_enc_key.as_deref(),
+                network.bitcoin_network(),
+                descriptor_json,
+                Some(seed_json),
+                EscrowAdmission {
+                    should_cancel: || cancelled.load(Ordering::Acquire),
+                    start_upload: || {
+                        cancelled
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                            .is_ok()
+                    },
+                },
+            )
+            .await
+            .map_err(|e| e.to_string())
+        },
+        move |res| {
+            ra_msg(RecoveryAlertsMessage::FullCubeUploadResult(
+                attempt,
+                session_generation,
+                res,
+            ))
+        },
+    )
+}
+
+fn confirm_full_cube(
+    ra: &mut RecoveryAlerts,
+    targets: EscrowTargets,
+    escrow_entitled: bool,
+    session_generation: u64,
+    cache: &Cache,
+    local_cube_id: &str,
+) -> Task<Message> {
+    let EscrowTargets {
+        client,
+        server_cube_id,
+        wallet,
+    } = targets;
+    // Full-Cube is an escrow tier, so it's gated on `inheritanceEscrow`.
+    if !escrow_entitled || !ra.awaiting_pin {
+        return Task::none();
+    }
+    // We still require a resolved vault as a fast precondition, but
+    // `enroll_escrow` re-fetches and uses that vault's id, so we don't
+    // thread a (possibly stale) cached id through.
+    let (Some(_client), Some(_), Some(_server_cube_id)) = (client, ra.vault_id, server_cube_id)
+    else {
+        ra.error =
+            Some("Couldn't find this Vault on Connect yet — try again in a moment.".to_string());
+        return Task::none();
+    };
+    let Some(_descriptor_json) =
+        descriptor_blob_json(wallet.as_deref(), local_cube_id, cache.chain())
+    else {
+        ra.error = Some("This Vault's descriptor isn't available on this device.".to_string());
+        return Task::none();
+    };
+    // Unlock the seed with the entered PIN, build the seed blob, then
+    // enrol descriptor + seed. The mnemonic is wrapped in `Zeroizing`
+    // at the async boundary and never rides a message.
+    // `EscrowPin` is already zeroizing-backed; take it out (leaving an
+    // empty buffer) and let it drop inside the blocking task, wiping the
+    // PIN once the seed blob is built.
+    let pin = std::mem::take(&mut ra.pin);
+    let (seed_cube, selected_cube) = match seed_blob_cube_with_settings(cache, local_cube_id) {
+        Ok(c) => c,
+        Err(e) => {
+            ra.error = Some(e);
+            return Task::none();
+        }
+    };
+    let datadir = cache.datadir_path.path().to_path_buf();
+    let network = cache.chain();
+    let local_cube_id = local_cube_id.to_string();
+    ra.submitting = true;
+    ra.awaiting_pin = false;
+    ra.error = None;
+    let attempt = crate::app::cache::AppGeneration::next();
+    ra.pin_attempt = Some(attempt);
+    ra.pin_cancelled = Arc::new(AtomicBool::new(false));
+    ra.seed_slot = Arc::new(EscrowSeedSlot::default());
+    let cancelled = Arc::clone(&ra.pin_cancelled);
+    let slot = Arc::clone(&ra.seed_slot);
+    let app_generation = cache.app_generation;
+    Task::perform(
+        async move {
+            let seed_trial = tokio::task::spawn_blocking(move || {
+                build_seed_blob_json(
+                    &datadir,
+                    network,
+                    &local_cube_id,
+                    pin.as_str(),
+                    seed_cube,
+                    selected_cube,
+                    app_generation,
+                )
+            })
+            .await
+            .map_err(|e| format!("PIN task failed: {}", e));
+            match seed_trial {
+                Ok(Ok(SeedBlobOutcome::Duress(proof))) => FullCubeTaskResult::Duress(proof),
+                Ok(Ok(SeedBlobOutcome::Ready(seed_json))) => {
+                    if cancelled.load(Ordering::Acquire) {
+                        FullCubeTaskResult::Expired
+                    } else if let Ok(mut staged) = slot.0.lock() {
+                        if cancelled.load(Ordering::Acquire) {
+                            FullCubeTaskResult::Expired
+                        } else {
+                            *staged = Some(seed_json);
+                            FullCubeTaskResult::Ready
+                        }
+                    } else {
+                        FullCubeTaskResult::Expired
+                    }
+                }
+                Ok(Err(error)) | Err(error) => FullCubeTaskResult::Failed(error),
+            }
+        },
+        move |res| match res {
+            FullCubeTaskResult::Duress(proof) => {
+                Message::View(view::Message::DuressActivateLocal(proof))
+            }
+            FullCubeTaskResult::Ready => ra_msg(RecoveryAlertsMessage::FullCubePinReady(
+                attempt,
+                session_generation,
+            )),
+            FullCubeTaskResult::Failed(error) => ra_msg(RecoveryAlertsMessage::FullCubePinFailed(
+                attempt,
+                session_generation,
+                error,
+            )),
+            FullCubeTaskResult::Expired => ra_msg(RecoveryAlertsMessage::FullCubePinFailed(
+                attempt,
+                session_generation,
+                "Full-Cube PIN result expired. Try again.".into(),
+            )),
+        },
+    )
 }
 
 /// Serialises the descriptor blob JSON for escrow from the live wallet (the

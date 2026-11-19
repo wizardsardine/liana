@@ -267,12 +267,7 @@ impl Step for OwnerKeychainRestoreStep {
             }
         };
         staged.commit(ctx, RestoreSource::KeychainSeal);
-        ctx.restored_imported_wallet = imported_blob;
-        if let Some(imported) = &ctx.restored_imported_wallet {
-            ctx.descriptor = None;
-            ctx.restored_wallet_birthday = Some(imported.wallet.birthday);
-            ctx.wallet_alias = imported.wallet.name.clone();
-        }
+        apply_imported_wallet_metadata(ctx, imported_blob);
         // Carry the original Cube identity (UUID + name) out of the decrypted
         // envelope so the post-install `find_or_create_cube` re-mints the same
         // Cube. Reusing the UUID makes the Connect `register_cube` call
@@ -337,6 +332,18 @@ impl Step for OwnerKeychainRestoreStep {
                 None,
             ),
         }
+    }
+}
+
+fn apply_imported_wallet_metadata(
+    ctx: &mut Context,
+    imported_blob: Option<crate::services::recovery::ImportedDescriptorBlob>,
+) {
+    ctx.restored_imported_wallet = imported_blob;
+    if let Some(imported) = &ctx.restored_imported_wallet {
+        ctx.descriptor = None;
+        ctx.restored_wallet_birthday = Some(imported.wallet.birthday);
+        ctx.wallet_alias = imported.wallet.name.clone();
     }
 }
 

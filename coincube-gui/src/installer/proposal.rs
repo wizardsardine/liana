@@ -2,7 +2,13 @@
 use super::{Context, Error, Message, Step};
 use coincube_core::{
     descriptors::PathInfo,
-    miniscript::bitcoin::hashes::{sha256, Hash},
+    miniscript::{
+        bitcoin::{
+            bip32::Fingerprint,
+            hashes::{sha256, Hash},
+        },
+        descriptor::DescriptorPublicKey,
+    },
 };
 use coincube_mcp::{
     ipc::Grant,
@@ -384,6 +390,51 @@ fn account_identity(
     }
 }
 
+fn review_signer_line(
+    ctx: &Context,
+    path_name: &str,
+    desc_key: &DescriptorPublicKey,
+    assistant_origins: &[Fingerprint],
+) -> Option<String> {
+    let (origin, account) = account_identity(desc_key);
+    let fp = origin?;
+    let key = ctx.keys.get(&fp);
+    let alias = key
+        .map(|k| k.name.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Unnamed signer");
+    let assistant_supplied = assistant_origins.contains(&fp);
+    let (identity, source) = if assistant_supplied {
+        (
+            account
+                .map(|fingerprint| format!("account xpub fingerprint {fingerprint}"))
+                .unwrap_or_else(|| "account xpub fingerprint unavailable".to_string()),
+            "origin fingerprint was supplied by the assistant and was not checked",
+        )
+    } else if key.is_some_and(|k| k.keychain_key_id.is_some()) {
+        (
+            format!("fingerprint {fp}"),
+            "Mobile metadata recorded; verify on the phone",
+        )
+    } else if ctx.hws.iter().any(|(_, fingerprint, _)| *fingerprint == fp) {
+        (
+            format!("fingerprint {fp}"),
+            "hardware registration recorded; verify on the device",
+        )
+    } else if key.is_some_and(|k| k.is_border_wallet) {
+        (
+            format!("fingerprint {fp}"),
+            "Border Wallet provenance recorded; verify its source",
+        )
+    } else {
+        (
+            format!("fingerprint {fp}"),
+            "verify the original key source locally",
+        )
+    };
+    Some(format!("{path_name}: {alias} · {identity} · {source}"))
+}
+
 impl Step for Review {
     fn load_context(&mut self, ctx: &Context) {
         self.session.invalidate();
@@ -428,50 +479,11 @@ impl Step for Review {
                 };
                 descriptor_keys.sort_by_key(|key| account_identity(key).0);
                 for desc_key in descriptor_keys {
-                    let (origin, account) = account_identity(&desc_key);
-                    let Some(fp) = origin else {
-                        continue;
-                    };
-                    let key = ctx.keys.get(&fp);
-                    let alias = key
-                        .map(|k| k.name.as_str())
-                        .filter(|s| !s.is_empty())
-                        .unwrap_or("Unnamed signer");
-                    let assistant_supplied = assistant_origins.contains(&fp);
-                    let (identity, source) = if assistant_supplied {
-                        (
-                            account
-                                .map(|fingerprint| {
-                                    format!("account xpub fingerprint {fingerprint}")
-                                })
-                                .unwrap_or_else(|| {
-                                    "account xpub fingerprint unavailable".to_string()
-                                }),
-                            "origin fingerprint was supplied by the assistant and was not checked",
-                        )
-                    } else if key.is_some_and(|k| k.keychain_key_id.is_some()) {
-                        (
-                            format!("fingerprint {fp}"),
-                            "Mobile metadata recorded; verify on the phone",
-                        )
-                    } else if ctx.hws.iter().any(|(_, fingerprint, _)| *fingerprint == fp) {
-                        (
-                            format!("fingerprint {fp}"),
-                            "hardware registration recorded; verify on the device",
-                        )
-                    } else if key.is_some_and(|k| k.is_border_wallet) {
-                        (
-                            format!("fingerprint {fp}"),
-                            "Border Wallet provenance recorded; verify its source",
-                        )
-                    } else {
-                        (
-                            format!("fingerprint {fp}"),
-                            "verify the original key source locally",
-                        )
-                    };
-                    self.signers
-                        .push(format!("{path_name}: {alias} · {identity} · {source}"));
+                    if let Some(line) =
+                        review_signer_line(ctx, &path_name, &desc_key, &assistant_origins)
+                    {
+                        self.signers.push(line);
+                    }
                 }
             }
         }

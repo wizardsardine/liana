@@ -165,13 +165,7 @@ impl HttpObservationSource {
         deadline: Duration,
     ) -> Result<(u16, Vec<u8>, HeaderMap, i64), (FailureKind, bool)> {
         let prefix = Self::prefix(chain).map_err(|error| (error, false))?;
-        let request_stage = if path.starts_with("tx/") && path.ends_with("/hex") {
-            discovery::diagnostics::Stage::RawTransaction
-        } else if path.starts_with("tx/") && !path.contains("/outspend/") {
-            discovery::diagnostics::Stage::FreshTransaction
-        } else {
-            discovery::diagnostics::Stage::ChainView
-        };
+        let request_stage = observation_request_stage(path);
         self.bounded_within(deadline, async {
             if crate::services::esplora_backoff::remaining(&self.base).is_some() {
                 return Err(FailureKind::Http(429));
@@ -191,56 +185,15 @@ impl HttpObservationSource {
             if fresh {
                 request = request.header("X-Coincube-Observation", "fresh");
             }
-            let mut response = request.send().await.map_err(|error| {
+            let response = request.send().await.map_err(|error| {
                 if error.is_timeout() {
                     FailureKind::Deadline
                 } else {
                     FailureKind::Unavailable
                 }
             })?;
-            let status = response.status().as_u16();
-            if status == 429 {
-                crate::services::esplora_backoff::record(&self.base, response.headers());
-            }
-            if status != 200 && status != 404 {
-                return Err(FailureKind::Http(status));
-            }
-            let headers = response.headers().clone();
-            if fresh {
-                let mut markers = headers.get_all("x-coincube-observation").iter();
-                if markers.next().and_then(|v| v.to_str().ok()) != Some("fresh")
-                    || markers.next().is_some()
-                {
-                    return Err(FailureKind::FreshnessUnverified);
-                }
-                FreshRead::from_response(chain, (), stamp, &headers)?;
-            }
-            if response
-                .content_length()
-                .is_some_and(|n| n > body_limit as u64)
-            {
-                return Ok(Err(()));
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response.chunk().await.map_err(|error| {
-                if error.is_timeout() {
-                    FailureKind::Deadline
-                } else {
-                    FailureKind::Unavailable
-                }
-            })? {
-                if let Some(budget) = &self.budget {
-                    budget.charge_bytes(chunk.len())?;
-                }
-                if let Some(trace) = &self.ancestry_trace {
-                    trace.bytes(chain, chunk.len());
-                }
-                if chunk.len() > body_limit.saturating_sub(bytes.len()) {
-                    return Ok(Err(()));
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            Ok(Ok((status, bytes, headers, stamp)))
+            self.read_body_response(response, chain, stamp, fresh, body_limit)
+                .await
         })
         .await
         .map_err(|error| {
@@ -257,6 +210,74 @@ impl HttpObservationSource {
         })?
         .map_err(|()| (FailureKind::Malformed, true))
     }
+    async fn read_body_response(
+        &self,
+        mut response: reqwest::Response,
+        chain: ChainId,
+        stamp: i64,
+        fresh: bool,
+        body_limit: usize,
+    ) -> Result<Result<(u16, Vec<u8>, HeaderMap, i64), ()>, FailureKind> {
+        let status = response.status().as_u16();
+        if status == 429 {
+            crate::services::esplora_backoff::record(&self.base, response.headers());
+        }
+        if status != 200 && status != 404 {
+            return Err(FailureKind::Http(status));
+        }
+        let headers = response.headers().clone();
+        if fresh {
+            let mut markers = headers.get_all("x-coincube-observation").iter();
+            if markers.next().and_then(|v| v.to_str().ok()) != Some("fresh")
+                || markers.next().is_some()
+            {
+                return Err(FailureKind::FreshnessUnverified);
+            }
+            FreshRead::from_response(chain, (), stamp, &headers)?;
+        }
+        let Some(bytes) = self
+            .read_response_bytes(&mut response, chain, body_limit)
+            .await?
+        else {
+            return Ok(Err(()));
+        };
+        Ok(Ok((status, bytes, headers, stamp)))
+    }
+
+    async fn read_response_bytes(
+        &self,
+        response: &mut reqwest::Response,
+        chain: ChainId,
+        body_limit: usize,
+    ) -> Result<Option<Vec<u8>>, FailureKind> {
+        if response
+            .content_length()
+            .is_some_and(|n| n > body_limit as u64)
+        {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            if error.is_timeout() {
+                FailureKind::Deadline
+            } else {
+                FailureKind::Unavailable
+            }
+        })? {
+            if let Some(budget) = &self.budget {
+                budget.charge_bytes(chunk.len())?;
+            }
+            if let Some(trace) = &self.ancestry_trace {
+                trace.bytes(chain, chunk.len());
+            }
+            if chunk.len() > body_limit.saturating_sub(bytes.len()) {
+                return Ok(None);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(Some(bytes))
+    }
+
     /// Fetch one bounded ancestry link using the anonymous immutable-data route.
     /// Txid authentication permits cache hits, but proves neither canonical
     /// inclusion nor witness validity. These bytes must never become FreshRead
@@ -366,6 +387,16 @@ impl HttpObservationSource {
             stamp,
             &headers,
         )
+    }
+}
+
+fn observation_request_stage(path: &str) -> discovery::diagnostics::Stage {
+    if path.starts_with("tx/") && path.ends_with("/hex") {
+        discovery::diagnostics::Stage::RawTransaction
+    } else if path.starts_with("tx/") && !path.contains("/outspend/") {
+        discovery::diagnostics::Stage::FreshTransaction
+    } else {
+        discovery::diagnostics::Stage::ChainView
     }
 }
 

@@ -378,6 +378,165 @@ impl SparkSwap {
         )
     }
 
+    fn reverse_swap(&mut self) -> Task<Message> {
+        if !self.editable() {
+            return Task::none();
+        }
+        self.from = match self.from {
+            WalletAsset::Bitcoin => WalletAsset::Usdb,
+            WalletAsset::Usdb => WalletAsset::Bitcoin,
+        };
+        self.amount_input.clear();
+        self.max = false;
+        self.back_to_details();
+        self.fetch_limits()
+    }
+
+    fn request_swap_quote(&mut self) -> Task<Message> {
+        if !self.can_quote() {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let amount = if self.max {
+            SwapAmount::Max { from: self.from }
+        } else {
+            let Some(amount) = self.typed_amount() else {
+                return Task::none();
+            };
+            SwapAmount::Exact {
+                amount_in: AssetAmount {
+                    asset: self.from,
+                    amount,
+                },
+            }
+        };
+        self.request += 1;
+        let request = self.request;
+        self.phase = SwapPhase::Quoting;
+        Task::perform(
+            async move {
+                backend
+                    .client()
+                    .prepare_swap(amount, None)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::SparkSwap(SparkSwapMessage::QuoteLoaded {
+                    request,
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn settle_swap_quote(
+        &mut self,
+        request: u64,
+        result: Result<PrepareSwapOk, String>,
+    ) -> Task<Message> {
+        if request != self.request || !matches!(self.phase, SwapPhase::Quoting) {
+            return Task::none();
+        }
+        self.phase = match result {
+            Ok(ok) => {
+                self.limits = Some((self.from, ok.limits.clone()));
+                SwapPhase::Review(Box::new(ok))
+            }
+            Err(error) => SwapPhase::Details { error: Some(error) },
+        };
+        Task::none()
+    }
+
+    fn confirm_swap(&mut self) -> Task<Message> {
+        let SwapPhase::Review(ok) = &self.phase else {
+            return Task::none();
+        };
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let ok = ok.clone();
+        let handle = ok.handle.clone();
+        self.request += 1;
+        let request = self.request;
+        self.phase = SwapPhase::Swapping(ok);
+        Task::perform(
+            async move { SwapAttempt::from_result(backend.client().swap(handle).await) },
+            move |result| {
+                Message::View(view::Message::SparkSwap(SparkSwapMessage::Swapped {
+                    request,
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn settle_swap(&mut self, request: u64, result: SwapAttempt) -> Task<Message> {
+        if request != self.request || !matches!(self.phase, SwapPhase::Swapping(_)) {
+            return Task::none();
+        }
+        self.phase = match result {
+            SwapAttempt::Done(ok) => SwapPhase::Swapped(ok),
+            SwapAttempt::Refused(message) => SwapPhase::Refused(message),
+            SwapAttempt::Unknown(message) => SwapPhase::Unknown(message),
+        };
+        // The balances moved (or may have), and a swap out of USDB may
+        // have put auto-convert on hold: show both as they are now.
+        // The line read before the swap may no longer hold, so the
+        // result shows none until a read sent from here succeeds.
+        self.auto_convert = None;
+        self.auto_convert_read += 1;
+        Task::batch([
+            self.fetch_balance(),
+            self.fetch_auto_convert(),
+            self.fetch_payments(),
+        ])
+    }
+
+    fn start_another_swap(&mut self) -> Task<Message> {
+        if matches!(
+            self.phase,
+            SwapPhase::Swapped(_) | SwapPhase::Unknown(_) | SwapPhase::Refused(_)
+        ) {
+            self.amount_input.clear();
+            self.max = false;
+            self.phase = SwapPhase::Details { error: None };
+            self.result_unseen = false;
+            self.request += 1;
+            return Task::batch([self.fetch_balance(), self.fetch_limits()]);
+        }
+        Task::none()
+    }
+
+    fn open_swap_transaction(&mut self, idx: usize) -> Task<Message> {
+        let Some(payment) = self.recent_transactions.get(idx).cloned() else {
+            return Task::none();
+        };
+        Task::batch(vec![
+            crate::app::state::redirect(Menu::Spark(crate::app::menu::SparkSubMenu::Transactions(
+                None,
+            ))),
+            Task::done(Message::View(view::Message::SparkTransactions(
+                view::SparkTransactionsMessage::Preselect(payment),
+            ))),
+        ])
+    }
+
+    fn settle_swap_limits(
+        &mut self,
+        from: WalletAsset,
+        limits: Option<ConversionLimits>,
+    ) -> Task<Message> {
+        if from == self.from {
+            if let Some(limits) = limits {
+                self.limits = Some((from, limits));
+            }
+        }
+        Task::none()
+    }
+
     /// The app's entry point: every Swap message reaches this panel whether
     /// or not it is showing, so a swap's answer is never lost to navigation.
     /// `on_screen` says whether the Swap page is the current one.
@@ -409,134 +568,20 @@ impl SparkSwap {
                 }
                 Task::none()
             }
-            SparkSwapMessage::Reverse => {
-                if !self.editable() {
-                    return Task::none();
-                }
-                self.from = match self.from {
-                    WalletAsset::Bitcoin => WalletAsset::Usdb,
-                    WalletAsset::Usdb => WalletAsset::Bitcoin,
-                };
-                self.amount_input.clear();
-                self.max = false;
-                self.back_to_details();
-                self.fetch_limits()
-            }
+            SparkSwapMessage::Reverse => self.reverse_swap(),
             SparkSwapMessage::EditAmount => {
                 if self.editable() {
                     self.back_to_details();
                 }
                 Task::none()
             }
-            SparkSwapMessage::GetQuote => {
-                if !self.can_quote() {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                let amount = if self.max {
-                    SwapAmount::Max { from: self.from }
-                } else {
-                    let Some(amount) = self.typed_amount() else {
-                        return Task::none();
-                    };
-                    SwapAmount::Exact {
-                        amount_in: AssetAmount {
-                            asset: self.from,
-                            amount,
-                        },
-                    }
-                };
-                self.request += 1;
-                let request = self.request;
-                self.phase = SwapPhase::Quoting;
-                Task::perform(
-                    async move {
-                        backend
-                            .client()
-                            .prepare_swap(amount, None)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::SparkSwap(SparkSwapMessage::QuoteLoaded {
-                            request,
-                            result,
-                        }))
-                    },
-                )
-            }
+            SparkSwapMessage::GetQuote => self.request_swap_quote(),
             SparkSwapMessage::QuoteLoaded { request, result } => {
-                if request != self.request || !matches!(self.phase, SwapPhase::Quoting) {
-                    return Task::none();
-                }
-                self.phase = match result {
-                    Ok(ok) => {
-                        self.limits = Some((self.from, ok.limits.clone()));
-                        SwapPhase::Review(Box::new(ok))
-                    }
-                    Err(error) => SwapPhase::Details { error: Some(error) },
-                };
-                Task::none()
+                self.settle_swap_quote(request, result)
             }
-            SparkSwapMessage::Confirm => {
-                let SwapPhase::Review(ok) = &self.phase else {
-                    return Task::none();
-                };
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                let ok = ok.clone();
-                let handle = ok.handle.clone();
-                self.request += 1;
-                let request = self.request;
-                self.phase = SwapPhase::Swapping(ok);
-                Task::perform(
-                    async move { SwapAttempt::from_result(backend.client().swap(handle).await) },
-                    move |result| {
-                        Message::View(view::Message::SparkSwap(SparkSwapMessage::Swapped {
-                            request,
-                            result,
-                        }))
-                    },
-                )
-            }
-            SparkSwapMessage::Swapped { request, result } => {
-                if request != self.request || !matches!(self.phase, SwapPhase::Swapping(_)) {
-                    return Task::none();
-                }
-                self.phase = match result {
-                    SwapAttempt::Done(ok) => SwapPhase::Swapped(ok),
-                    SwapAttempt::Refused(message) => SwapPhase::Refused(message),
-                    SwapAttempt::Unknown(message) => SwapPhase::Unknown(message),
-                };
-                // The balances moved (or may have), and a swap out of USDB may
-                // have put auto-convert on hold: show both as they are now.
-                // The line read before the swap may no longer hold, so the
-                // result shows none until a read sent from here succeeds.
-                self.auto_convert = None;
-                self.auto_convert_read += 1;
-                Task::batch([
-                    self.fetch_balance(),
-                    self.fetch_auto_convert(),
-                    self.fetch_payments(),
-                ])
-            }
-            SparkSwapMessage::SwapAgain => {
-                if matches!(
-                    self.phase,
-                    SwapPhase::Swapped(_) | SwapPhase::Unknown(_) | SwapPhase::Refused(_)
-                ) {
-                    self.amount_input.clear();
-                    self.max = false;
-                    self.phase = SwapPhase::Details { error: None };
-                    self.result_unseen = false;
-                    self.request += 1;
-                    return Task::batch([self.fetch_balance(), self.fetch_limits()]);
-                }
-                Task::none()
-            }
+            SparkSwapMessage::Confirm => self.confirm_swap(),
+            SparkSwapMessage::Swapped { request, result } => self.settle_swap(request, result),
+            SparkSwapMessage::SwapAgain => self.start_another_swap(),
             SparkSwapMessage::BalanceLoaded(balance) => {
                 if let Some((btc_sats, usdb)) = balance {
                     self.btc_sats = btc_sats;
@@ -546,12 +591,7 @@ impl SparkSwap {
                 Task::none()
             }
             SparkSwapMessage::LimitsLoaded { from, limits } => {
-                if from == self.from {
-                    if let Some(limits) = limits {
-                        self.limits = Some((from, limits));
-                    }
-                }
-                Task::none()
+                self.settle_swap_limits(from, limits)
             }
             // Pricing needs the cache: `App` and `update` route a load to
             // `set_recent_payments` before it gets here.
@@ -561,19 +601,7 @@ impl SparkSwap {
                 self.recent_transactions.clear();
                 Task::none()
             }
-            SparkSwapMessage::SelectTransaction(idx) => {
-                let Some(payment) = self.recent_transactions.get(idx).cloned() else {
-                    return Task::none();
-                };
-                Task::batch(vec![
-                    crate::app::state::redirect(Menu::Spark(
-                        crate::app::menu::SparkSubMenu::Transactions(None),
-                    )),
-                    Task::done(Message::View(view::Message::SparkTransactions(
-                        view::SparkTransactionsMessage::Preselect(payment),
-                    ))),
-                ])
-            }
+            SparkSwapMessage::SelectTransaction(idx) => self.open_swap_transaction(idx),
             SparkSwapMessage::History => crate::app::state::redirect(Menu::Spark(
                 crate::app::menu::SparkSubMenu::Transactions(None),
             )),
@@ -660,32 +688,34 @@ pub fn parse_amount(input: &str, asset: WalletAsset, decimals: u32) -> Option<u1
             }
             cleaned.parse::<u128>().ok()?
         }
-        WalletAsset::Usdb => {
-            let (whole, frac) = cleaned.split_once('.').unwrap_or((&cleaned, ""));
-            let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
-            if !digits(whole) || !digits(frac) || frac.len() > decimals as usize {
-                return None;
-            }
-            if whole.is_empty() && frac.is_empty() {
-                return None;
-            }
-            let scale = 10_u128.checked_pow(decimals)?;
-            let whole: u128 = if whole.is_empty() {
-                0
-            } else {
-                whole.parse().ok()?
-            };
-            let frac_units: u128 = if frac.is_empty() {
-                0
-            } else {
-                format!("{:0<width$}", frac, width = decimals as usize)
-                    .parse()
-                    .ok()?
-            };
-            whole.checked_mul(scale)?.checked_add(frac_units)?
-        }
+        WalletAsset::Usdb => parse_usdb_amount(&cleaned, decimals)?,
     };
     (amount > 0).then_some(amount)
+}
+
+fn parse_usdb_amount(cleaned: &str, decimals: u32) -> Option<u128> {
+    let (whole, frac) = cleaned.split_once('.').unwrap_or((cleaned, ""));
+    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+    if !digits(whole) || !digits(frac) || frac.len() > decimals as usize {
+        return None;
+    }
+    if whole.is_empty() && frac.is_empty() {
+        return None;
+    }
+    let scale = 10_u128.checked_pow(decimals)?;
+    let whole: u128 = if whole.is_empty() {
+        0
+    } else {
+        whole.parse().ok()?
+    };
+    let frac_units: u128 = if frac.is_empty() {
+        0
+    } else {
+        format!("{:0<width$}", frac, width = decimals as usize)
+            .parse()
+            .ok()?
+    };
+    whole.checked_mul(scale)?.checked_add(frac_units)
 }
 
 /// `amount` of `asset` for display: "1,000,000 SATS" or "1,000.00 USDB".
