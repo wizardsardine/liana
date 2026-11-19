@@ -3612,7 +3612,7 @@ impl ConnectAccountPanel {
         self.update_message(ConnectAccountMessage::Error(error))
     }
 
-    fn edit_two_factor_challenge_code(&mut self, input: SecretInput) -> iced::Task<Message> {
+    fn edit_two_factor_challenge_code(&mut self, input: view::SecretInput) -> iced::Task<Message> {
         if let ConnectFlowStep::TwoFactor {
             code,
             backup,
