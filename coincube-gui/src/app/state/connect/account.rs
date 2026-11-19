@@ -4988,7 +4988,7 @@ impl ConnectAccountPanel {
             }
             // Confirmed not in duress — NOW reveal the dashboard.
             DuressCheckOutcome::Ok(s) => {
-                return self.admit_sign_in_after_duress_check(s, gen);
+                return self.admit_sign_in_after_duress_check(s);
             }
             // Transient (network / 5xx / rate-limit) — retry with
             // backoff while attempts remain.
@@ -5062,7 +5062,6 @@ impl ConnectAccountPanel {
     fn admit_sign_in_after_duress_check(
         &mut self,
         s: crate::services::coincube::DuressState,
-        gen: u64,
     ) -> iced::Task<Message> {
         self.step = ConnectFlowStep::Dashboard;
         self.signing_in_with_authenticator = false;
@@ -5377,8 +5376,7 @@ impl ConnectAccountPanel {
         tf.clear_entry();
         tf.note = None;
         tf.panel = TwoFactorPanel::Regenerate;
-        return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-        iced::Task::none()
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
     }
 
     fn open_two_factor_disable(&mut self) -> iced::Task<Message> {
@@ -5389,8 +5387,7 @@ impl ConnectAccountPanel {
         tf.clear_entry();
         tf.note = None;
         tf.panel = TwoFactorPanel::Disable { backup: false };
-        return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-        iced::Task::none()
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
     }
 
     fn cancel_two_factor_settings(&mut self) -> iced::Task<Message> {
@@ -6977,7 +6974,7 @@ impl ConnectAccountPanel {
         // plain future, so no polling subscription is needed here.
         match crate::services::passkey::reauth::begin(&cube) {
             Ok(fut) => {
-                return iced::Task::perform(
+                iced::Task::perform(
                     async move {
                         // The words are dropped (and zeroized) right
                         // here. What authorizes the disable is that the
@@ -6994,15 +6991,14 @@ impl ConnectAccountPanel {
                             )),
                         ))
                     },
-                );
+                )
             }
             Err(e) => {
                 d.submitting = false;
                 d.error = Some(e.user_message());
-                return iced::Task::none();
+                iced::Task::none()
             }
         }
-        iced::Task::none()
     }
 
     fn apply_duress_disable_step_up(
