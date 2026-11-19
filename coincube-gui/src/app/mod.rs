@@ -6631,7 +6631,15 @@ impl App {
                 _ => {}
             }
         }
-        self.route_dispatch(message)
+        let route = self.route_dispatch(message);
+        // Transfers into the Vault, Liquid refunds and Buy/Sell reserve an
+        // imported address through the same lock without passing through
+        // the Receive route: once any reservation settles, the panel reads
+        // its allocation indexes back instead of vouching for old ones.
+        match self.panels.imported_bitcoin.as_mut() {
+            Some(panel) => Task::batch([route, panel.reread_if_reserved_elsewhere()]),
+            None => route,
+        }
     }
 
     fn route_dispatch(&mut self, message: Message) -> Task<Message> {

@@ -58,6 +58,72 @@ mod keys;
 
 use keys::{KeySource, KeyStatus, KeysState};
 
+// Every imported receive reservation, from any screen, counts here: started
+// before the reservation lock is requested, finished when the call returns
+// (also on error or cancellation). A panel snapshot vouches for allocation
+// indexes only while no reservation has started since it was read. Tests
+// keep a per-thread count so parallel tests cannot invalidate each other.
+#[cfg(not(test))]
+static RESERVATIONS_STARTED: AtomicU64 = AtomicU64::new(0);
+#[cfg(not(test))]
+static RESERVATIONS_FINISHED: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+thread_local! {
+    static RESERVATIONS_STARTED: AtomicU64 = const { AtomicU64::new(0) };
+    static RESERVATIONS_FINISHED: AtomicU64 = const { AtomicU64::new(0) };
+}
+
+#[cfg(not(test))]
+fn reservation_counts() -> (u64, u64) {
+    (
+        RESERVATIONS_STARTED.load(Ordering::SeqCst),
+        RESERVATIONS_FINISHED.load(Ordering::SeqCst),
+    )
+}
+#[cfg(test)]
+fn reservation_counts() -> (u64, u64) {
+    (
+        RESERVATIONS_STARTED.with(|c| c.load(Ordering::SeqCst)),
+        RESERVATIONS_FINISHED.with(|c| c.load(Ordering::SeqCst)),
+    )
+}
+
+fn count_reservation_started() {
+    #[cfg(not(test))]
+    RESERVATIONS_STARTED.fetch_add(1, Ordering::SeqCst);
+    #[cfg(test)]
+    RESERVATIONS_STARTED.with(|c| c.fetch_add(1, Ordering::SeqCst));
+}
+
+fn count_reservation_finished() {
+    #[cfg(not(test))]
+    RESERVATIONS_FINISHED.fetch_add(1, Ordering::SeqCst);
+    #[cfg(test)]
+    RESERVATIONS_FINISHED.with(|c| c.fetch_add(1, Ordering::SeqCst));
+}
+
+/// The settled reservation count, or `None` while any reservation is in
+/// flight (its allocation index is not yet known).
+fn reservation_epoch() -> Option<u64> {
+    let (started, finished) = reservation_counts();
+    (started == finished).then_some(started)
+}
+
+struct ReservationInFlight;
+
+impl ReservationInFlight {
+    fn begin() -> Self {
+        count_reservation_started();
+        Self
+    }
+}
+
+impl Drop for ReservationInFlight {
+    fn drop(&mut self) {
+        count_reservation_finished();
+    }
+}
+
 /// Serialize imported receive allocation per public source across sessions.
 /// Source and paired target descriptors have the same source digest. The guard
 /// is released before callers request a poll; it never owns daemon shutdown.
@@ -66,6 +132,7 @@ pub(crate) async fn reserve_receive_address(
     descriptor: WalletDescriptor,
     daemon: Arc<dyn Daemon + Send + Sync>,
 ) -> Result<model::GetAddressResult, String> {
+    let _in_flight = ReservationInFlight::begin();
     let source = descriptor.as_imported().and_then(|imported| {
         coincube_core::public_wallet_source::SplitSource::new(
             imported.receive_descriptor().clone(),
@@ -476,6 +543,12 @@ pub struct ImportedBitcoinPanel {
     /// behind the daemon. Withholds them until a fresh snapshot is read;
     /// readiness and the Vault routes are unaffected.
     address_state_stale: bool,
+    /// Reservation epoch `info` was read under (see [`reservation_epoch`]).
+    /// `None` when unknown or read while a reservation was in flight.
+    info_epoch: Option<u64>,
+    /// Epoch captured when the in-flight snapshot or progress read began.
+    refresh_epoch: Option<u64>,
+    progress_epoch: Option<u64>,
     show_details: bool,
     abandoned: bool,
     connect_token: Option<String>,
@@ -551,6 +624,11 @@ impl ImportedBitcoinPanel {
             coins: None,
             address: None,
             address_state_stale: false,
+            // Every read that sets `info` records its own epoch first;
+            // these seed values matter only for a read that never ran.
+            info_epoch: reservation_epoch(),
+            refresh_epoch: reservation_epoch(),
+            progress_epoch: reservation_epoch(),
             show_details: false,
             abandoned: false,
             connect_token: None,
@@ -681,6 +759,23 @@ impl ImportedBitcoinPanel {
         self.refresh()
     }
 
+    /// Read the snapshot back when a reservation made anywhere (Receive, a
+    /// transfer into the Vault, a refund, Buy/Sell) finished since `info` was
+    /// read. Called after every dispatched message; it is a no-op while a
+    /// snapshot is in flight or a reservation is still running.
+    pub fn reread_if_reserved_elsewhere(&mut self) -> Task<Message> {
+        if self.busy || self.address_reserving || self.daemon.is_none() || self.info.is_none() {
+            return Task::none();
+        }
+        match reservation_epoch() {
+            Some(epoch) if self.info_epoch != Some(epoch) => {
+                self.address_state_stale = true;
+                self.refresh()
+            }
+            _ => Task::none(),
+        }
+    }
+
     /// Drop what a runtime reported (scan status, coins, history, the
     /// reserved address). Key inventory and the persisted attachment stay.
     fn clear_runtime_evidence(&mut self) {
@@ -743,7 +838,10 @@ impl ImportedBitcoinPanel {
     /// reporting for this exact Cube attachment. Historical scan bounds are
     /// deliberately not used as address-allocation state.
     pub fn verified_address_state(&self) -> Option<(u32, u32)> {
-        if self.address_state_stale {
+        if self.address_state_stale
+            || self.info_epoch.is_none()
+            || self.info_epoch != reservation_epoch()
+        {
             return None;
         }
         let wallet = self.import.active_attachment()?;
@@ -1726,6 +1824,7 @@ impl ImportedBitcoinPanel {
                     Ok((info, coins, stage)) => {
                         self.snapshot_failed = false;
                         self.address_state_stale = false;
+                        self.info_epoch = self.refresh_epoch;
                         self.info = Some(info);
                         self.coins = Some(coins);
                         self.import.stage = stage;
@@ -1781,6 +1880,7 @@ impl ImportedBitcoinPanel {
                             .imported_wallet
                             .as_ref()
                             .is_some_and(|status| status.history_complete);
+                        self.info_epoch = self.progress_epoch;
                         self.info = Some(info);
                         if self.snapshot_failed {
                             // Keep the full-snapshot error actionable until a
@@ -2016,6 +2116,7 @@ impl ImportedBitcoinPanel {
         let cube_id = self.cube_id.clone();
         let operation_id = self.import.operation_id;
         self.busy = true;
+        self.refresh_epoch = reservation_epoch();
         Task::perform(
             async move {
                 let info = daemon.get_info().await.map_err(|e| e.to_string())?;
@@ -2049,6 +2150,7 @@ impl ImportedBitcoinPanel {
             return Task::none();
         };
         self.progress_polling = true;
+        self.progress_epoch = reservation_epoch();
         let generation = self.generation;
         Task::perform(
             async move { daemon.get_info().await.map_err(|error| error.to_string()) },
@@ -3922,6 +4024,43 @@ mod tests {
         });
         panel.coins = Some(ListCoinsResult { coins: Vec::new() });
         panel
+    }
+
+    #[test]
+    fn a_reservation_from_any_screen_withdraws_and_rereads_allocation_indexes() {
+        let mut panel = ready_import_panel();
+        let daemon: Arc<dyn Daemon + Send + Sync> =
+            Arc::new(crate::daemon::client::Coincubed::new(NoRpcClient));
+        panel.daemon = Some(daemon);
+        panel.owns_daemon = false;
+        assert!(panel.verified_address_state().is_some());
+        let _ = panel.reread_if_reserved_elsewhere();
+        assert!(!panel.busy, "a settled snapshot is not read again");
+
+        // A transfer, refund or Buy/Sell reservation is running: the indexes
+        // are withheld, and nothing is read back until it settles.
+        let in_flight = ReservationInFlight::begin();
+        assert!(panel.verified_address_state().is_none());
+        let _ = panel.reread_if_reserved_elsewhere();
+        assert!(!panel.busy);
+        drop(in_flight);
+
+        // Settled: the old snapshot still does not vouch, and is read back.
+        assert!(panel.verified_address_state().is_none());
+        let _ = panel.reread_if_reserved_elsewhere();
+        assert!(panel.busy);
+        assert!(panel.address_state_stale);
+
+        let snapshot = (
+            panel.info.clone().unwrap(),
+            panel.coins.clone().unwrap(),
+            panel.import.stage.clone(),
+        );
+        let generation = panel.generation;
+        let _ = panel.update_event(ImportEvent::Refreshed(generation, Ok(snapshot)));
+        assert!(panel.verified_address_state().is_some());
+        let _ = panel.reread_if_reserved_elsewhere();
+        assert!(!panel.busy);
     }
 
     #[tokio::test]
