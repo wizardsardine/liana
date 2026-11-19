@@ -1938,127 +1938,21 @@ impl Home {
             }
             Message::View(ViewMessage::CreationBackup(msg)) => self.update_creation_backup(msg),
             Message::View(ViewMessage::CreationBackupBypassRequested) => {
-                // Not while a Kit upload is in flight: its result decides
-                // whether a Cube gets written, and taking the acknowledgement
-                // underneath it would race two finalizers.
-                if matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) || self.creation_backup_hub().any()
-                {
-                    // A finished backup is written by Continue; the bypass
-                    // would record "no backup" over it.
-                    return Task::none();
-                }
-                if matches!(self.state, State::CreationBackup(_)) {
-                    self.state = State::CreationBackup(CreationBackupStep::Bypass {
-                        acknowledged: false,
-                    });
-                    self.error = None;
-                }
-                Task::none()
+                self.request_creation_backup_bypass()
             }
             Message::View(ViewMessage::CreationBackupAcknowledgeBypass(acknowledged)) => {
-                if let State::CreationBackup(CreationBackupStep::Bypass { .. }) = &self.state {
-                    self.state = State::CreationBackup(CreationBackupStep::Bypass { acknowledged });
-                }
-                Task::none()
+                self.acknowledge_creation_backup_bypass(acknowledged)
             }
             Message::View(ViewMessage::CreationBackupBypassConfirmed) => {
-                // Only an *acknowledged* bypass proceeds. Reaching this message
-                // with the box unticked means the view let a click through, and
-                // the safe answer is to do nothing rather than create an
-                // unbacked-up Cube the user never agreed to.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::Bypass { acknowledged: true })
-                ) || self.creation_backup_hub().any()
-                {
-                    return Task::none();
-                }
-                let bypass = creation_gate::CreationBackupBypass {
-                    at: chrono::Utc::now().timestamp(),
-                    // Verbatim, so a later support conversation is about the
-                    // same words the user actually agreed to.
-                    acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
-                };
-                // Same acknowledgement, same recorded evidence, either shape of
-                // Cube. Only the write differs: a passkey Cube has no seed file
-                // or device secret to mint.
-                if self.creating_passkey_cube() {
-                    self.finalize_passkey_cube_creation(false, Some(bypass), None)
-                } else {
-                    self.finalize_cube_creation(false, Some(bypass), None)
-                }
+                self.confirm_creation_backup_bypass()
             }
             Message::View(ViewMessage::CreationBackupChoiceRequested) => {
-                // Never mid-upload: that result decides whether a Cube gets
-                // written, and stepping away underneath it would race two
-                // finalizers.
-                if matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) {
-                    return Task::none();
-                }
-                if matches!(self.state, State::CreationBackup(_)) {
-                    self.scrub_creation_kit();
-                    self.state = State::CreationBackup(CreationBackupStep::Choice);
-                    self.error = None;
-                }
-                Task::none()
+                self.choose_creation_backup()
             }
-            Message::View(ViewMessage::CreationKitRequested) => {
-                // From the choice screen, or back out of "I'll do this later" —
-                // the acknowledgement is a decision the user may reverse while
-                // the Cube is still unwritten. Never while a Kit is out of
-                // reach: a signed-out session has nowhere to upload one.
-                // Applies to both unlock methods.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(
-                        CreationBackupStep::Choice | CreationBackupStep::Bypass { .. }
-                    )
-                ) || !self.can_create_recovery_kit()
-                    || self.creation_kit_evidence.is_some()
-                {
-                    return Task::none();
-                }
-                self.scrub_creation_kit();
-                self.state = State::CreationBackup(CreationBackupStep::KitPassword);
-                Task::none()
-            }
+            Message::View(ViewMessage::CreationKitRequested) => self.request_creation_kit(),
             Message::View(ViewMessage::CreationKit(msg)) => self.update_creation_kit(msg),
             Message::View(ViewMessage::CreationKitUploaded(result)) => {
-                // Only the upload this step is waiting on counts.
-                if !matches!(
-                    self.state,
-                    State::CreationBackup(CreationBackupStep::KitUploading)
-                ) {
-                    return Task::none();
-                }
-                match result {
-                    Ok(evidence) => {
-                        // The Kit is on Connect. Back to the hub, which shows
-                        // it as backed up; Continue there writes the Cube with
-                        // this evidence (and the phrase's, if confirmed too).
-                        self.scrub_creation_kit();
-                        self.creating_cube = false;
-                        self.creation_kit_evidence = Some(evidence);
-                        self.state = State::CreationBackup(CreationBackupStep::Choice);
-                        Task::none()
-                    }
-                    Err(e) => {
-                        // Nothing was written. Back to the password screen with
-                        // the reason: the user can retry, or take the
-                        // acknowledgement instead. Both exits still exist.
-                        tracing::warn!("recovery kit upload during creation failed: {}", e);
-                        self.creating_cube = false;
-                        self.creation_kit_error = Some(e);
-                        self.state = State::CreationBackup(CreationBackupStep::KitPassword);
-                        Task::none()
-                    }
-                }
+                self.creation_kit_uploaded(result)
             }
             Message::View(ViewMessage::CreationBackupContinue) => self.finish_creation_backup(),
             Message::View(ViewMessage::CancelCreationBackup) => {
@@ -2067,77 +1961,13 @@ impl Home {
             }
             Message::CubeCreated(res) => self.cube_created(res),
             // --- Passkey ceremony flow ---
-            Message::PasskeyWindowId(window_id) => {
-                if let Some(ceremony) = &mut self.passkey_ceremony {
-                    if !ceremony.create_webview(window_id) {
-                        self.creating_cube = false;
-                        self.passkey_ceremony = None;
-                        self.error = Some(
-                            "Failed to open passkey webview. Check your system's WebView support."
-                                .to_string(),
-                        );
-                    }
-                }
-                Task::none()
-            }
-            Message::PasskeyWebviewUpdate(msg) => {
-                if let Some(ceremony) = &mut self.passkey_ceremony {
-                    ceremony.webview_manager.update(msg);
-
-                    // Poll for IPC result
-                    if let Some(result) = ceremony.try_recv_result() {
-                        return Task::done(Message::PasskeyCeremonyResult(result));
-                    }
-                }
-                Task::none()
-            }
+            Message::PasskeyWindowId(window_id) => self.attach_passkey_webview(window_id),
+            Message::PasskeyWebviewUpdate(msg) => self.update_passkey_webview(msg),
             Message::CubeRemoteRegistered {
                 cube_id,
                 network,
                 result,
-            } => {
-                let open = self.open_after_registration.as_ref() == Some(&cube_id);
-                if open {
-                    self.open_after_registration = None;
-                    self.open_created_cube = Some(cube_id.clone());
-                }
-                match result {
-                    Ok(resp) => {
-                        log::info!(
-                            "[LAUNCHER] Cube {} registered remotely (server ID: {})",
-                            resp.uuid,
-                            resp.id
-                        );
-                        self.cube_sync_errors.remove(&cube_id);
-                        let network_dir = self.datadir_path.network_directory(network);
-                        let owner = self.connect_owner();
-                        Task::perform(
-                            async move {
-                                settings::mark_cube_synced(&network_dir, &cube_id, owner)
-                                    .await
-                                    .ok();
-                            },
-                            |_| Message::View(ViewMessage::Check),
-                        )
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[LAUNCHER] Failed to register cube {} remotely: {}",
-                            cube_id,
-                            e
-                        );
-                        // Keep the reason: this is the only signal the Cubes list
-                        // has that the Cube is not merely mid-sync.
-                        self.cube_sync_errors.insert(cube_id, e);
-                        // The Cube still opens; the catch-up sync registers it.
-                        if open {
-                            self.reload()
-                        } else {
-                            Task::none()
-                        }
-                    }
-                }
-            }
+            } => self.cube_remote_registered(cube_id, network, result),
             Message::CatchUpSyncFinished(Err(())) => {
                 // The round never ran, so it has no verdict to give. Keep the
                 // reasons already on record: wiping them here would drop a
@@ -2148,99 +1978,10 @@ impl Home {
             }
             Message::CatchUpSyncFinished(Ok(outcomes)) => self.catch_up_sync_finished(outcomes),
             Message::CubeLimitsLoaded(result) => self.cube_limits_loaded(result),
-            Message::PasskeyCeremonyResult(result) => {
-                // Close the ceremony webview
-                if let Some(mut ceremony) = self.passkey_ceremony.take() {
-                    ceremony.close();
-                }
-
-                match result {
-                    Ok(CeremonyOutcome::Registered(registration)) => {
-                        // Shared with the native macOS path: one place decides
-                        // what a successful registration does, so the two
-                        // ceremony backends cannot drift on whether the Cube is
-                        // gated (they did — this one persisted immediately).
-                        self.passkey_registration_succeeded(
-                            registration.credential_id.clone(),
-                            &registration.prf_output,
-                        )
-                    }
-                    Ok(CeremonyOutcome::Authenticated(_auth)) => {
-                        // Authentication during creation shouldn't happen,
-                        // but handle gracefully.
-                        self.creating_cube = false;
-                        self.error = Some(
-                            "Unexpected authentication response during registration.".to_string(),
-                        );
-                        Task::none()
-                    }
-                    Err(e) => {
-                        self.creating_cube = false;
-                        // `Display` is the developer string ("Passkey ceremony
-                        // failed: …"); the user gets the registration copy, and
-                        // the detail goes to the log where it is of use.
-                        tracing::warn!("passkey registration failed: {e}");
-                        self.error = Some(e.registration_message());
-                        Task::none()
-                    }
-                }
-            }
-            Message::CancelPasskeyCeremony => {
-                if let Some(mut ceremony) = self.passkey_ceremony.take() {
-                    ceremony.close();
-                }
-                #[cfg(target_os = "macos")]
-                {
-                    if let Some(ceremony) = self.native_passkey_ceremony.take() {
-                        ceremony.cancel();
-                    }
-                }
-                self.creating_cube = false;
-                Task::none()
-            }
+            Message::PasskeyCeremonyResult(result) => self.finish_passkey_ceremony(result),
+            Message::CancelPasskeyCeremony => self.cancel_passkey_ceremony(),
             #[cfg(target_os = "macos")]
-            Message::NativePasskeyTick => {
-                use crate::services::passkey::macos::NativeOutcome;
-                let outcome = self
-                    .native_passkey_ceremony
-                    .as_ref()
-                    .and_then(|c| c.try_recv());
-                let Some(outcome) = outcome else {
-                    return Task::none();
-                };
-                // Drop the ceremony now that we have a result.
-                self.native_passkey_ceremony = None;
-
-                match outcome {
-                    NativeOutcome::Registered {
-                        credential_id,
-                        prf_output,
-                    } => {
-                        // Same shared transition as the webview ceremony.
-                        self.passkey_registration_succeeded_raw(&credential_id, &prf_output)
-                    }
-                    NativeOutcome::Authenticated { .. } => {
-                        self.creating_cube = false;
-                        self.error = Some(
-                            "Unexpected authentication response during registration.".to_string(),
-                        );
-                        Task::none()
-                    }
-                    NativeOutcome::Failed(e) => {
-                        self.creating_cube = false;
-                        // Registration, not unlock — but the same rule applies:
-                        // a cancelled Touch ID prompt must read as "nothing
-                        // happened", not as a failure the user has to interpret.
-                        // Nothing has been written to disk at this point, which
-                        // is why `registration_message` and not `user_message`:
-                        // the unlock copy would name a Cube that doesn't exist
-                        // and send the user to a Recovery Kit they can't have.
-                        tracing::warn!("passkey registration failed: {e}");
-                        self.error = Some(e.registration_message());
-                        Task::none()
-                    }
-                }
-            }
+            Message::NativePasskeyTick => self.poll_native_passkey(),
             #[cfg(not(target_os = "macos"))]
             Message::NativePasskeyTick => Task::none(),
             Message::NetworkCatalogLoaded {
@@ -2469,6 +2210,307 @@ impl Home {
             }
 
             _ => self.update_delete_modal(message),
+        }
+    }
+
+    fn request_creation_backup_bypass(&mut self) -> Task<Message> {
+        // Not while a Kit upload is in flight: its result decides
+        // whether a Cube gets written, and taking the acknowledgement
+        // underneath it would race two finalizers.
+        if matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) || self.creation_backup_hub().any()
+        {
+            // A finished backup is written by Continue; the bypass
+            // would record "no backup" over it.
+            return Task::none();
+        }
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.state = State::CreationBackup(CreationBackupStep::Bypass {
+                acknowledged: false,
+            });
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn acknowledge_creation_backup_bypass(&mut self, acknowledged: bool) -> Task<Message> {
+        if let State::CreationBackup(CreationBackupStep::Bypass { .. }) = &self.state {
+            self.state = State::CreationBackup(CreationBackupStep::Bypass { acknowledged });
+        }
+        Task::none()
+    }
+
+    fn confirm_creation_backup_bypass(&mut self) -> Task<Message> {
+        // Only an *acknowledged* bypass proceeds. Reaching this message
+        // with the box unticked means the view let a click through, and
+        // the safe answer is to do nothing rather than create an
+        // unbacked-up Cube the user never agreed to.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::Bypass { acknowledged: true })
+        ) || self.creation_backup_hub().any()
+        {
+            return Task::none();
+        }
+        let bypass = creation_gate::CreationBackupBypass {
+            at: chrono::Utc::now().timestamp(),
+            // Verbatim, so a later support conversation is about the
+            // same words the user actually agreed to.
+            acknowledged: creation_gate::BYPASS_ACKNOWLEDGEMENT.to_string(),
+        };
+        // Same acknowledgement, same recorded evidence, either shape of
+        // Cube. Only the write differs: a passkey Cube has no seed file
+        // or device secret to mint.
+        if self.creating_passkey_cube() {
+            self.finalize_passkey_cube_creation(false, Some(bypass), None)
+        } else {
+            self.finalize_cube_creation(false, Some(bypass), None)
+        }
+    }
+
+    fn choose_creation_backup(&mut self) -> Task<Message> {
+        // Never mid-upload: that result decides whether a Cube gets
+        // written, and stepping away underneath it would race two
+        // finalizers.
+        if matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) {
+            return Task::none();
+        }
+        if matches!(self.state, State::CreationBackup(_)) {
+            self.scrub_creation_kit();
+            self.state = State::CreationBackup(CreationBackupStep::Choice);
+            self.error = None;
+        }
+        Task::none()
+    }
+
+    fn request_creation_kit(&mut self) -> Task<Message> {
+        // From the choice screen, or back out of "I'll do this later" —
+        // the acknowledgement is a decision the user may reverse while
+        // the Cube is still unwritten. Never while a Kit is out of
+        // reach: a signed-out session has nowhere to upload one.
+        // Applies to both unlock methods.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::Choice | CreationBackupStep::Bypass { .. })
+        ) || !self.can_create_recovery_kit()
+            || self.creation_kit_evidence.is_some()
+        {
+            return Task::none();
+        }
+        self.scrub_creation_kit();
+        self.state = State::CreationBackup(CreationBackupStep::KitPassword);
+        Task::none()
+    }
+
+    fn creation_kit_uploaded(
+        &mut self,
+        result: Result<(u32, creation_gate::CreationRecoveryKit), String>,
+    ) -> Task<Message> {
+        // Only the upload this step is waiting on counts.
+        if !matches!(
+            self.state,
+            State::CreationBackup(CreationBackupStep::KitUploading)
+        ) {
+            return Task::none();
+        }
+        match result {
+            Ok(evidence) => {
+                // The Kit is on Connect. Back to the hub, which shows
+                // it as backed up; Continue there writes the Cube with
+                // this evidence (and the phrase's, if confirmed too).
+                self.scrub_creation_kit();
+                self.creating_cube = false;
+                self.creation_kit_evidence = Some(evidence);
+                self.state = State::CreationBackup(CreationBackupStep::Choice);
+                Task::none()
+            }
+            Err(e) => {
+                // Nothing was written. Back to the password screen with
+                // the reason: the user can retry, or take the
+                // acknowledgement instead. Both exits still exist.
+                tracing::warn!("recovery kit upload during creation failed: {}", e);
+                self.creating_cube = false;
+                self.creation_kit_error = Some(e);
+                self.state = State::CreationBackup(CreationBackupStep::KitPassword);
+                Task::none()
+            }
+        }
+    }
+
+    fn attach_passkey_webview(&mut self, window_id: iced_wry::ExtractedWindowId) -> Task<Message> {
+        if let Some(ceremony) = &mut self.passkey_ceremony {
+            if !ceremony.create_webview(window_id) {
+                self.creating_cube = false;
+                self.passkey_ceremony = None;
+                self.error = Some(
+                    "Failed to open passkey webview. Check your system's WebView support."
+                        .to_string(),
+                );
+            }
+        }
+        Task::none()
+    }
+
+    fn update_passkey_webview(&mut self, msg: iced_wry::IcedWryMessage) -> Task<Message> {
+        if let Some(ceremony) = &mut self.passkey_ceremony {
+            ceremony.webview_manager.update(msg);
+
+            // Poll for IPC result
+            if let Some(result) = ceremony.try_recv_result() {
+                return Task::done(Message::PasskeyCeremonyResult(result));
+            }
+        }
+        Task::none()
+    }
+
+    fn cube_remote_registered(
+        &mut self,
+        cube_id: String,
+        network: ChainId,
+        result: Result<CubeResponse, String>,
+    ) -> Task<Message> {
+        let open = self.open_after_registration.as_ref() == Some(&cube_id);
+        if open {
+            self.open_after_registration = None;
+            self.open_created_cube = Some(cube_id.clone());
+        }
+        match result {
+            Ok(resp) => {
+                log::info!(
+                    "[LAUNCHER] Cube {} registered remotely (server ID: {})",
+                    resp.uuid,
+                    resp.id
+                );
+                self.cube_sync_errors.remove(&cube_id);
+                let network_dir = self.datadir_path.network_directory(network);
+                let owner = self.connect_owner();
+                Task::perform(
+                    async move {
+                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                            .await
+                            .ok();
+                    },
+                    |_| Message::View(ViewMessage::Check),
+                )
+            }
+            Err(e) => {
+                log::warn!(
+                    "[LAUNCHER] Failed to register cube {} remotely: {}",
+                    cube_id,
+                    e
+                );
+                // Keep the reason: this is the only signal the Cubes list
+                // has that the Cube is not merely mid-sync.
+                self.cube_sync_errors.insert(cube_id, e);
+                // The Cube still opens; the catch-up sync registers it.
+                if open {
+                    self.reload()
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+
+    fn finish_passkey_ceremony(
+        &mut self,
+        result: Result<CeremonyOutcome, passkey_svc::PasskeyError>,
+    ) -> Task<Message> {
+        // Close the ceremony webview
+        if let Some(mut ceremony) = self.passkey_ceremony.take() {
+            ceremony.close();
+        }
+
+        match result {
+            Ok(CeremonyOutcome::Registered(registration)) => {
+                // Shared with the native macOS path: one place decides
+                // what a successful registration does, so the two
+                // ceremony backends cannot drift on whether the Cube is
+                // gated (they did — this one persisted immediately).
+                self.passkey_registration_succeeded(
+                    registration.credential_id.clone(),
+                    &registration.prf_output,
+                )
+            }
+            Ok(CeremonyOutcome::Authenticated(_auth)) => {
+                // Authentication during creation shouldn't happen,
+                // but handle gracefully.
+                self.creating_cube = false;
+                self.error =
+                    Some("Unexpected authentication response during registration.".to_string());
+                Task::none()
+            }
+            Err(e) => {
+                self.creating_cube = false;
+                // `Display` is the developer string ("Passkey ceremony
+                // failed: …"); the user gets the registration copy, and
+                // the detail goes to the log where it is of use.
+                tracing::warn!("passkey registration failed: {e}");
+                self.error = Some(e.registration_message());
+                Task::none()
+            }
+        }
+    }
+
+    fn cancel_passkey_ceremony(&mut self) -> Task<Message> {
+        if let Some(mut ceremony) = self.passkey_ceremony.take() {
+            ceremony.close();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(ceremony) = self.native_passkey_ceremony.take() {
+                ceremony.cancel();
+            }
+        }
+        self.creating_cube = false;
+        Task::none()
+    }
+
+    #[cfg(target_os = "macos")]
+    fn poll_native_passkey(&mut self) -> Task<Message> {
+        use crate::services::passkey::macos::NativeOutcome;
+        let outcome = self
+            .native_passkey_ceremony
+            .as_ref()
+            .and_then(|c| c.try_recv());
+        let Some(outcome) = outcome else {
+            return Task::none();
+        };
+        // Drop the ceremony now that we have a result.
+        self.native_passkey_ceremony = None;
+
+        match outcome {
+            NativeOutcome::Registered {
+                credential_id,
+                prf_output,
+            } => {
+                // Same shared transition as the webview ceremony.
+                self.passkey_registration_succeeded_raw(&credential_id, &prf_output)
+            }
+            NativeOutcome::Authenticated { .. } => {
+                self.creating_cube = false;
+                self.error =
+                    Some("Unexpected authentication response during registration.".to_string());
+                Task::none()
+            }
+            NativeOutcome::Failed(e) => {
+                self.creating_cube = false;
+                // Registration, not unlock — but the same rule applies:
+                // a cancelled Touch ID prompt must read as "nothing
+                // happened", not as a failure the user has to interpret.
+                // Nothing has been written to disk at this point, which
+                // is why `registration_message` and not `user_message`:
+                // the unlock copy would name a Cube that doesn't exist
+                // and send the user to a Recovery Kit they can't have.
+                tracing::warn!("passkey registration failed: {e}");
+                self.error = Some(e.registration_message());
+                Task::none()
+            }
         }
     }
 
