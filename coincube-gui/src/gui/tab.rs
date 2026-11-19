@@ -983,6 +983,8 @@ pub struct Tab {
     pending_recovery_route: Option<(CoincubeDirectory, crate::chain::ChainId, String)>,
 }
 
+type TabDispatchResult = std::ops::ControlFlow<Task<Message>, Task<Message>>;
+
 impl Tab {
     /// Exact on-disk Cube identity for an unlocked or still-loading owner.
     /// An installer without a known Cube ID is deliberately not matched.
@@ -2177,6 +2179,405 @@ impl Tab {
         Task::batch([result, self.flush_migration_warning(), nickname_flush])
     }
 
+    #[cfg(feature = "mcp-proposals")]
+    fn close_mcp_installer(&mut self) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::Installer(installer) = &mut self.state else {
+            unreachable!();
+        };
+        installer.expire_mcp_proposal();
+        if installer.proposal_install_dispatched && !installer.proposal_finished {
+            return Break(Task::none());
+        }
+        let root = installer.datadir.clone();
+        let chain = installer.context.bitcoin_config.chain;
+        let failure = installer.proposal_failure.clone();
+        installer.stop();
+        let (mut home, task) = Home::new_for_chain(root, Some(chain));
+        if let Some(failure) = failure {
+            home.set_error(failure);
+        }
+        self.state = State::Home(home);
+        Continue(task.map(Message::Launch))
+    }
+
+    fn lock_app_to_launcher(&mut self, message: Message) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        let datadir = app.datadir().clone();
+        let chain = app.cube_settings().network;
+        let delete =
+            matches!(message, Message::LockCubeToDelete).then(|| app.cube_settings().id.clone());
+        // Stop owned services as well as revoking Claim before this
+        // App is dropped. GUI dispatch already closed same-Cube
+        // siblings across panes.
+        crate::app::session::close();
+        app.stop_in_background();
+        let (home, command) = Home::new_for_chain(datadir, Some(chain));
+        self.state = State::Home(home);
+        let command = command.map(Message::Launch);
+        match delete {
+            // Not chained: the Launcher's startup includes Connect
+            // requests, and the confirmation waits only for its list.
+            Some(cube_id) => Task::batch([
+                command,
+                Task::done(Message::Launch(home::Message::View(
+                    home::ViewMessage::DeleteCube(home::DeleteCubeMessage::ShowModalFor {
+                        cube_id,
+                        chain,
+                    }),
+                ))),
+            ]),
+            None => command,
+        }
+    }
+
+    fn lock_app(&mut self) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // Order matters. Zeroize the session PIN first, then drop the
+        // `App`: dropping it takes the decrypted `MasterSigner` (which
+        // now scrubs itself) and the Spark backend —
+        // whose `Drop` sends `Method::Shutdown` to the bridge
+        // subprocess, so the child process holding the plaintext
+        // mnemonic exits too.
+        let cube = app.cube_settings().clone();
+        let datadir = app.datadir().clone();
+        let network = app.cache().network;
+        let chain = cube.network;
+        // A claim in flight is revoked before the Cube's context goes:
+        // the `App` is dropped a few lines down, and a queued
+        // submission must not outlive the session it was confirmed in.
+        // Unlocking again waits for the daemon this leaves stopping.
+        app.stop_in_background();
+        crate::app::session::close();
+
+        let config = app::Config::from_file(
+            &datadir
+                .network_directory(chain)
+                .path()
+                .join(app::config::DEFAULT_FILE_NAME),
+        );
+
+        let Ok(config) = config else {
+            // No readable gui config to hand the PIN screen. Fall all
+            // the way back to the launcher rather than staying open.
+            let (home, command) = Home::new_for_chain(datadir, Some(chain));
+            self.state = State::Home(home);
+            return Break(command.map(Message::Launch));
+        };
+
+        let wallet_settings = bitcoin_wallet_settings_for_cube(&datadir, chain, &cube);
+        if cube
+            .bitcoin_import
+            .as_deref()
+            .and_then(app::settings::BitcoinImport::active_attachment)
+            .is_some()
+            && wallet_settings.is_none()
+        {
+            let (mut home, command) = Home::new_for_chain(datadir, Some(chain));
+            home.set_error("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.");
+            self.state = State::Home(home);
+            return Break(command.map(Message::Launch));
+        }
+        let duress_account_id = crate::services::duress::DuressLocalState::load(datadir.path())
+            .map(|st| st.account_id)
+            .unwrap_or(None);
+        let datadir_root = datadir.path().to_path_buf();
+        let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir,
+            config,
+            network,
+            internal_bitcoind: None,
+            backup: None,
+            wallet_settings,
+            connect_client: app.authenticated_coincube_client(),
+        };
+        // The `PASSKEY_ENABLED` guard the open path carries is
+        // deliberately not repeated here: this Cube is already open in
+        // this process, so the build plainly has the feature on.
+        self.state = unlock_state(cube, datadir_root, on_success, duress_account_id);
+        Continue(Task::none())
+    }
+
+    fn install_from_home(
+        &mut self,
+        datadir: CoincubeDirectory,
+        network: crate::chain::ChainId,
+        init: UserFlow,
+        coincube_client: Option<crate::services::coincube::CoincubeClient>,
+    ) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::Home(l) = &mut self.state else {
+            unreachable!();
+        };
+        if let Some(reason) = l.chain_availability(network).reason() {
+            l.set_error(reason.to_string());
+            return Break(Task::none());
+        }
+
+        // `coincube_client` is populated when the home
+        // already holds an authenticated Connect session (today
+        // the Recovery-Kit restore path forwards it so the
+        // installer step can skip a redundant email+OTP). Other
+        // home entry points pass `None` and the relevant
+        // installer step runs its own auth form as before.
+        let (install, command) = match Installer::try_new_for_chain(
+            datadir.clone(),
+            network,
+            init,
+            false,
+            None,
+            None,
+            None,
+            false,
+            coincube_client,
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                l.set_error(error.to_string());
+                return Break(Task::none());
+            }
+        };
+        if !network.is_blake2b() && !datadir.exists() {
+            // datadir is created right before launching the installer
+            // so logs can go in <datadir_path>/installer.log
+            if let Err(e) = datadir.init() {
+                error!("Failed to create datadir: {}", e);
+            } else {
+                info!(
+                    "Created a fresh data directory at {}",
+                    &datadir.path().to_string_lossy()
+                );
+            }
+        }
+        self.state = State::Installer(Box::new(install));
+        Continue(command.map(Message::Install))
+    }
+
+    fn configure_home_unlock(state: &mut State, l: &Home) {
+        if let State::PinEntry(pin) = state {
+            pin.set_connect_provider(&l.connect_account.client.base_url);
+            if pin.requires_connect() {
+                // The GUI supplies a scoped completed-account candidate;
+                // a raw Home token may still be behind its safety gate.
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &mut pin.on_success;
+                *connect_client = None;
+            }
+        }
+    }
+
+    fn focus_home_unlock(state: &State) -> Task<Message> {
+        match state {
+            State::PinEntry(_) => {
+                iced::widget::operation::focus(crate::pin_input::first_digit_id())
+            }
+            // Opening a passkey Cube is the request to unlock it,
+            // so raise the system prompt now rather than wait for a
+            // second press. Only this route does: a re-lock must
+            // not answer itself with a prompt, so it shows the
+            // button and waits.
+            State::PasskeyUnlock(_) => Task::batch([
+                iced::widget::operation::focus(crate::passkey_unlock::begin_button_id()),
+                Task::done(Message::PasskeyUnlock(
+                    crate::passkey_unlock::Message::Begin,
+                )),
+            ]),
+            _ => Task::none(),
+        }
+    }
+
+    fn request_home_cube_unlock(
+        &mut self,
+        datadir_path: CoincubeDirectory,
+        cfg: app::config::Config,
+        chain: crate::chain::ChainId,
+        cube: app::settings::CubeSettings,
+    ) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::Home(l) = &mut self.state else {
+            unreachable!();
+        };
+        self.unlock_floor = None;
+        let opened_on_floor = l.launcher_floor_open_armed();
+        let spin_from_details = l.take_launcher_details_face(&cube);
+        if opened_on_floor && !l.floor_open_matches_current_cube(&cube) {
+            l.set_error(
+                "This Cube changed while opening. Select it again to use the current details.",
+            );
+            self.unlock_motion = None;
+            return Break(Task::none());
+        }
+        // Every refusal below abandons this open: drop an armed Split
+        // handoff with it rather than let a later open inherit it.
+        // Chain gate — first, before anything below can touch a
+        // seed file, an SDK, the daemon or a node. Two checks:
+        //
+        // 1. The directory this Cube was read from must be the one
+        //    its own settings name. `Home` loaded it from
+        //    `<datadir>/<chain.dir_name()>/settings.json`; a record
+        //    claiming another chain is either a hand-edited file
+        //    or a copy that landed in the wrong directory, and
+        //    either way its seed folder, Connect string and
+        //    provider would disagree with each other from here on.
+        // 2. This build must be able to *run* the chain. Both
+        //    Bitcoin Blake2b identities are dormant: their settings
+        //    are kept intact and distinct, and that is all this
+        //    version does with them.
+        //
+        // Only after both pass is the identity projected onto the
+        // `bitcoin::Network` the unlock and load paths encode with.
+        if cube.network != chain {
+            l.set_error(format!(
+                "This Cube's settings say it lives on {}, but it was found in \
+                 the {} folder. COINCUBE Desktop won't open it until the two agree.",
+                cube.network.label(),
+                chain.label(),
+            ));
+            return Break(Task::none());
+        }
+        if let Some(reason) = l.chain_availability(cube.network).reason() {
+            l.set_error(reason.to_string());
+            return Break(Task::none());
+        }
+        let network = chain.bitcoin_network();
+
+        // Mandatory-backup gate (PLAN-cube-unlock-hardening PR 7).
+        // A Cube created under the gate is not usable until its
+        // backup is demonstrated or explicitly bypassed: its seed is
+        // sealed to this machine's keystore, so losing the machine
+        // without a backup loses the funds outright. Cubes that
+        // predate the gate are never blocked — see
+        // `CubeSettings::creation_backup_required`.
+        //
+        // # Why `None` for the kit halves (X4)
+        //
+        // Passing `None` means `cube_backup_completeness` answers
+        // `Unknown`, which `evaluate` fails **closed**. Read alone
+        // that says a Cube backed up only by a server Recovery Kit
+        // would be blocked here. It cannot be, and fetching the
+        // halves would be worse than not:
+        //
+        // 1. **The shape is unreachable.** `home.rs` arms the flag
+        //    and writes `backed_up` (or a `CreationBackupBypass`)
+        //    in the *same* settings update — see
+        //    `finalize_cube_creation` and the recovery path beside
+        //    it. An armed Cube with neither piece of local evidence
+        //    is never persisted, so `evaluate` returns
+        //    `Satisfied`/`Bypassed` before it ever consults the
+        //    kit. Pinned by
+        //    `creation_never_persists_an_armed_cube_without_evidence`.
+        // 2. **`backed_up` is monotone.** Nothing in the codebase
+        //    clears it; the only writers set it to `true`. A Cube
+        //    that satisfies the gate once satisfies it forever.
+        // 3. **Fetching would put the network on the unlock path.**
+        //    Failing closed on `Unknown` is right for a *creation*
+        //    decision the user can retry. At open it would mean an
+        //    offline user, an expired Connect session or a
+        //    five-second API timeout locks a wallet whose seed is
+        //    sitting decryptable on this machine. That converts an
+        //    outage into a lost Cube — the exact class of failure
+        //    this gate exists to prevent.
+        //
+        // Local evidence is therefore not a weaker check here, it
+        // is the only one that can be made without introducing a
+        // worse failure. The gate's own doc makes the same call for
+        // creation: a written seed phrase alone satisfies it,
+        // because "demanding a Connect account to create a local
+        // wallet would be wrong".
+        if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
+            crate::services::unlock::creation_gate::evaluate_for_cube(&cube, None)
+        {
+            l.set_error(format!(
+                "{reason}\n\n{}",
+                crate::services::unlock::creation_gate::not_a_backup_copy(cube.is_passkey_cube())
+            ));
+            return Break(Task::none());
+        }
+
+        // A passkey Cube has no PIN and no encrypted seed file —
+        // its master seed is re-derived from a WebAuthn PRF
+        // assertion on every open. Route it to its own unlock
+        // screen rather than the PIN keypad, which would ask for a
+        // PIN that does not exist and then fail on a seed file that
+        // is not there.
+        //
+        // The flag still gates it: `PASSKEY_ENABLED` off means no
+        // build can *create* one of these, but a datadir carried
+        // from a build where it was on can still contain one. Say
+        // what is true and stop, rather than open a Cube whose
+        // unlock path this build has deliberately turned off.
+        let passkey_cube = cube.is_passkey_cube();
+        if passkey_cube && !crate::feature_flags::PASSKEY_ENABLED {
+            l.set_error(
+                "This Cube is unlocked with a passkey, and passkey unlock is \
+                 turned off in this build. Restore it from your Recovery Kit \
+                 and its recovery password, or use a build with \
+                 COINCUBE_ENABLE_PASSKEY set.",
+            );
+            return Break(Task::none());
+        }
+
+        // Shared by both unlock paths from here down: the Vault's
+        // wallet settings, the duress account id (PIN path only —
+        // a passkey Cube has no duress PIN), and where to go on
+        // success.
+        let wallet_settings = bitcoin_wallet_settings_for_cube(&datadir_path, chain, &cube);
+        if cube
+            .bitcoin_import
+            .as_deref()
+            .and_then(app::settings::BitcoinImport::active_attachment)
+            .is_some()
+            && wallet_settings.is_none()
+        {
+            l.set_error("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.");
+            return Break(Task::none());
+        }
+
+        // Carry this device's enrolled Connect duress account id into
+        // the PIN-entry path so a duress trigger hands it to the
+        // orchestrator explicitly (Task A.1). `None` for sovereign
+        // enrollment or an unreadable state file — the orchestrator
+        // falls back to its own persisted copy, so the server lock is
+        // never silently dropped.
+        let duress_account_id =
+            crate::services::duress::DuressLocalState::load(datadir_path.path())
+                .map(|st| st.account_id)
+                .unwrap_or(None);
+
+        // Captured before `datadir_path` is moved into `on_success`.
+        // PIN entry needs it to reach the seed file it verifies against.
+        let datadir_root = datadir_path.path().to_path_buf();
+
+        let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir: datadir_path,
+            config: cfg,
+            network,
+            internal_bitcoind: None,
+            backup: None,
+            wallet_settings,
+            connect_client: l.connect_account.authenticated_client(),
+        };
+
+        let unlock_floor = spin_from_details
+            .then(|| l.launcher_scene_context(&cube))
+            .flatten();
+        let mut state = unlock_state(cube, datadir_root, on_success, duress_account_id);
+        Self::configure_home_unlock(&mut state, l);
+        self.state = state;
+        self.unlock_motion = unlock_floor.as_ref().map(|_| Instant::now());
+        self.unlock_floor = unlock_floor;
+        Continue(Self::focus_home_unlock(&self.state))
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -2206,362 +2607,30 @@ impl Tab {
             (State::Installer(installer), Message::LockCube)
                 if installer.context.mcp_proposal.is_some() =>
             {
-                installer.expire_mcp_proposal();
-                if installer.proposal_install_dispatched && !installer.proposal_finished {
-                    return Task::none();
+                match self.close_mcp_installer() {
+                    std::ops::ControlFlow::Continue(task) => task,
+                    std::ops::ControlFlow::Break(task) => return task,
                 }
-                let root = installer.datadir.clone();
-                let chain = installer.context.bitcoin_config.chain;
-                let failure = installer.proposal_failure.clone();
-                installer.stop();
-                let (mut home, task) = Home::new_for_chain(root, Some(chain));
-                if let Some(failure) = failure {
-                    home.set_error(failure);
-                }
-                self.state = State::Home(home);
-                task.map(Message::Launch)
             }
             (
-                State::App(app),
+                State::App(_),
                 message @ (Message::LockCubeToLauncher | Message::LockCubeToDelete),
-            ) => {
-                let datadir = app.datadir().clone();
-                let chain = app.cube_settings().network;
-                let delete = matches!(message, Message::LockCubeToDelete)
-                    .then(|| app.cube_settings().id.clone());
-                // Stop owned services as well as revoking Claim before this
-                // App is dropped. GUI dispatch already closed same-Cube
-                // siblings across panes.
-                crate::app::session::close();
-                app.stop_in_background();
-                let (home, command) = Home::new_for_chain(datadir, Some(chain));
-                self.state = State::Home(home);
-                let command = command.map(Message::Launch);
-                match delete {
-                    // Not chained: the Launcher's startup includes Connect
-                    // requests, and the confirmation waits only for its list.
-                    Some(cube_id) => Task::batch([
-                        command,
-                        Task::done(Message::Launch(home::Message::View(
-                            home::ViewMessage::DeleteCube(home::DeleteCubeMessage::ShowModalFor {
-                                cube_id,
-                                chain,
-                            }),
-                        ))),
-                    ]),
-                    None => command,
-                }
-            }
-            (State::App(app), Message::LockCube) => {
-                // Order matters. Zeroize the session PIN first, then drop the
-                // `App`: dropping it takes the decrypted `MasterSigner` (which
-                // now scrubs itself) and the Spark backend —
-                // whose `Drop` sends `Method::Shutdown` to the bridge
-                // subprocess, so the child process holding the plaintext
-                // mnemonic exits too.
-                let cube = app.cube_settings().clone();
-                let datadir = app.datadir().clone();
-                let network = app.cache().network;
-                let chain = cube.network;
-                // A claim in flight is revoked before the Cube's context goes:
-                // the `App` is dropped a few lines down, and a queued
-                // submission must not outlive the session it was confirmed in.
-                // Unlocking again waits for the daemon this leaves stopping.
-                app.stop_in_background();
-                crate::app::session::close();
-
-                let config = app::Config::from_file(
-                    &datadir
-                        .network_directory(chain)
-                        .path()
-                        .join(app::config::DEFAULT_FILE_NAME),
-                );
-
-                let Ok(config) = config else {
-                    // No readable gui config to hand the PIN screen. Fall all
-                    // the way back to the launcher rather than staying open.
-                    let (home, command) = Home::new_for_chain(datadir, Some(chain));
-                    self.state = State::Home(home);
-                    return command.map(Message::Launch);
-                };
-
-                let wallet_settings = bitcoin_wallet_settings_for_cube(&datadir, chain, &cube);
-                if cube
-                    .bitcoin_import
-                    .as_deref()
-                    .and_then(app::settings::BitcoinImport::active_attachment)
-                    .is_some()
-                    && wallet_settings.is_none()
-                {
-                    let (mut home, command) = Home::new_for_chain(datadir, Some(chain));
-                    home.set_error("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.");
-                    self.state = State::Home(home);
-                    return command.map(Message::Launch);
-                }
-                let duress_account_id =
-                    crate::services::duress::DuressLocalState::load(datadir.path())
-                        .map(|st| st.account_id)
-                        .unwrap_or(None);
-                let datadir_root = datadir.path().to_path_buf();
-                let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
-                    datadir,
-                    config,
-                    network,
-                    internal_bitcoind: None,
-                    backup: None,
-                    wallet_settings,
-                    connect_client: app.authenticated_coincube_client(),
-                };
-                // The `PASSKEY_ENABLED` guard the open path carries is
-                // deliberately not repeated here: this Cube is already open in
-                // this process, so the build plainly has the feature on.
-                self.state = unlock_state(cube, datadir_root, on_success, duress_account_id);
-                Task::none()
-            }
+            ) => self.lock_app_to_launcher(message),
+            (State::App(_), Message::LockCube) => match self.lock_app() {
+                std::ops::ControlFlow::Continue(task) => task,
+                std::ops::ControlFlow::Break(task) => return task,
+            },
             (State::Home(l), Message::Launch(msg)) => match msg {
                 home::Message::Install(datadir, network, init, coincube_client) => {
-                    if let Some(reason) = l.chain_availability(network).reason() {
-                        l.set_error(reason.to_string());
-                        return Task::none();
+                    match self.install_from_home(datadir, network, init, coincube_client) {
+                        std::ops::ControlFlow::Continue(task) => task,
+                        std::ops::ControlFlow::Break(task) => return task,
                     }
-
-                    // `coincube_client` is populated when the home
-                    // already holds an authenticated Connect session (today
-                    // the Recovery-Kit restore path forwards it so the
-                    // installer step can skip a redundant email+OTP). Other
-                    // home entry points pass `None` and the relevant
-                    // installer step runs its own auth form as before.
-                    let (install, command) = match Installer::try_new_for_chain(
-                        datadir.clone(),
-                        network,
-                        init,
-                        false,
-                        None,
-                        None,
-                        None,
-                        false,
-                        coincube_client,
-                    ) {
-                        Ok(result) => result,
-                        Err(error) => {
-                            l.set_error(error.to_string());
-                            return Task::none();
-                        }
-                    };
-                    if !network.is_blake2b() && !datadir.exists() {
-                        // datadir is created right before launching the installer
-                        // so logs can go in <datadir_path>/installer.log
-                        if let Err(e) = datadir.init() {
-                            error!("Failed to create datadir: {}", e);
-                        } else {
-                            info!(
-                                "Created a fresh data directory at {}",
-                                &datadir.path().to_string_lossy()
-                            );
-                        }
-                    }
-                    self.state = State::Installer(Box::new(install));
-                    command.map(Message::Install)
                 }
                 home::Message::Run(datadir_path, cfg, chain, cube) => {
-                    self.unlock_floor = None;
-                    let opened_on_floor = l.launcher_floor_open_armed();
-                    let spin_from_details = l.take_launcher_details_face(&cube);
-                    if opened_on_floor && !l.floor_open_matches_current_cube(&cube) {
-                        l.set_error(
-                            "This Cube changed while opening. Select it again to use the current details.",
-                        );
-                        self.unlock_motion = None;
-                        return Task::none();
-                    }
-                    // Every refusal below abandons this open: drop an armed Split
-                    // handoff with it rather than let a later open inherit it.
-                    // Chain gate — first, before anything below can touch a
-                    // seed file, an SDK, the daemon or a node. Two checks:
-                    //
-                    // 1. The directory this Cube was read from must be the one
-                    //    its own settings name. `Home` loaded it from
-                    //    `<datadir>/<chain.dir_name()>/settings.json`; a record
-                    //    claiming another chain is either a hand-edited file
-                    //    or a copy that landed in the wrong directory, and
-                    //    either way its seed folder, Connect string and
-                    //    provider would disagree with each other from here on.
-                    // 2. This build must be able to *run* the chain. Both
-                    //    Bitcoin Blake2b identities are dormant: their settings
-                    //    are kept intact and distinct, and that is all this
-                    //    version does with them.
-                    //
-                    // Only after both pass is the identity projected onto the
-                    // `bitcoin::Network` the unlock and load paths encode with.
-                    if cube.network != chain {
-                        l.set_error(format!(
-                            "This Cube's settings say it lives on {}, but it was found in \
-                             the {} folder. COINCUBE Desktop won't open it until the two agree.",
-                            cube.network.label(),
-                            chain.label(),
-                        ));
-                        return Task::none();
-                    }
-                    if let Some(reason) = l.chain_availability(cube.network).reason() {
-                        l.set_error(reason.to_string());
-                        return Task::none();
-                    }
-                    let network = chain.bitcoin_network();
-
-                    // Mandatory-backup gate (PLAN-cube-unlock-hardening PR 7).
-                    // A Cube created under the gate is not usable until its
-                    // backup is demonstrated or explicitly bypassed: its seed is
-                    // sealed to this machine's keystore, so losing the machine
-                    // without a backup loses the funds outright. Cubes that
-                    // predate the gate are never blocked — see
-                    // `CubeSettings::creation_backup_required`.
-                    //
-                    // # Why `None` for the kit halves (X4)
-                    //
-                    // Passing `None` means `cube_backup_completeness` answers
-                    // `Unknown`, which `evaluate` fails **closed**. Read alone
-                    // that says a Cube backed up only by a server Recovery Kit
-                    // would be blocked here. It cannot be, and fetching the
-                    // halves would be worse than not:
-                    //
-                    // 1. **The shape is unreachable.** `home.rs` arms the flag
-                    //    and writes `backed_up` (or a `CreationBackupBypass`)
-                    //    in the *same* settings update — see
-                    //    `finalize_cube_creation` and the recovery path beside
-                    //    it. An armed Cube with neither piece of local evidence
-                    //    is never persisted, so `evaluate` returns
-                    //    `Satisfied`/`Bypassed` before it ever consults the
-                    //    kit. Pinned by
-                    //    `creation_never_persists_an_armed_cube_without_evidence`.
-                    // 2. **`backed_up` is monotone.** Nothing in the codebase
-                    //    clears it; the only writers set it to `true`. A Cube
-                    //    that satisfies the gate once satisfies it forever.
-                    // 3. **Fetching would put the network on the unlock path.**
-                    //    Failing closed on `Unknown` is right for a *creation*
-                    //    decision the user can retry. At open it would mean an
-                    //    offline user, an expired Connect session or a
-                    //    five-second API timeout locks a wallet whose seed is
-                    //    sitting decryptable on this machine. That converts an
-                    //    outage into a lost Cube — the exact class of failure
-                    //    this gate exists to prevent.
-                    //
-                    // Local evidence is therefore not a weaker check here, it
-                    // is the only one that can be made without introducing a
-                    // worse failure. The gate's own doc makes the same call for
-                    // creation: a written seed phrase alone satisfies it,
-                    // because "demanding a Connect account to create a local
-                    // wallet would be wrong".
-                    if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
-                        crate::services::unlock::creation_gate::evaluate_for_cube(&cube, None)
-                    {
-                        l.set_error(format!(
-                            "{reason}\n\n{}",
-                            crate::services::unlock::creation_gate::not_a_backup_copy(
-                                cube.is_passkey_cube()
-                            )
-                        ));
-                        return Task::none();
-                    }
-
-                    // A passkey Cube has no PIN and no encrypted seed file —
-                    // its master seed is re-derived from a WebAuthn PRF
-                    // assertion on every open. Route it to its own unlock
-                    // screen rather than the PIN keypad, which would ask for a
-                    // PIN that does not exist and then fail on a seed file that
-                    // is not there.
-                    //
-                    // The flag still gates it: `PASSKEY_ENABLED` off means no
-                    // build can *create* one of these, but a datadir carried
-                    // from a build where it was on can still contain one. Say
-                    // what is true and stop, rather than open a Cube whose
-                    // unlock path this build has deliberately turned off.
-                    let passkey_cube = cube.is_passkey_cube();
-                    if passkey_cube && !crate::feature_flags::PASSKEY_ENABLED {
-                        l.set_error(
-                            "This Cube is unlocked with a passkey, and passkey unlock is \
-                             turned off in this build. Restore it from your Recovery Kit \
-                             and its recovery password, or use a build with \
-                             COINCUBE_ENABLE_PASSKEY set.",
-                        );
-                        return Task::none();
-                    }
-
-                    // Shared by both unlock paths from here down: the Vault's
-                    // wallet settings, the duress account id (PIN path only —
-                    // a passkey Cube has no duress PIN), and where to go on
-                    // success.
-                    let wallet_settings =
-                        bitcoin_wallet_settings_for_cube(&datadir_path, chain, &cube);
-                    if cube
-                        .bitcoin_import
-                        .as_deref()
-                        .and_then(app::settings::BitcoinImport::active_attachment)
-                        .is_some()
-                        && wallet_settings.is_none()
-                    {
-                        l.set_error("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.");
-                        return Task::none();
-                    }
-
-                    // Carry this device's enrolled Connect duress account id into
-                    // the PIN-entry path so a duress trigger hands it to the
-                    // orchestrator explicitly (Task A.1). `None` for sovereign
-                    // enrollment or an unreadable state file — the orchestrator
-                    // falls back to its own persisted copy, so the server lock is
-                    // never silently dropped.
-                    let duress_account_id =
-                        crate::services::duress::DuressLocalState::load(datadir_path.path())
-                            .map(|st| st.account_id)
-                            .unwrap_or(None);
-
-                    // Captured before `datadir_path` is moved into `on_success`.
-                    // PIN entry needs it to reach the seed file it verifies against.
-                    let datadir_root = datadir_path.path().to_path_buf();
-
-                    let on_success = crate::pin_entry::PinEntrySuccess::LoadApp {
-                        datadir: datadir_path,
-                        config: cfg,
-                        network,
-                        internal_bitcoind: None,
-                        backup: None,
-                        wallet_settings,
-                        connect_client: l.connect_account.authenticated_client(),
-                    };
-
-                    let unlock_floor = spin_from_details
-                        .then(|| l.launcher_scene_context(&cube))
-                        .flatten();
-                    let mut state = unlock_state(cube, datadir_root, on_success, duress_account_id);
-                    if let State::PinEntry(pin) = &mut state {
-                        pin.set_connect_provider(&l.connect_account.client.base_url);
-                        if pin.requires_connect() {
-                            // The GUI supplies a scoped completed-account candidate;
-                            // a raw Home token may still be behind its safety gate.
-                            let crate::pin_entry::PinEntrySuccess::LoadApp {
-                                connect_client, ..
-                            } = &mut pin.on_success;
-                            *connect_client = None;
-                        }
-                    }
-                    self.state = state;
-                    self.unlock_motion = unlock_floor.as_ref().map(|_| Instant::now());
-                    self.unlock_floor = unlock_floor;
-                    match &self.state {
-                        State::PinEntry(_) => {
-                            iced::widget::operation::focus(crate::pin_input::first_digit_id())
-                        }
-                        // Opening a passkey Cube is the request to unlock it,
-                        // so raise the system prompt now rather than wait for a
-                        // second press. Only this route does: a re-lock must
-                        // not answer itself with a prompt, so it shows the
-                        // button and waits.
-                        State::PasskeyUnlock(_) => Task::batch([
-                            iced::widget::operation::focus(crate::passkey_unlock::begin_button_id()),
-                            Task::done(Message::PasskeyUnlock(
-                                crate::passkey_unlock::Message::Begin,
-                            )),
-                        ]),
-                        _ => Task::none(),
+                    match self.request_home_cube_unlock(datadir_path, cfg, chain, cube) {
+                        std::ops::ControlFlow::Continue(task) => task,
+                        std::ops::ControlFlow::Break(task) => return task,
                     }
                 }
                 home::Message::View(home::ViewMessage::ToggleTheme) => {
