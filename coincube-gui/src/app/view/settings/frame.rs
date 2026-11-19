@@ -114,130 +114,154 @@ fn scope_route(menu: &Menu, target: RouteScope, cache: &Cache) -> Menu {
 
 fn section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
     match route_scope(menu) {
-        Some(RouteScope::Cube) => {
-            let mut sections = vec![
-                (CubeSettingsOption::General, "Display & appearance", "display"),
-                (CubeSettingsOption::Recovery, "Backup & protection", "backup"),
-                (CubeSettingsOption::PaymentChecks, "Payment checks", "payment-checks"),
-                (CubeSettingsOption::AiAccess, "AI access", "ai-access"),
-                (CubeSettingsOption::Connections, "Connections", "connections"),
-                (CubeSettingsOption::DataExports, "Data & exports", "data"),
-            ];
-            if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
-                sections.push((CubeSettingsOption::Members, "Members", "members"));
-            }
-            // Download stats and About moved to App preferences. Their routes
-            // stay reachable, so show a tab for one only while it is open.
-            match menu {
-                Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats)) => {
-                    sections.push((CubeSettingsOption::Stats, "Download stats", "stats"))
-                }
-                Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About)) => {
-                    sections.push((CubeSettingsOption::About, "About", "about"))
-                }
-                _ => {}
-            }
-            sections
-                .into_iter()
-                .map(|(section, label, id)| RouteChoice {
-                    id: match id {
-                        "display" => "tenshu.settings.route.cube.display",
-                        "backup" => "tenshu.settings.route.cube.backup",
-                        "payment-checks" => "tenshu.settings.route.cube.payment-checks",
-                        "ai-access" => "tenshu.settings.route.cube.ai-access",
-                        "connections" => "tenshu.settings.route.cube.connections",
-                        "data" => "tenshu.settings.route.cube.data",
-                        "stats" => "tenshu.settings.route.cube.stats",
-                        "about" => "tenshu.settings.route.cube.about",
-                        _ => "tenshu.settings.route.cube.members",
-                    },
-                    label: label.to_owned(),
-                    route: Menu::Cube(CubeSubMenu::Settings(section)),
-                    // The avatar flow belongs to Cube identity on Display.
-                    selected: matches!(menu, Menu::Cube(CubeSubMenu::Settings(current))
-                        if *current == section
-                            || (*current == CubeSettingsOption::Avatar
-                                && section == CubeSettingsOption::General)),
-                    enabled: true,
-                })
-                .collect()
-        }
-        Some(RouteScope::Vault) => [
-            (SettingsOption::Wallet, "Wallet & signers", "wallet"),
-            (SettingsOption::Node, "Node", "node"),
-            (SettingsOption::LocalSigning, "Mobile", "pair"),
-            (SettingsOption::Connections, "Connections", "connections"),
-            (SettingsOption::ImportExport, "Data & exports", "data"),
-        ]
-        .iter()
-        .copied()
-        // A Vault without a Keychain key can never pair a phone, so it has
-        // no Keychain tab, except while that tab is the one open. An imported
-        // wallet never has one, and before its Wallet loads (an unfinished
-        // import) `vault_lacks_keychain_key` is not set yet, so it is hidden
-        // outright.
-        .filter(|(section, _, _)| {
-            *section != SettingsOption::LocalSigning
-                || (!cache.has_imported_bitcoin
-                    && (!cache.vault_lacks_keychain_key
-                        || matches!(
-                            menu,
-                            Menu::Vault(VaultSubMenu::Settings(Some(
-                                SettingsOption::LocalSigning
-                            )))
-                        )))
-        })
-        .map(|(section, label, id)| RouteChoice {
-            id: match id {
-                "wallet" => "tenshu.settings.route.vault.wallet",
-                "node" => "tenshu.settings.route.vault.node",
-                "pair" => "tenshu.settings.route.vault.pair",
-                "connections" => "tenshu.settings.route.vault.connections",
-                _ => "tenshu.settings.route.vault.data",
-            },
-            label: label.to_owned(),
-            route: Menu::Vault(VaultSubMenu::Settings(Some(section))),
-            selected: matches!(menu, Menu::Vault(VaultSubMenu::Settings(Some(current))) if *current == section)
-                || (section == SettingsOption::Wallet
-                    && matches!(menu, Menu::Vault(VaultSubMenu::Settings(None)))),
-            enabled: true,
-        })
-        .collect(),
-        Some(RouteScope::Spark) => [
-            (
-                SparkSettingsOption::General,
-                "Balances & conversion",
-                "tenshu.settings.route.spark.balances",
-            ),
-            (
-                SparkSettingsOption::LightningAddress,
-                "Lightning address",
-                "tenshu.settings.route.spark.lightning-address",
-            ),
-            (
-                SparkSettingsOption::Connections,
-                "Connections",
-                "tenshu.settings.route.spark.connections",
-            ),
-        ]
-        .iter()
-        .copied()
-        .map(|(section, label, id)| RouteChoice {
-            id,
-            label: label.to_owned(),
-            route: Menu::Spark(SparkSubMenu::Settings(Some(section))),
-            selected: match menu {
-                Menu::Spark(SparkSubMenu::Settings(Some(current))) => *current == section,
-                Menu::Spark(SparkSubMenu::Settings(None)) => {
-                    section == SparkSettingsOption::General
-                }
-                _ => false,
-            },
-            enabled: true,
-        })
-        .collect(),
+        Some(RouteScope::Cube) => cube_section_routes(menu),
+        Some(RouteScope::Vault) => vault_section_routes(menu, cache),
+        Some(RouteScope::Spark) => spark_section_routes(menu),
         None => Vec::new(),
     }
+}
+
+fn cube_section_routes(menu: &Menu) -> Vec<RouteChoice> {
+    let mut sections = vec![
+        (
+            CubeSettingsOption::General,
+            "Display & appearance",
+            "display",
+        ),
+        (
+            CubeSettingsOption::Recovery,
+            "Backup & protection",
+            "backup",
+        ),
+        (
+            CubeSettingsOption::PaymentChecks,
+            "Payment checks",
+            "payment-checks",
+        ),
+        (CubeSettingsOption::AiAccess, "AI access", "ai-access"),
+        (
+            CubeSettingsOption::Connections,
+            "Connections",
+            "connections",
+        ),
+        (CubeSettingsOption::DataExports, "Data & exports", "data"),
+    ];
+    if crate::feature_flags::CUBE_MEMBERS_UI_ENABLED {
+        sections.push((CubeSettingsOption::Members, "Members", "members"));
+    }
+    // Download stats and About moved to App preferences. Their routes
+    // stay reachable, so show a tab for one only while it is open.
+    match menu {
+        Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Stats)) => {
+            sections.push((CubeSettingsOption::Stats, "Download stats", "stats"))
+        }
+        Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::About)) => {
+            sections.push((CubeSettingsOption::About, "About", "about"))
+        }
+        _ => {}
+    }
+    sections
+        .into_iter()
+        .map(|(section, label, id)| RouteChoice {
+            id: match id {
+                "display" => "tenshu.settings.route.cube.display",
+                "backup" => "tenshu.settings.route.cube.backup",
+                "payment-checks" => "tenshu.settings.route.cube.payment-checks",
+                "ai-access" => "tenshu.settings.route.cube.ai-access",
+                "connections" => "tenshu.settings.route.cube.connections",
+                "data" => "tenshu.settings.route.cube.data",
+                "stats" => "tenshu.settings.route.cube.stats",
+                "about" => "tenshu.settings.route.cube.about",
+                _ => "tenshu.settings.route.cube.members",
+            },
+            label: label.to_owned(),
+            route: Menu::Cube(CubeSubMenu::Settings(section)),
+            // The avatar flow belongs to Cube identity on Display.
+            selected: matches!(menu, Menu::Cube(CubeSubMenu::Settings(current))
+                if *current == section
+                    || (*current == CubeSettingsOption::Avatar
+                        && section == CubeSettingsOption::General)),
+            enabled: true,
+        })
+        .collect()
+}
+
+fn vault_section_routes(menu: &Menu, cache: &Cache) -> Vec<RouteChoice> {
+    [
+        (SettingsOption::Wallet, "Wallet & signers", "wallet"),
+        (SettingsOption::Node, "Node", "node"),
+        (SettingsOption::LocalSigning, "Mobile", "pair"),
+        (SettingsOption::Connections, "Connections", "connections"),
+        (SettingsOption::ImportExport, "Data & exports", "data"),
+    ]
+    .iter()
+    .copied()
+    // A Vault without a Keychain key can never pair a phone, so it has
+    // no Keychain tab, except while that tab is the one open. An imported
+    // wallet never has one, and before its Wallet loads (an unfinished
+    // import) `vault_lacks_keychain_key` is not set yet, so it is hidden
+    // outright.
+    .filter(|(section, _, _)| {
+        *section != SettingsOption::LocalSigning
+            || (!cache.has_imported_bitcoin
+                && (!cache.vault_lacks_keychain_key
+                    || matches!(
+                        menu,
+                        Menu::Vault(VaultSubMenu::Settings(Some(
+                            SettingsOption::LocalSigning
+                        )))
+                    )))
+    })
+    .map(|(section, label, id)| RouteChoice {
+        id: match id {
+            "wallet" => "tenshu.settings.route.vault.wallet",
+            "node" => "tenshu.settings.route.vault.node",
+            "pair" => "tenshu.settings.route.vault.pair",
+            "connections" => "tenshu.settings.route.vault.connections",
+            _ => "tenshu.settings.route.vault.data",
+        },
+        label: label.to_owned(),
+        route: Menu::Vault(VaultSubMenu::Settings(Some(section))),
+        selected: matches!(menu, Menu::Vault(VaultSubMenu::Settings(Some(current))) if *current == section)
+            || (section == SettingsOption::Wallet
+                && matches!(menu, Menu::Vault(VaultSubMenu::Settings(None)))),
+        enabled: true,
+    })
+    .collect()
+}
+
+fn spark_section_routes(menu: &Menu) -> Vec<RouteChoice> {
+    [
+        (
+            SparkSettingsOption::General,
+            "Balances & conversion",
+            "tenshu.settings.route.spark.balances",
+        ),
+        (
+            SparkSettingsOption::LightningAddress,
+            "Lightning address",
+            "tenshu.settings.route.spark.lightning-address",
+        ),
+        (
+            SparkSettingsOption::Connections,
+            "Connections",
+            "tenshu.settings.route.spark.connections",
+        ),
+    ]
+    .iter()
+    .copied()
+    .map(|(section, label, id)| RouteChoice {
+        id,
+        label: label.to_owned(),
+        route: Menu::Spark(SparkSubMenu::Settings(Some(section))),
+        selected: match menu {
+            Menu::Spark(SparkSubMenu::Settings(Some(current))) => *current == section,
+            Menu::Spark(SparkSubMenu::Settings(None)) => section == SparkSettingsOption::General,
+            _ => false,
+        },
+        enabled: true,
+    })
+    .collect()
 }
 
 /// The line under the title (`.idl`): the scope, the wallet's nickname when
