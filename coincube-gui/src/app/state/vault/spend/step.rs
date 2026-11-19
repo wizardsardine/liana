@@ -426,29 +426,7 @@ impl DefineSpend {
     /// validation and "nothing to draft" early-returns are handled inline.
     fn run_redraft(&mut self, daemon: Arc<dyn Daemon + Sync + Send>, seq: u64) -> Task<Message> {
         if !self.form_values_are_valid(true) || self.exists_duplicate() {
-            // The current form details are not valid to draft a spend, so remove any previously
-            // calculated amount as it will no longer be valid and could be misleading, e.g. if
-            // the user removes the amount from one of the recipients.
-            // We can leave any coins selected as they will either be automatically updated
-            // as soon as the form is valid or the user has selected these specific coins and
-            // so we should not touch them.
-            self.amount_left_to_select = None;
-            // Clear any error from a previous draft: the form is no longer in a
-            // state we'd draft from, so a stale error must not be shown as the
-            // disabled hint in place of "Enter recipient address and amount.".
-            self.warning = None;
-            // Remove any max amount from a recipient as it could be misleading.
-            if let Some(i) = self.send_max_to_recipient {
-                self.recipients
-                    .get_mut(i)
-                    .expect("max has been requested for this recipient so it must exist")
-                    .update(
-                        self.network,
-                        self.bitcoin_unit,
-                        view::CreateSpendMessage::RecipientEdited(i, "amount", "".to_string()),
-                    );
-            }
-            self.fee_amount = None;
+            self.clear_invalid_redraft();
             return Task::none();
         }
         let is_self_transfer = self.recipients.is_empty();
@@ -479,55 +457,10 @@ impl DefineSpend {
         // Index of the recipient (if any) that should receive the max. We carry
         // only the index through the async boundary and re-borrow on apply.
         let recipient_with_max = self.send_max_to_recipient;
-        let outpoints = if self.is_user_coin_selection
-            || is_self_transfer
-            || self.recovery_timelock.is_some()
-        {
-            // If user has edited selection, or otherwise for self-transfers and recovery spends, we pass the outpoints list.
-            // (We could also in principle pass an empty outpoints list for a recovery spend if all should
-            // be selected, i.e. not user edited, but this way we don't need to worry about checking selected
-            // coins match those used in the recovery).
-            let outpoints: Vec<_> = self
-                .coins
-                .iter()
-                .filter_map(
-                    |(c, selected)| {
-                        if *selected {
-                            Some(c.outpoint)
-                        } else {
-                            None
-                        }
-                    },
-                )
-                .collect();
-            if outpoints.is_empty() {
-                // If the user has deselected all coins, set any recipient's max amount to 0.
-                if let Some(i) = recipient_with_max {
-                    if let Some(recipient) = self.recipients.get_mut(i) {
-                        recipient.update(
-                            self.network,
-                            self.bitcoin_unit,
-                            view::CreateSpendMessage::RecipientEdited(i, "amount", "0".to_string()),
-                        );
-                    }
-                }
-                // Simply set the amount left to select as the total destination value. Note this
-                // doesn't take account of the fee, but passing an empty list to `create_spend_tx`
-                // would use auto-selection and so we settle for this approximation.
-                // Note that for a recovery, the amount left to select is ignored by the view.
-                self.amount_left_to_select = Some(Amount::from_sat(destinations.values().sum()));
-                self.fee_amount = None;
-                return Task::none();
-            }
-            outpoints
-        } else if !self.is_user_coin_selection && self.send_max_to_recipient.is_some() {
-            // If user has not selected coins, send the max available from all owned coins.
-            self.coins
-                .iter()
-                .filter_map(|(c, _)| coin_is_owned(c).then_some(c.outpoint))
-                .collect()
-        } else {
-            Vec::new() // pass empty list for auto-selection
+        let Some(outpoints) = self.redraft_outpoints(is_self_transfer, recipient_with_max, || {
+            destinations.values().sum()
+        }) else {
+            return Task::none();
         };
 
         // If sending the max to a recipient, use that recipient's address as the
@@ -601,6 +534,83 @@ impl DefineSpend {
                 result,
             },
         )
+    }
+
+    fn clear_invalid_redraft(&mut self) {
+        // The current form details are not valid to draft a spend, so remove any previously
+        // calculated amount as it will no longer be valid and could be misleading, e.g. if
+        // the user removes the amount from one of the recipients.
+        // We can leave any coins selected as they will either be automatically updated
+        // as soon as the form is valid or the user has selected these specific coins and
+        // so we should not touch them.
+        self.amount_left_to_select = None;
+        // Clear any error from a previous draft: the form is no longer in a
+        // state we'd draft from, so a stale error must not be shown as the
+        // disabled hint in place of "Enter recipient address and amount.".
+        self.warning = None;
+        // Remove any max amount from a recipient as it could be misleading.
+        if let Some(i) = self.send_max_to_recipient {
+            self.recipients
+                .get_mut(i)
+                .expect("max has been requested for this recipient so it must exist")
+                .update(
+                    self.network,
+                    self.bitcoin_unit,
+                    view::CreateSpendMessage::RecipientEdited(i, "amount", "".to_string()),
+                );
+        }
+        self.fee_amount = None;
+    }
+
+    fn redraft_outpoints(
+        &mut self,
+        is_self_transfer: bool,
+        recipient_with_max: Option<usize>,
+        destination_total: impl FnOnce() -> u64,
+    ) -> Option<Vec<OutPoint>> {
+        let outpoints = if self.is_user_coin_selection
+            || is_self_transfer
+            || self.recovery_timelock.is_some()
+        {
+            // If user has edited selection, or otherwise for self-transfers and recovery spends, we pass the outpoints list.
+            // (We could also in principle pass an empty outpoints list for a recovery spend if all should
+            // be selected, i.e. not user edited, but this way we don't need to worry about checking selected
+            // coins match those used in the recovery).
+            let outpoints: Vec<_> = self
+                .coins
+                .iter()
+                .filter_map(|(coin, selected)| selected.then_some(coin.outpoint))
+                .collect();
+            if outpoints.is_empty() {
+                // If the user has deselected all coins, set any recipient's max amount to 0.
+                if let Some(i) = recipient_with_max {
+                    if let Some(recipient) = self.recipients.get_mut(i) {
+                        recipient.update(
+                            self.network,
+                            self.bitcoin_unit,
+                            view::CreateSpendMessage::RecipientEdited(i, "amount", "0".to_string()),
+                        );
+                    }
+                }
+                // Simply set the amount left to select as the total destination value. Note this
+                // doesn't take account of the fee, but passing an empty list to `create_spend_tx`
+                // would use auto-selection and so we settle for this approximation.
+                // Note that for a recovery, the amount left to select is ignored by the view.
+                self.amount_left_to_select = Some(Amount::from_sat(destination_total()));
+                self.fee_amount = None;
+                return None;
+            }
+            outpoints
+        } else if self.send_max_to_recipient.is_some() {
+            // If user has not selected coins, send the max available from all owned coins.
+            self.coins
+                .iter()
+                .filter_map(|(c, _)| coin_is_owned(c).then_some(c.outpoint))
+                .collect()
+        } else {
+            Vec::new() // pass empty list for auto-selection
+        };
+        Some(outpoints)
     }
 
     /// Turns a mixed send-max into explicit destination amounts.
