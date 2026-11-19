@@ -450,7 +450,7 @@ impl MavapayState {
             }
 
             (MavapayFlowStep::BuyInputFrom { .. }, msg) => {
-                return self.update_buy_input(msg, coincube_client);
+                return self.update_buy_input(msg);
             }
             (MavapayFlowStep::SellInputForm { .. }, msg) => {
                 return self.update_sell_input(msg, coincube_client);
@@ -508,11 +508,7 @@ impl MavapayState {
         )
     }
 
-    fn update_buy_input(
-        &mut self,
-        msg: MavapayMessage,
-        coincube_client: &CoincubeClient,
-    ) -> Option<iced::Task<view::Message>> {
+    fn update_buy_input(&mut self, msg: MavapayMessage) -> Option<iced::Task<view::Message>> {
         let MavapayFlowStep::BuyInputFrom {
             getting_invoice,
             ln_invoice,
@@ -1054,18 +1050,17 @@ impl MavapayState {
             MavapayMessage::SellInvoiceFulfilled { payment, .. } => {
                 return self.update_sell_fulfilled(&payment);
             }
-            MavapayMessage::SellSendFailed { error: err, .. } => {
-                // The bridge answered "no": nothing was paid, so the
-                // ordinary retry applies, under a fresh key as the Send
-                // panel does after a definite rejection.
-                if sell.fulfilment == SellFulfilment::Sending {
-                    sell.fulfilment = SellFulfilment::Idle;
-                    sell.idempotency_key = None;
-                    sell.pending = None;
-                    return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
-                    )));
-                }
+            // The bridge answered "no": nothing was paid, so the ordinary
+            // retry uses a fresh key as the Send panel does.
+            MavapayMessage::SellSendFailed { error: err, .. }
+                if sell.fulfilment == SellFulfilment::Sending =>
+            {
+                sell.fulfilment = SellFulfilment::Idle;
+                sell.idempotency_key = None;
+                sell.pending = None;
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
+                )));
             }
             _ => {}
         }
@@ -1170,18 +1165,15 @@ impl MavapayState {
                     }
                 }
             }
-            MavapayMessage::RetrySellPayment => {
-                // Only after a check found no trace, on a rail where the
-                // key guards a repeat. Re-prepares the same invoice and
-                // sends it under the same key.
-                if sell.fulfilment.may_resend() {
-                    debug_assert!(
-                        sell.idempotency_key.is_some(),
-                        "a repeat must reuse the original key"
-                    );
-                    sell.fulfilment = SellFulfilment::Preparing;
-                    return Some(prepare_sell_task(self.spark.clone(), quote));
-                }
+            // Only after a check found no trace, on a rail where the key
+            // guards a repeat. Prepares the same invoice under the same key.
+            MavapayMessage::RetrySellPayment if sell.fulfilment.may_resend() => {
+                debug_assert!(
+                    sell.idempotency_key.is_some(),
+                    "a repeat must reuse the original key"
+                );
+                sell.fulfilment = SellFulfilment::Preparing;
+                return Some(prepare_sell_task(self.spark.clone(), quote));
             }
 
             _ => {}
