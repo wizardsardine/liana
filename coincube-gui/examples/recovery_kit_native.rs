@@ -1253,21 +1253,8 @@ mod native {
             verify(state, true)
         }
     }
-    async fn retire_orphan_215(input: &OrphanInput) -> Result<()> {
+    fn validate_orphan_directories(input: &OrphanInput) -> Result<()> {
         let c = &input.config;
-        preflight(c)?; // Always the current compiled source, never origin compatibility.
-        check(c.chain == ChainId::Testnet4, "native_orphan_chain")?;
-        let mut client = CoincubeClient::new();
-        client.set_token(&input.access_token);
-        check(
-            client
-                .get_user()
-                .await
-                .map_err(|_| "native_auth_blocked")?
-                .id
-                == c.owner_id,
-            "native_account_changed",
-        )?;
         let old = &input.old_directory;
         check(
             old.is_absolute()
@@ -1301,6 +1288,57 @@ mod native {
                 && metadata.permissions().mode() & 0o077 == 0,
             "native_orphan_directory",
         )?;
+        Ok(())
+    }
+
+    fn lock_orphan_work_directory(root: &Path) -> Result<fs::File> {
+        if absent(root)? {
+            fs::DirBuilder::new()
+                .mode(0o700)
+                .create(root)
+                .map_err(|_| "native_orphan_work")?;
+        }
+        let meta = fs::symlink_metadata(root).map_err(|_| "native_orphan_work")?;
+        check(
+            meta.is_dir()
+                && !meta.file_type().is_symlink()
+                && meta.uid() == unsafe { libc::geteuid() }
+                && meta.permissions().mode() & 0o077 == 0,
+            "native_orphan_work",
+        )?;
+        let work_lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(root.join("run.lock"))
+            .map_err(|_| "native_orphan_lock")?;
+        check(
+            unsafe { libc::flock(work_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+            "native_orphan_busy",
+        )?;
+        Ok(work_lock)
+    }
+
+    async fn retire_orphan_215(input: &OrphanInput) -> Result<()> {
+        let c = &input.config;
+        preflight(c)?; // Always the current compiled source, never origin compatibility.
+        check(c.chain == ChainId::Testnet4, "native_orphan_chain")?;
+        let mut client = CoincubeClient::new();
+        client.set_token(&input.access_token);
+        check(
+            client
+                .get_user()
+                .await
+                .map_err(|_| "native_auth_blocked")?
+                .id
+                == c.owner_id,
+            "native_account_changed",
+        )?;
+        let old = &input.old_directory;
+        validate_orphan_directories(input)?;
         let suite_lock = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1362,33 +1400,7 @@ mod native {
         recovery_native::validate_kit(&kit.api(), &pw, identity)?;
         let old_files = manifest_files(old)?; // Current snapshot, NOT a claimed historical baseline.
         let root = &c.case_root;
-        if absent(root)? {
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(root)
-                .map_err(|_| "native_orphan_work")?;
-        }
-        let meta = fs::symlink_metadata(root).map_err(|_| "native_orphan_work")?;
-        check(
-            meta.is_dir()
-                && !meta.file_type().is_symlink()
-                && meta.uid() == unsafe { libc::geteuid() }
-                && meta.permissions().mode() & 0o077 == 0,
-            "native_orphan_work",
-        )?;
-        let work_lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(root.join("run.lock"))
-            .map_err(|_| "native_orphan_lock")?;
-        check(
-            unsafe { libc::flock(work_lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "native_orphan_busy",
-        )?;
+        let _work_lock = lock_orphan_work_directory(root)?;
         // Only a NEW scope's auth item may change; every old item is preserved.
         if device_secret::integration::load(&c.auth_account)
             .map_err(|_| "native_auth_protection")?
@@ -1506,10 +1518,7 @@ mod native {
         orphan_save(root, &state)
     }
 
-    async fn action(request: Request) -> Result<()> {
-        let c = request.config;
-        preflight(&c)?;
-        let root = &c.case_root;
+    fn validate_action_parent(root: &Path) -> Result<()> {
         let parent = root.parent().ok_or("native_root_parent")?;
         check(
             parent.canonicalize().map_err(|_| "native_root_parent")? == parent
@@ -1528,6 +1537,99 @@ mod native {
                 && parent_meta.permissions().mode() & 0o077 == 0,
             "native_parent_private",
         )?;
+        Ok(())
+    }
+
+    fn lock_action_directory(root: &Path) -> Result<fs::File> {
+        let m = fs::symlink_metadata(root).map_err(|_| "native_root_missing")?;
+        check(
+            m.is_dir()
+                && m.uid() == unsafe { libc::geteuid() }
+                && !m.file_type().is_symlink()
+                && m.permissions().mode() & 0o077 == 0,
+            "native_root_private",
+        )?;
+        let lock = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(root.join("run.lock"))
+            .map_err(|_| "native_lock")?;
+        check(
+            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+            "native_run_busy",
+        )?;
+        Ok(lock)
+    }
+
+    fn load_action_state(c: &Config, root: &Path, action: &str) -> Result<State> {
+        let state = if action == "create_export" {
+            State {
+                config: c.clone(),
+                stage: "new".into(),
+                pending: None,
+                creator: this_process()?,
+                restorer: None,
+                identity: None,
+                kit: None,
+                original_manifest: None,
+                original_files: None,
+                wipe_manifest: None,
+                wipe_oracle: None,
+                retirement_oracle: None,
+                original_factor: None,
+                canary_uuid: None,
+                canary: None,
+                restored_factor: None,
+                proof_sha256: None,
+                remote_delete_started: false,
+            }
+        } else {
+            serde_json::from_slice::<State>(&private(&root.join("state.json"))?)
+                .map_err(|_| "native_state_invalid")?
+        };
+        Ok(state)
+    }
+
+    fn validate_action_state(c: &Config, state: &State, action: &str) -> Result<()> {
+        check(
+            state.config == *c
+                && (state.pending.is_none()
+                    || (action == "retire_remote"
+                        && state.pending.as_deref() == Some("retire_remote"))),
+            "native_uncertain_action",
+        )?;
+        if let Some(identity) = state.identity.as_ref() {
+            validate_identity(c, identity, state.kit.as_ref().ok_or("native_kit_missing")?)?;
+            check(
+                load(c, "provenance")?.as_slice() == binding(state)?.as_slice(),
+                "native_provenance_changed",
+            )?;
+        }
+        let expected = match action {
+            "create_export" => "new",
+            "wipe_original" => "exported",
+            "restore" => "wiped",
+            "reopen_sign" => "restored",
+            "retire_remote" if state.stage == "retired_unfunded" => "retired_unfunded",
+            "retire_remote" => "signed_unfunded",
+            _ => return Err("native_action"),
+        };
+        check(state.stage == expected, "native_stage_order")?;
+        if action != "create_export" {
+            process_absent(&state.creator)?;
+        }
+        Ok(())
+    }
+
+    async fn action(request: Request) -> Result<()> {
+        let c = request.config;
+        preflight(&c)?;
+        let root = &c.case_root;
+        validate_action_parent(root)?;
         let original = root.join("original");
         let restored = root.join("restored");
         if request.action == "preflight" {
@@ -1556,83 +1658,9 @@ mod native {
                 .create(root)
                 .map_err(|_| "native_run_create")?;
         }
-        let m = fs::symlink_metadata(root).map_err(|_| "native_root_missing")?;
-        check(
-            m.is_dir()
-                && m.uid() == unsafe { libc::geteuid() }
-                && !m.file_type().is_symlink()
-                && m.permissions().mode() & 0o077 == 0,
-            "native_root_private",
-        )?;
-        let lock = OpenOptions::new()
-            .create(true)
-            .truncate(false)
-            .read(true)
-            .write(true)
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(root.join("run.lock"))
-            .map_err(|_| "native_lock")?;
-        check(
-            unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-            "native_run_busy",
-        )?;
-        let mut state = if request.action == "create_export" {
-            State {
-                config: c.clone(),
-                stage: "new".into(),
-                pending: None,
-                creator: this_process()?,
-                restorer: None,
-                identity: None,
-                kit: None,
-                original_manifest: None,
-                original_files: None,
-                wipe_manifest: None,
-                wipe_oracle: None,
-                retirement_oracle: None,
-                original_factor: None,
-                canary_uuid: None,
-                canary: None,
-                restored_factor: None,
-                proof_sha256: None,
-                remote_delete_started: false,
-            }
-        } else {
-            serde_json::from_slice::<State>(&private(&root.join("state.json"))?)
-                .map_err(|_| "native_state_invalid")?
-        };
-        check(
-            state.config == c
-                && (state.pending.is_none()
-                    || (request.action == "retire_remote"
-                        && state.pending.as_deref() == Some("retire_remote"))),
-            "native_uncertain_action",
-        )?;
-        if let Some(identity) = state.identity.as_ref() {
-            validate_identity(
-                &c,
-                identity,
-                state.kit.as_ref().ok_or("native_kit_missing")?,
-            )?;
-            check(
-                load(&c, "provenance")?.as_slice() == binding(&state)?.as_slice(),
-                "native_provenance_changed",
-            )?;
-        }
-        let expected = match request.action.as_str() {
-            "create_export" => "new",
-            "wipe_original" => "exported",
-            "restore" => "wiped",
-            "reopen_sign" => "restored",
-            "retire_remote" if state.stage == "retired_unfunded" => "retired_unfunded",
-            "retire_remote" => "signed_unfunded",
-            _ => return Err("native_action"),
-        };
-        check(state.stage == expected, "native_stage_order")?;
-        if request.action != "create_export" {
-            process_absent(&state.creator)?;
-        }
+        let _lock = lock_action_directory(root)?;
+        let mut state = load_action_state(&c, root, &request.action)?;
+        validate_action_state(&c, &state, &request.action)?;
         state.pending = Some(request.action.clone());
         save(root, &state)?;
         match request.action.as_str() {
@@ -2249,59 +2277,67 @@ mod native {
                 0o600
             );
         }
+        fn assert_orphan_retry_case(
+            remote_present: bool,
+            valid_consumer: bool,
+            prior_intent: Option<&str>,
+        ) {
+            use std::cell::RefCell;
+
+            let state = orphan_fixture();
+            let expected = orphan_claim_value(&state, true).unwrap();
+            let intent = RefCell::new(prior_intent.map(|value| {
+                if value == "matching" {
+                    expected.clone()
+                } else {
+                    value.into()
+                }
+            }));
+            let additions = RefCell::new(0);
+            let result = orphan_resume_claims(
+                &state,
+                remote_present,
+                |_, is_intent| {
+                    check(
+                        if is_intent {
+                            intent.borrow().as_deref() == Some(expected.as_str())
+                        } else {
+                            valid_consumer
+                        },
+                        "unit_claim_refused",
+                    )
+                },
+                |_, is_intent| {
+                    assert!(is_intent);
+                    *additions.borrow_mut() += 1;
+                    let mut value = intent.borrow_mut();
+                    if value.is_none() {
+                        *value = Some(expected.clone());
+                    }
+                    check(
+                        value.as_deref() == Some(expected.as_str()),
+                        "unit_claim_conflict",
+                    )
+                },
+            );
+            let accepted = valid_consumer
+                && (prior_intent == Some("matching") || (remote_present && prior_intent.is_none()));
+            assert_eq!(result.is_ok(), accepted);
+            assert_eq!(
+                *additions.borrow(),
+                usize::from(remote_present && valid_consumer)
+            );
+            if !remote_present || !valid_consumer {
+                assert_eq!(intent.borrow().is_none(), prior_intent.is_none());
+            }
+        }
+
         #[test]
         fn orphan_retry_can_finish_intent_only_when_remote_present_and_consumer_matches() {
-            use std::cell::RefCell;
             for remote_present in [false, true] {
                 for valid_consumer in [false, true] {
                     for prior_intent in [None, Some("conflicting"), Some("matching")] {
-                        let state = orphan_fixture();
-                        let expected = orphan_claim_value(&state, true).unwrap();
-                        let intent = RefCell::new(prior_intent.map(|value| {
-                            if value == "matching" {
-                                expected.clone()
-                            } else {
-                                value.into()
-                            }
-                        }));
-                        let additions = RefCell::new(0);
-                        let result = orphan_resume_claims(
-                            &state,
-                            remote_present,
-                            |_, is_intent| {
-                                check(
-                                    if is_intent {
-                                        intent.borrow().as_deref() == Some(expected.as_str())
-                                    } else {
-                                        valid_consumer
-                                    },
-                                    "unit_claim_refused",
-                                )
-                            },
-                            |_, is_intent| {
-                                assert!(is_intent);
-                                *additions.borrow_mut() += 1;
-                                let mut value = intent.borrow_mut();
-                                if value.is_none() {
-                                    *value = Some(expected.clone());
-                                }
-                                check(
-                                    value.as_deref() == Some(expected.as_str()),
-                                    "unit_claim_conflict",
-                                )
-                            },
-                        );
-                        let accepted = valid_consumer
-                            && (prior_intent == Some("matching")
-                                || (remote_present && prior_intent.is_none()));
-                        assert_eq!(result.is_ok(), accepted);
-                        assert_eq!(
-                            *additions.borrow(),
-                            usize::from(remote_present && valid_consumer)
-                        );
-                        if !remote_present || !valid_consumer {
-                            assert_eq!(intent.borrow().is_none(), prior_intent.is_none());
-                        }
+                        assert_orphan_retry_case(remote_present, valid_consumer, prior_intent);
                     }
                 }
             }
@@ -2415,50 +2451,73 @@ mod native {
             );
         }
 
+        fn assert_capacity_lock_refused(case: &str, expected: &'static str) {
+            use std::os::unix::fs::symlink;
+
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join(".device-secret.lock");
+            let mut held = None;
+            // Kept alive until the assertion so the symlink target exists.
+            let mut _target_directory = None;
+            if case == "symlink" {
+                // The target lives in its own private, empty directory and is
+                // itself a valid lock, so only the symlink can cause the refusal.
+                let target_directory = tempfile::tempdir().unwrap();
+                let target = target_directory.path().join("target");
+                fs::write(&target, []).unwrap();
+                fs::set_permissions(&target, fs::Permissions::from_mode(0o600)).unwrap();
+                symlink(&target, &path).unwrap();
+                _target_directory = Some(target_directory);
+            } else {
+                fs::write(
+                    &path,
+                    if case == "nonempty" {
+                        b"x".as_slice()
+                    } else {
+                        b""
+                    },
+                )
+                .unwrap();
+                fs::set_permissions(
+                    &path,
+                    fs::Permissions::from_mode(if case == "public" { 0o644 } else { 0o600 }),
+                )
+                .unwrap();
+                if case == "unexpected" {
+                    fs::write(directory.path().join("original"), b"not-a-lock").unwrap();
+                }
+                if case == "busy" {
+                    let file = OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(&path)
+                        .unwrap();
+                    assert_eq!(
+                        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+                        0
+                    );
+                    held = Some(file);
+                }
+            }
+            assert_eq!(
+                capacity_case_entries(directory.path()).err(),
+                Some(expected),
+                "{}",
+                case
+            );
+            drop(held);
+        }
+
         #[test]
         fn capacity_device_lock_refuses_unsafe_or_unexpected_entries() {
-            use std::os::unix::fs::symlink;
-            for case in ["nonempty", "symlink", "public", "busy", "unexpected"] {
-                let directory = tempfile::tempdir().unwrap();
-                let path = directory.path().join(".device-secret.lock");
-                let mut held = None;
-                if case == "symlink" {
-                    let target = directory.path().join("target");
-                    fs::write(&target, []).unwrap();
-                    symlink(target, &path).unwrap();
-                } else {
-                    fs::write(
-                        &path,
-                        if case == "nonempty" {
-                            b"x".as_slice()
-                        } else {
-                            b""
-                        },
-                    )
-                    .unwrap();
-                    fs::set_permissions(
-                        &path,
-                        fs::Permissions::from_mode(if case == "public" { 0o644 } else { 0o600 }),
-                    )
-                    .unwrap();
-                    if case == "unexpected" {
-                        fs::write(directory.path().join("original"), b"not-a-lock").unwrap();
-                    }
-                    if case == "busy" {
-                        let file = OpenOptions::new()
-                            .read(true)
-                            .write(true)
-                            .open(&path)
-                            .unwrap();
-                        assert_eq!(
-                            unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
-                            0
-                        );
-                        held = Some(file);
-                    }
-                }
-                assert!(capacity_case_entries(directory.path()).is_err(), "{}", case);
-                drop(held);
+            for (case, expected) in [
+                ("nonempty", "native_abandon_device_lock"),
+                ("symlink", "native_abandon_device_lock"),
+                ("public", "native_abandon_device_lock"),
+                ("busy", "native_abandon_device_lock_busy"),
+                ("unexpected", "native_abandon_has_profile"),
+            ] {
+                assert_capacity_lock_refused(case, expected);
             }
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join(".device-secret.lock");

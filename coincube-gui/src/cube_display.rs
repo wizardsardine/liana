@@ -40,8 +40,12 @@ pub(crate) fn name(raw: &str) -> String {
         rendered.push(character);
         used += 1;
     }
+    finish_display_name(rendered, truncated, used == LIMIT)
+}
+
+fn finish_display_name(mut rendered: String, truncated: bool, limit_reached: bool) -> String {
     if truncated {
-        if used == LIMIT {
+        if limit_reached {
             rendered.pop();
         }
         rendered.push('…');

@@ -98,50 +98,7 @@ impl ConnectEsplora {
                 }
             }
         };
-        let read = async {
-            if self.rate_limit_retry_after().is_some() {
-                return Err(FailureKind::Http(429));
-            }
-            let stamp = Self::now();
-            let mut response = self
-                .anonymous
-                .get(format!("{}/api/v1/esplora/{prefix}/{path}", self.base))
-                .header(CACHE_CONTROL, "no-cache")
-                .header("X-Coincube-Observation", "fresh")
-                .send()
-                .await
-                .map_err(|_| FailureKind::Unavailable)?;
-            let status = response.status().as_u16();
-            if status == 429 {
-                crate::services::esplora_backoff::record(&self.base, response.headers());
-            }
-            if status != 200 {
-                return Err(FailureKind::Http(status));
-            }
-            let headers: HeaderMap = response.headers().clone();
-            let mut markers = headers.get_all("x-coincube-observation").iter();
-            if markers.next().and_then(|v| v.to_str().ok()) != Some("fresh")
-                || markers.next().is_some()
-            {
-                return Err(FailureKind::FreshnessUnverified);
-            }
-            FreshRead::from_response(chain, (), stamp, &headers)?;
-            if response.content_length().is_some_and(|n| n > limit as u64) {
-                return Err(FailureKind::Malformed);
-            }
-            let mut bytes = Vec::new();
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| FailureKind::Unavailable)?
-            {
-                if chunk.len() > limit.saturating_sub(bytes.len()) {
-                    return Err(FailureKind::Malformed);
-                }
-                bytes.extend_from_slice(&chunk);
-            }
-            FreshRead::from_response(chain, bytes, stamp, &headers)
-        };
+        let read = self.read_fresh_response(chain, prefix, path, limit);
         let result = tokio::select! { biased;
             _ = cancelled => Err(FailureKind::Cancelled),
             result = tokio::time::timeout(REQUEST_TIMEOUT, read) => {
@@ -152,6 +109,56 @@ impl ConnectEsplora {
             return Err(FailureKind::Cancelled);
         }
         result
+    }
+
+    async fn read_fresh_response(
+        &self,
+        chain: ChainId,
+        prefix: &str,
+        path: &str,
+        limit: usize,
+    ) -> Result<FreshRead<Vec<u8>>, FailureKind> {
+        if self.rate_limit_retry_after().is_some() {
+            return Err(FailureKind::Http(429));
+        }
+        let stamp = Self::now();
+        let mut response = self
+            .anonymous
+            .get(format!("{}/api/v1/esplora/{prefix}/{path}", self.base))
+            .header(CACHE_CONTROL, "no-cache")
+            .header("X-Coincube-Observation", "fresh")
+            .send()
+            .await
+            .map_err(|_| FailureKind::Unavailable)?;
+        let status = response.status().as_u16();
+        if status == 429 {
+            crate::services::esplora_backoff::record(&self.base, response.headers());
+        }
+        if status != 200 {
+            return Err(FailureKind::Http(status));
+        }
+        let headers: HeaderMap = response.headers().clone();
+        let mut markers = headers.get_all("x-coincube-observation").iter();
+        if markers.next().and_then(|v| v.to_str().ok()) != Some("fresh") || markers.next().is_some()
+        {
+            return Err(FailureKind::FreshnessUnverified);
+        }
+        FreshRead::from_response(chain, (), stamp, &headers)?;
+        if response.content_length().is_some_and(|n| n > limit as u64) {
+            return Err(FailureKind::Malformed);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| FailureKind::Unavailable)?
+        {
+            if chunk.len() > limit.saturating_sub(bytes.len()) {
+                return Err(FailureKind::Malformed);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        FreshRead::from_response(chain, bytes, stamp, &headers)
     }
 
     /// The outpoints of an address's unspent outputs.

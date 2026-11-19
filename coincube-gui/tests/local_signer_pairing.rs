@@ -1205,58 +1205,14 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
             };
             assert_eq!(step.phase, local_v1::pairing_step::Phase::Accept as i32);
             if stop >= 4 {
-                use local_v1::{local_envelope::Payload, pairing_step::Phase};
-                // The peer has not acknowledged its durable write. A late
-                // COMMITTED response must not override Cancel.
-                for (reply, expected) in [
-                    (Phase::Prepared, Phase::Commit),
-                    (Phase::Committed, Phase::Finish),
-                ] {
-                    if reply == Phase::Committed && stop == 4 {
-                        peer_run.cancel();
-                    }
-                    let bytes = LocalEnvelope {
-                        payload: Some(Payload::PairingStep(local_v1::PairingStep {
-                            transaction_id: step.transaction_id.clone(),
-                            phase: reply as i32,
-                            desktop_name: String::new(),
-                        })),
-                    }
-                    .encode_to_vec();
-                    if stream.write_u32(bytes.len() as u32).await.is_err() {
-                        return;
-                    }
-                    if stream.write_all(&bytes).await.is_err() {
-                        return;
-                    }
-                    let Ok(len) = stream.read_u32().await else {
-                        return;
-                    };
-                    let mut bytes = vec![0; len as usize];
-                    if stream.read_exact(&mut bytes).await.is_err() {
-                        return;
-                    }
-                    let env = LocalEnvelope::decode(&*bytes).unwrap();
-                    let Some(Payload::PairingStep(received)) = env.payload else {
-                        return;
-                    };
-                    assert_eq!(received.phase, expected as i32);
-                    if expected == Phase::Finish {
-                        assert!(pairing_store::load(&peer_dir).unwrap().phones.is_empty());
-                        peer_run.cancel(); // Too late: durable hidden decision wins.
-                        peer_run.check().unwrap();
-                    }
-                }
-                let bytes = LocalEnvelope {
-                    payload: Some(Payload::PairingStep(local_v1::PairingStep {
-                        transaction_id: step.transaction_id,
-                        phase: Phase::Finished as i32,
-                        desktop_name: String::new(),
-                    })),
-                }
-                .encode_to_vec();
-                let _ = stream.write_u32(bytes.len() as u32).await;
-                let _ = stream.write_all(&bytes).await;
+                exercise_pairing_decision_cancellation(
+                    &mut stream,
+                    &peer_run,
+                    &peer_dir,
+                    step,
+                    stop,
+                )
+                .await;
                 return;
             }
             // Both remaining checkpoints are before PREPARED permits the
@@ -1308,6 +1264,69 @@ async fn cancellation_at_tls_identity_acceptance_and_pre_persistence_leaves_no_r
             );
         }
     }
+}
+
+async fn exercise_pairing_decision_cancellation(
+    stream: &mut tokio_rustls::server::TlsStream<tokio::net::TcpStream>,
+    peer_run: &coincube_gui::phone_signer::pairing_run::PairingRun,
+    peer_dir: &coincube_gui::dir::CoincubeDirectory,
+    step: local_v1::PairingStep,
+    stop: i32,
+) {
+    use coincube_gui::phone_signer::pairing_store;
+    use local_v1::{local_envelope::Payload, pairing_step::Phase};
+    use tokio::io::AsyncReadExt;
+    // The peer has not acknowledged its durable write. A late
+    // COMMITTED response must not override Cancel.
+    for (reply, expected) in [
+        (Phase::Prepared, Phase::Commit),
+        (Phase::Committed, Phase::Finish),
+    ] {
+        if reply == Phase::Committed && stop == 4 {
+            peer_run.cancel();
+        }
+        let bytes = LocalEnvelope {
+            payload: Some(Payload::PairingStep(local_v1::PairingStep {
+                transaction_id: step.transaction_id.clone(),
+                phase: reply as i32,
+                desktop_name: String::new(),
+            })),
+        }
+        .encode_to_vec();
+        if stream.write_u32(bytes.len() as u32).await.is_err() {
+            return;
+        }
+        if stream.write_all(&bytes).await.is_err() {
+            return;
+        }
+        let Ok(len) = stream.read_u32().await else {
+            return;
+        };
+        let mut bytes = vec![0; len as usize];
+        if stream.read_exact(&mut bytes).await.is_err() {
+            return;
+        }
+        let env = LocalEnvelope::decode(&*bytes).unwrap();
+        let Some(Payload::PairingStep(received)) = env.payload else {
+            return;
+        };
+        assert_eq!(received.phase, expected as i32);
+        if expected == Phase::Finish {
+            assert!(pairing_store::load(peer_dir).unwrap().phones.is_empty());
+            peer_run.cancel(); // Too late: durable hidden decision wins.
+            peer_run.check().unwrap();
+        }
+    }
+    let bytes = LocalEnvelope {
+        payload: Some(Payload::PairingStep(local_v1::PairingStep {
+            transaction_id: step.transaction_id,
+            phase: Phase::Finished as i32,
+            desktop_name: String::new(),
+        })),
+    }
+    .encode_to_vec();
+    let _ = stream.write_u32(bytes.len() as u32).await;
+    let _ = stream.write_all(&bytes).await;
 }
 
 #[tokio::test]

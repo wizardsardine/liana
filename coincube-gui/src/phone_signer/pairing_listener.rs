@@ -260,24 +260,7 @@ async fn try_pair_once(
     }
     run.check()?;
 
-    // Enforce the proto's "MUST match" contract: the phone-reported
-    // cert fp has to agree with the bytes we pinned from the live
-    // TLS handshake. A divergence signals a buggy or misconfigured
-    // phone — persisting `phone_pin` regardless would hide the
-    // contract violation and let a bad pairing survive.
-    let expected_pin_hex: String = phone_pin.iter().map(|b| format!("{:02x}", b)).collect();
-    let reported_normalised = complete.phone_cert_fp.trim().to_ascii_lowercase();
-    if reported_normalised != expected_pin_hex {
-        return Err(PairingError::InternalError(format!(
-            "phone-reported cert fp {:?} doesn't match TLS handshake {}",
-            complete.phone_cert_fp, expected_pin_hex,
-        )));
-    }
-    tracing::debug!(
-        target: "phone_signer::pairing",
-        "phone-reported cert fp matches handshake: {}",
-        expected_pin_hex,
-    );
+    let expected_pin_hex = validate_reported_tls_pin(&phone_pin, &complete)?;
 
     // Proof-of-QR-scan (protocol v2). The phone returns an HMAC over
     // both cert fingerprints keyed by the per-offer `psk` carried in
@@ -501,6 +484,31 @@ async fn try_pair_once(
     result.map_err(|error| {
         PairingError::InternalError(format!("Pairing incomplete: {}. Pair again.", error))
     })
+}
+
+fn validate_reported_tls_pin(
+    phone_pin: &[u8; 32],
+    complete: &local_v1::PairingComplete,
+) -> Result<String, PairingError> {
+    // Enforce the proto's "MUST match" contract: the phone-reported
+    // cert fp has to agree with the bytes we pinned from the live
+    // TLS handshake. A divergence signals a buggy or misconfigured
+    // phone — persisting `phone_pin` regardless would hide the
+    // contract violation and let a bad pairing survive.
+    let expected_pin_hex: String = phone_pin.iter().map(|b| format!("{:02x}", b)).collect();
+    let reported_normalised = complete.phone_cert_fp.trim().to_ascii_lowercase();
+    if reported_normalised != expected_pin_hex {
+        return Err(PairingError::InternalError(format!(
+            "phone-reported cert fp {:?} doesn't match TLS handshake {}",
+            complete.phone_cert_fp, expected_pin_hex,
+        )));
+    }
+    tracing::debug!(
+        target: "phone_signer::pairing",
+        "phone-reported cert fp matches handshake: {}",
+        expected_pin_hex,
+    );
+    Ok(expected_pin_hex)
 }
 
 /// The phone's first frame on a pairing dial, read as its `PairingComplete`.

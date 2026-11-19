@@ -7,18 +7,23 @@ use crate::{
     node::{
         bitcoind::{
             internal_bitcoind_config_path, internal_bitcoind_datadir, Bitcoind,
-            InternalBitcoindConfig,
+            InternalBitcoindConfig, ManagedNodeLifecycle,
         },
         history::{self, NodeRpc, Phase, Recovery},
         retention,
     },
 };
-use coincube_core::miniscript::bitcoin::Network;
+use coincube_core::{descriptors::CoincubeDescriptor, miniscript::bitcoin::Network};
 use coincubed::{
-    commands::CoinStatus,
-    config::{BitcoinBackend, BitcoindConfig},
+    commands::{CoinStatus, ListCoinsEntry},
+    config::{BitcoinBackend, BitcoindConfig, Config},
 };
-use std::{collections::BTreeSet, convert::TryFrom, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    convert::TryFrom,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 #[derive(Debug, Clone)]
 pub enum Action {
@@ -55,6 +60,21 @@ pub struct Context {
     pub managed_owner: Option<PathBuf>,
     pub daemon: Arc<dyn Daemon + Send + Sync>,
     pub wallet: Arc<Wallet>,
+}
+
+struct RecoveryInputs<'a> {
+    vault: &'a CoincubeDescriptor,
+    config: &'a Config,
+    wallet_path: &'a str,
+    directory: &'a Path,
+    path: &'a Path,
+    binding: &'a history::Binding,
+}
+
+enum RecoveryPollOutcome {
+    Continue,
+    Finished,
+    Resume,
 }
 
 const OTHER_CUBE_OWNS_NODE: &str =
@@ -144,15 +164,57 @@ impl Context {
         }
         let mut rpc = NodeRpc::new(&self.config, &wallet_path, self.chain).await?;
         let mut node = None;
+        let inputs = RecoveryInputs {
+            vault,
+            config,
+            wallet_path: &wallet_path,
+            directory: &directory,
+            path: &path,
+            binding: &binding,
+        };
 
+        if Self::pause_or_cancel_recovery(&action, &inputs, &mut status)? {
+            return Ok(Outcome { status, node });
+        }
+
+        let starting = matches!(
+            action,
+            Action::Import | Action::Recover(_) | Action::Retain(_)
+        );
+        if starting || matches!(action, Action::Resume) {
+            if !self
+                .prepare_recovery(&action, starting, &inputs, &mut rpc, &mut status, &mut node)
+                .await?
+            {
+                return Ok(Outcome { status, node });
+            }
+        } else {
+            match self.poll_recovery(&inputs, &rpc, &mut status).await? {
+                RecoveryPollOutcome::Continue => {}
+                RecoveryPollOutcome::Finished => return Ok(Outcome { status, node }),
+                RecoveryPollOutcome::Resume => return Box::pin(self.run(Action::Resume)).await,
+            }
+        }
+        self.reconcile_recovery(&inputs, &rpc, &mut status).await?;
+        self.finish_temporary_retention(&directory, &rpc, &mut status, &mut node)
+            .await?;
+        Ok(Outcome { status, node })
+    }
+
+    fn pause_or_cancel_recovery(
+        action: &Action,
+        inputs: &RecoveryInputs<'_>,
+        status: &mut Status,
+    ) -> Result<bool, String> {
         if matches!(action, Action::Pause | Action::Cancel) {
-            let _lease = history::HistoryLease::acquire(&directory)?;
-            let mut job: Recovery = history::read_json(&path)?.ok_or("No recovery is running")?;
-            job.validate(&binding)?;
+            let _lease = history::HistoryLease::acquire(inputs.directory)?;
+            let mut job: Recovery =
+                history::read_json(inputs.path)?.ok_or("No recovery is running")?;
+            job.validate(inputs.binding)?;
             if matches!(action, Action::Pause)
                 && matches!(job.phase, Phase::Complete | Phase::Cancelled)
             {
-                return Ok(Outcome { status, node });
+                return Ok(true);
             }
             job.phase = if matches!(action, Action::Cancel) {
                 Phase::Cancelled
@@ -161,285 +223,344 @@ impl Context {
             };
             job.last_error = None;
             job.transient_failures = 0;
-            history::write_json(&path, &job)?;
+            history::write_json(inputs.path, &job)?;
             status.job = Some(job);
             if !matches!(action, Action::Cancel) {
-                return Ok(Outcome { status, node });
+                return Ok(true);
             }
         }
 
-        let starting = matches!(
-            action,
-            Action::Import | Action::Recover(_) | Action::Retain(_)
-        );
-        if starting || matches!(action, Action::Resume) {
-            if matches!(action, Action::Resume)
-                && status
-                    .job
-                    .as_ref()
-                    .is_none_or(|job| matches!(job.phase, Phase::Complete | Phase::Cancelled))
-            {
-                return Err("No interrupted recovery is available to resume".into());
+        Ok(false)
+    }
+
+    async fn prepare_recovery(
+        &self,
+        action: &Action,
+        starting: bool,
+        inputs: &RecoveryInputs<'_>,
+        rpc: &mut NodeRpc,
+        status: &mut Status,
+        node: &mut Option<Bitcoind>,
+    ) -> Result<bool, String> {
+        if matches!(action, Action::Resume)
+            && status
+                .job
+                .as_ref()
+                .is_none_or(|job| matches!(job.phase, Phase::Complete | Phase::Cancelled))
+        {
+            return Err("No interrupted recovery is available to resume".into());
+        }
+        let info = rpc.check_chain(self.network).await?;
+        let tip = u32::try_from(info["blocks"].as_u64().ok_or("Missing local chain tip")?)
+            .map_err(|_| "Local chain height is out of range")?;
+        let coins = self
+            .daemon
+            .list_coins(
+                &[
+                    CoinStatus::Unconfirmed,
+                    CoinStatus::Confirmed,
+                    CoinStatus::Spending,
+                    CoinStatus::Spent,
+                ],
+                &[],
+            )
+            .await
+            .map_err(|e| e.to_string())?
+            .coins;
+        let mut settings_lifecycle = None;
+        if starting {
+            settings_lifecycle = Some(
+                self.initialize_recovery_job(action, inputs, rpc, status, tip, &coins)
+                    .await?,
+            );
+        }
+        if settings_lifecycle.is_none() {
+            settings_lifecycle = Some(self.exclusive_lifecycle().await?);
+        }
+        status.policy = Some(match action {
+            Action::Retain(days) => {
+                retention::configure(&self.datadir, self.network, self.chain, &self.config, *days)?
             }
-            let info = rpc.check_chain(self.network).await?;
-            let tip = u32::try_from(info["blocks"].as_u64().ok_or("Missing local chain tip")?)
-                .map_err(|_| "Local chain height is out of range")?;
-            let coins = self
-                .daemon
-                .list_coins(
-                    &[
-                        CoinStatus::Unconfirmed,
-                        CoinStatus::Confirmed,
-                        CoinStatus::Spending,
-                        CoinStatus::Spent,
-                    ],
-                    &[],
+            _ => retention::configure_recovery(
+                &self.datadir,
+                self.network,
+                self.chain,
+                &self.config,
+                u32::try_from(
+                    info["pruneheight"]
+                        .as_u64()
+                        .ok_or("Missing local pruning height")?,
                 )
-                .await
-                .map_err(|e| e.to_string())?
-                .coins;
-            let mut settings_lifecycle = None;
-            if starting {
-                if status
-                    .job
-                    .as_ref()
-                    .is_some_and(|job| !matches!(job.phase, Phase::Complete | Phase::Cancelled))
-                {
-                    return Err("Pause and resume the current recovery, or cancel it before starting another".into());
-                }
-                let start = match &action {
-                    Action::Recover(value) => match parse_start(value)? {
-                        Start::Height(h) => h,
-                        Start::Date(t) => {
-                            if t > now() {
-                                return Err("Recovery date cannot be in the future".into());
-                            }
-                            retention::height_from_date(&rpc, t, tip).await?
-                        }
-                    },
-                    Action::Retain(days) => {
-                        if !(1..=3650).contains(days) {
-                            return Err("Choose between 1 and 3650 retention days".into());
-                        }
-                        retention::height_from_date(
-                            &rpc,
-                            now().saturating_sub(u64::from(*days) * 86400),
-                            tip,
-                        )
-                        .await?
-                    }
-                    _ => coins
-                        .iter()
-                        .filter_map(|coin| coin.block_height.and_then(|h| u32::try_from(h).ok()))
-                        .min()
-                        .unwrap_or(tip.saturating_sub(history::BATCH_BLOCKS - 1)),
-                };
-                let mut job =
-                    Recovery::new(binding.clone(), start, tip, rpc.block_hash(tip).await?)?;
-                // A crash during setup leaves an explicit resumable obligation.
-                // Other Cubes preserve this range while setup/import runs.
-                job.phase = Phase::Paused;
-                job.import_requested = matches!(action, Action::Import);
-                job.last_error = Some("Recovery setup was interrupted; resume to continue".into());
-                settings_lifecycle = Some(self.exclusive_lifecycle().await?);
-                let _lease = history::HistoryLease::acquire(&directory)?;
-                history::write_json(&path, &job)?;
-                status.job = Some(job);
-            }
-            if settings_lifecycle.is_none() {
-                settings_lifecycle = Some(self.exclusive_lifecycle().await?);
-            }
-            status.policy = Some(match action {
-                Action::Retain(days) => retention::configure(
-                    &self.datadir,
+                .map_err(|_| "Invalid pruning height")?,
+            )?,
+        });
+        if info["automatic_pruning"].as_bool() != Some(false) {
+            let conf = InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(
+                &internal_bitcoind_datadir(&self.datadir),
+            ))
+            .map_err(|e| e.to_string())?;
+            let (cfg, started) =
+                super::state::vault::settings::bitcoind::ensure_tor_and_start_managed_with_lifecycle(
+                    self.datadir.clone(),
                     self.network,
-                    self.chain,
-                    &self.config,
-                    days,
-                )?,
-                _ => retention::configure_recovery(
-                    &self.datadir,
-                    self.network,
-                    self.chain,
-                    &self.config,
-                    u32::try_from(
-                        info["pruneheight"]
-                            .as_u64()
-                            .ok_or("Missing local pruning height")?,
-                    )
-                    .map_err(|_| "Invalid pruning height")?,
-                )?,
-            });
-            if info["automatic_pruning"].as_bool() != Some(false) {
-                let conf = InternalBitcoindConfig::from_file(&internal_bitcoind_config_path(
-                    &internal_bitcoind_datadir(&self.datadir),
-                ))
-                .map_err(|e| e.to_string())?;
-                let (cfg, started) =
-                    super::state::vault::settings::bitcoind::ensure_tor_and_start_managed_with_lifecycle(
-                        self.datadir.clone(),
-                        self.network,
-                        conf.flavor,
-                        None,
-                        true,
-                        None,
-                        self.managed_owner.clone(),
-                        settings_lifecycle.take(),
-                    )
-                    .await?;
-                if cfg != self.config {
-                    return Err("Managed node endpoint changed during recovery setup; retry".into());
-                }
-                node = Some(started);
-                rpc = NodeRpc::new(&self.config, &wallet_path, self.chain).await?;
-            }
-            drop(settings_lifecycle);
-            let local = rpc.check_chain(self.network).await?;
-            if local["pruned"].as_bool() != Some(true)
-                || local["automatic_pruning"].as_bool() != Some(false)
-            {
-                return Err("The managed node did not enable recovery pruning controls".into());
-            }
-            let _lease = history::HistoryLease::acquire(&directory)?;
-            let indices = self.daemon.get_info().await.map_err(|e| e.to_string())?;
-            let range = indices
-                .receive_index
-                .max(indices.change_index)
-                .max(
-                    coins
-                        .iter()
-                        .map(|coin| u32::from(coin.derivation_index))
-                        .max()
-                        .unwrap_or(0),
+                    conf.flavor,
+                    None,
+                    true,
+                    None,
+                    self.managed_owner.clone(),
+                    settings_lifecycle.take(),
                 )
-                .saturating_add(200)
-                .max(1000);
-            if range >= 1 << 31 {
-                return Err("Wallet derivation range is too large".into());
+                .await?;
+            if cfg != self.config {
+                return Err("Managed node endpoint changed during recovery setup; retry".into());
             }
-            let mut job: Recovery =
-                history::read_json(&path)?.ok_or("Recovery progress is missing")?;
-            job.validate(&binding)?;
-            if !rpc.ensure_loaded(&wallet_path).await? {
-                job.phase = Phase::FetchingForLoad;
-                job.last_error = None;
-                history::write_json(&path, &job)?;
-                status.job = Some(job);
-                return Ok(Outcome { status, node });
-            }
-            rpc.prepare_wallet(&wallet_path, vault, range).await?;
-            job.wallet_ready = true;
-            if job.import_requested {
-                let source = history::outspend_source(config)
-                    .ok_or("No Connect/Esplora source is configured for transaction proofs")?;
-                let txids: BTreeSet<_> = coins
+            *node = Some(started);
+            *rpc = NodeRpc::new(&self.config, inputs.wallet_path, self.chain).await?;
+        }
+        drop(settings_lifecycle);
+        let local = rpc.check_chain(self.network).await?;
+        if local["pruned"].as_bool() != Some(true)
+            || local["automatic_pruning"].as_bool() != Some(false)
+        {
+            return Err("The managed node did not enable recovery pruning controls".into());
+        }
+        let _lease = history::HistoryLease::acquire(inputs.directory)?;
+        let indices = self.daemon.get_info().await.map_err(|e| e.to_string())?;
+        let range = indices
+            .receive_index
+            .max(indices.change_index)
+            .max(
+                coins
                     .iter()
-                    .flat_map(|coin| {
-                        std::iter::once(coin.outpoint.txid)
-                            .chain(coin.spend_info.map(|spend| spend.txid))
-                    })
-                    .collect();
-                let mut transactions = vec![];
-                for batch in txids.into_iter().collect::<Vec<_>>().chunks(64) {
-                    transactions.extend(
-                        self.daemon
-                            .list_txs(batch)
-                            .await
-                            .map_err(|e| e.to_string())?
-                            .transactions,
-                    );
-                }
-                // Blocks whose transaction had no proof or was refused (a spend
-                // with no change back to this Vault) are scanned one by one.
-                let unproved = history::import_transactions(&rpc, source, &transactions).await?;
-                let mut plan = history::plan_coin_scans(&rpc, &coins, Some(source)).await?;
-                plan.blocks.extend(unproved);
-                // Even complete proof imports get a final tail/mempool scan,
-                // started lower only when some coin needs every block.
-                let mut tail = tip.saturating_sub(history::BATCH_BLOCKS - 1);
-                let mut fallback = None;
-                if let Some((floor, reason)) = plan.floor {
-                    if floor < tail {
-                        tail = floor;
-                        fallback = Some(reason);
-                    }
-                }
-                job.plan(plan.blocks, tail, fallback);
-                job.import_requested = false;
-            }
-            job.phase = if job.next > job.target {
-                Phase::Reconciling
-            } else {
-                job.db_replayed = false;
-                Phase::Downloading
-            };
-            job.fetch_attempts = 0;
+                    .map(|coin| u32::from(coin.derivation_index))
+                    .max()
+                    .unwrap_or(0),
+            )
+            .saturating_add(200)
+            .max(1000);
+        if range >= 1 << 31 {
+            return Err("Wallet derivation range is too large".into());
+        }
+        let mut job: Recovery =
+            history::read_json(inputs.path)?.ok_or("Recovery progress is missing")?;
+        job.validate(inputs.binding)?;
+        if !rpc.ensure_loaded(inputs.wallet_path).await? {
+            job.phase = Phase::FetchingForLoad;
             job.last_error = None;
-            job.transient_failures = 0;
-            history::write_json(&path, &job)?;
+            history::write_json(inputs.path, &job)?;
             status.job = Some(job);
-        } else if let Some(job) = &status.job {
-            if !matches!(job.phase, Phase::Cancelled | Phase::Paused) {
-                if job.phase != Phase::FetchingForLoad && !rpc.ensure_loaded(&wallet_path).await? {
-                    let _lease = history::HistoryLease::acquire(&directory)?;
-                    let mut saved: Recovery =
-                        history::read_json(&path)?.ok_or("Missing recovery progress")?;
-                    saved.phase = Phase::FetchingForLoad;
-                    saved.wallet_ready = false;
-                    saved.rewind(Some(
-                        "The local wallet had to be reloaded, so COINCUBE Desktop scans every block again."
-                            .into(),
-                    ));
-                    history::write_json(&path, &saved)?;
-                    status.job = Some(saved);
-                    return Ok(Outcome { status, node });
+            return Ok(false);
+        }
+        rpc.prepare_wallet(inputs.wallet_path, inputs.vault, range)
+            .await?;
+        job.wallet_ready = true;
+        if job.import_requested {
+            self.import_recovery_transactions(inputs.config, rpc, &coins, &mut job, tip)
+                .await?;
+        }
+        job.phase = if job.next > job.target {
+            Phase::Reconciling
+        } else {
+            job.db_replayed = false;
+            Phase::Downloading
+        };
+        job.fetch_attempts = 0;
+        job.last_error = None;
+        job.transient_failures = 0;
+        history::write_json(inputs.path, &job)?;
+        status.job = Some(job);
+        Ok(true)
+    }
+
+    async fn initialize_recovery_job(
+        &self,
+        action: &Action,
+        inputs: &RecoveryInputs<'_>,
+        rpc: &NodeRpc,
+        status: &mut Status,
+        tip: u32,
+        coins: &[ListCoinsEntry],
+    ) -> Result<ManagedNodeLifecycle, String> {
+        if status
+            .job
+            .as_ref()
+            .is_some_and(|job| !matches!(job.phase, Phase::Complete | Phase::Cancelled))
+        {
+            return Err(
+                "Pause and resume the current recovery, or cancel it before starting another"
+                    .into(),
+            );
+        }
+        let start = match action {
+            Action::Recover(value) => match parse_start(value)? {
+                Start::Height(h) => h,
+                Start::Date(t) => {
+                    if t > now() {
+                        return Err("Recovery date cannot be in the future".into());
+                    }
+                    retention::height_from_date(rpc, t, tip).await?
                 }
-                if job.phase == Phase::FetchingForLoad && job.download_next > job.target {
-                    // Re-enter preparation only after every catch-up body was
-                    // retained. If this range was too recent Core still refuses.
-                    if !rpc.ensure_loaded(&wallet_path).await? {
-                        let _lease = history::HistoryLease::acquire(&directory)?;
-                        let mut saved: Recovery =
-                            history::read_json(&path)?.ok_or("Missing recovery progress")?;
-                        saved.phase = Phase::Paused;
-                        saved.last_error=Some("This wallet needs blocks earlier than the selected start. Cancel this recovery and choose an earlier height or date.".into());
-                        history::write_json(&path, &saved)?;
-                        status.job = Some(saved);
-                    } else {
-                        return Box::pin(self.run(Action::Resume)).await;
-                    }
-                } else {
-                    let result = if job.phase == Phase::FetchingForLoad {
-                        history::bootstrap_step(&rpc, self.network, &binding, &path).await
-                    } else {
-                        history::recover_step(&rpc, self.network, &binding, &path).await
-                    };
-                    match result {
-                        Ok(job) => status.job = Some(job),
-                        Err(error) => {
-                            status.error = Some(error);
-                            status.job = history::read_json(&path)?;
-                        }
-                    }
+            },
+            Action::Retain(days) => {
+                if !(1..=3650).contains(days) {
+                    return Err("Choose between 1 and 3650 retention days".into());
+                }
+                retention::height_from_date(
+                    rpc,
+                    now().saturating_sub(u64::from(*days) * 86400),
+                    tip,
+                )
+                .await?
+            }
+            _ => coins
+                .iter()
+                .filter_map(|coin| coin.block_height.and_then(|h| u32::try_from(h).ok()))
+                .min()
+                .unwrap_or(tip.saturating_sub(history::BATCH_BLOCKS - 1)),
+        };
+        let mut job = Recovery::new(
+            (*inputs.binding).clone(),
+            start,
+            tip,
+            rpc.block_hash(tip).await?,
+        )?;
+        // A crash during setup leaves an explicit resumable obligation.
+        // Other Cubes preserve this range while setup/import runs.
+        job.phase = Phase::Paused;
+        job.import_requested = matches!(action, Action::Import);
+        job.last_error = Some("Recovery setup was interrupted; resume to continue".into());
+        let lifecycle = self.exclusive_lifecycle().await?;
+        let _lease = history::HistoryLease::acquire(inputs.directory)?;
+        history::write_json(inputs.path, &job)?;
+        status.job = Some(job);
+        Ok(lifecycle)
+    }
+
+    async fn import_recovery_transactions(
+        &self,
+        config: &Config,
+        rpc: &NodeRpc,
+        coins: &[ListCoinsEntry],
+        job: &mut Recovery,
+        tip: u32,
+    ) -> Result<(), String> {
+        let source = history::outspend_source(config)
+            .ok_or("No Connect/Esplora source is configured for transaction proofs")?;
+        let txids: BTreeSet<_> = coins
+            .iter()
+            .flat_map(|coin| {
+                std::iter::once(coin.outpoint.txid).chain(coin.spend_info.map(|spend| spend.txid))
+            })
+            .collect();
+        let mut transactions = vec![];
+        for batch in txids.into_iter().collect::<Vec<_>>().chunks(64) {
+            transactions.extend(
+                self.daemon
+                    .list_txs(batch)
+                    .await
+                    .map_err(|e| e.to_string())?
+                    .transactions,
+            );
+        }
+        // Blocks whose transaction had no proof or was refused (a spend
+        // with no change back to this Vault) are scanned one by one.
+        let unproved = history::import_transactions(rpc, source, &transactions).await?;
+        let mut plan = history::plan_coin_scans(rpc, coins, Some(source)).await?;
+        plan.blocks.extend(unproved);
+        // Even complete proof imports get a final tail/mempool scan,
+        // started lower only when some coin needs every block.
+        let mut tail = tip.saturating_sub(history::BATCH_BLOCKS - 1);
+        let mut fallback = None;
+        if let Some((floor, reason)) = plan.floor {
+            if floor < tail {
+                tail = floor;
+                fallback = Some(reason);
+            }
+        }
+        job.plan(plan.blocks, tail, fallback);
+        job.import_requested = false;
+        Ok(())
+    }
+
+    async fn poll_recovery(
+        &self,
+        inputs: &RecoveryInputs<'_>,
+        rpc: &NodeRpc,
+        status: &mut Status,
+    ) -> Result<RecoveryPollOutcome, String> {
+        let Some(job) = &status.job else {
+            return Ok(RecoveryPollOutcome::Continue);
+        };
+        if matches!(job.phase, Phase::Cancelled | Phase::Paused) {
+            return Ok(RecoveryPollOutcome::Continue);
+        }
+        if job.phase != Phase::FetchingForLoad && !rpc.ensure_loaded(inputs.wallet_path).await? {
+            let _lease = history::HistoryLease::acquire(inputs.directory)?;
+            let mut saved: Recovery =
+                history::read_json(inputs.path)?.ok_or("Missing recovery progress")?;
+            saved.phase = Phase::FetchingForLoad;
+            saved.wallet_ready = false;
+            saved.rewind(Some(
+                "The local wallet had to be reloaded, so COINCUBE Desktop scans every block again."
+                    .into(),
+            ));
+            history::write_json(inputs.path, &saved)?;
+            status.job = Some(saved);
+            return Ok(RecoveryPollOutcome::Finished);
+        }
+        if job.phase == Phase::FetchingForLoad && job.download_next > job.target {
+            // Re-enter preparation only after every catch-up body was
+            // retained. If this range was too recent Core still refuses.
+            if !rpc.ensure_loaded(inputs.wallet_path).await? {
+                let _lease = history::HistoryLease::acquire(inputs.directory)?;
+                let mut saved: Recovery =
+                    history::read_json(inputs.path)?.ok_or("Missing recovery progress")?;
+                saved.phase = Phase::Paused;
+                saved.last_error=Some("This wallet needs blocks earlier than the selected start. Cancel this recovery and choose an earlier height or date.".into());
+                history::write_json(inputs.path, &saved)?;
+                status.job = Some(saved);
+            } else {
+                return Ok(RecoveryPollOutcome::Resume);
+            }
+        } else {
+            let result = if job.phase == Phase::FetchingForLoad {
+                history::bootstrap_step(rpc, self.network, inputs.binding, inputs.path).await
+            } else {
+                history::recover_step(rpc, self.network, inputs.binding, inputs.path).await
+            };
+            match result {
+                Ok(job) => status.job = Some(job),
+                Err(error) => {
+                    status.error = Some(error);
+                    status.job = history::read_json(inputs.path)?;
                 }
             }
         }
+        Ok(RecoveryPollOutcome::Continue)
+    }
+
+    async fn reconcile_recovery(
+        &self,
+        inputs: &RecoveryInputs<'_>,
+        rpc: &NodeRpc,
+        status: &mut Status,
+    ) -> Result<(), String> {
         if status
             .job
             .as_ref()
             .is_some_and(|job| matches!(job.phase, Phase::Complete | Phase::Reconciling))
         {
-            let _lease = history::HistoryLease::acquire(&directory)?;
-            let local_backend = matches!(config.bitcoin_backend.as_ref(), Some(BitcoinBackend::Bitcoind(active)) if active == &self.config);
+            let _lease = history::HistoryLease::acquire(inputs.directory)?;
+            let local_backend = matches!(inputs.config.bitcoin_backend.as_ref(), Some(BitcoinBackend::Bitcoind(active)) if active == &self.config);
             if local_backend && status.job.as_ref().is_some_and(|job| !job.db_replayed) {
                 self.daemon
                     .replay_wallet_records()
                     .await
                     .map_err(|e| e.to_string())?;
                 let mut saved: Recovery =
-                    history::read_json(&path)?.ok_or("Missing recovery progress")?;
+                    history::read_json(inputs.path)?.ok_or("Missing recovery progress")?;
                 saved.db_replayed = true;
-                history::write_json(&path, &saved)?;
+                history::write_json(inputs.path, &saved)?;
                 status.job = Some(saved);
             }
             let coins = self
@@ -457,13 +578,13 @@ impl Context {
                 .map_err(|e| e.to_string())?
                 .coins;
             status.reconciled =
-                history::reconcile_coins(&rpc, &coins, history::outspend_source(config))
+                history::reconcile_coins(rpc, &coins, history::outspend_source(inputs.config))
                     .await?
                     .is_none();
             if !status.reconciled {
                 status.error=Some("The scan finished, but Connect and the local wallet still disagree about transaction/spend history. Sync Connect, then import or recover again before switching.".into());
                 let mut saved: Recovery =
-                    history::read_json(&path)?.ok_or("Missing recovery progress")?;
+                    history::read_json(inputs.path)?.ok_or("Missing recovery progress")?;
                 saved.phase = Phase::Paused;
                 // Resuming scans every block, the check single blocks missed.
                 saved.rewind(Some(
@@ -471,7 +592,7 @@ impl Context {
                         .into(),
                 ));
                 saved.last_error = status.error.clone();
-                history::write_json(&path, &saved)?;
+                history::write_json(inputs.path, &saved)?;
                 status.job = Some(saved);
             } else if status
                 .job
@@ -479,13 +600,13 @@ impl Context {
                 .is_some_and(|job| job.phase == Phase::Reconciling)
             {
                 let mut saved: Recovery =
-                    history::read_json(&path)?.ok_or("Missing recovery progress")?;
+                    history::read_json(inputs.path)?.ok_or("Missing recovery progress")?;
                 if rpc.block_hash(saved.target).await? != saved.target_hash {
                     return Err("The chain changed during reconciliation; resume recovery".into());
                 }
                 saved.phase = Phase::Complete;
                 saved.last_error = None;
-                history::write_json(&path, &saved)?;
+                history::write_json(inputs.path, &saved)?;
                 status.job = Some(saved);
             }
             if status.reconciled
@@ -502,18 +623,28 @@ impl Context {
                 .map_err(|e| e.to_string())?;
             }
         }
+        Ok(())
+    }
+
+    async fn finish_temporary_retention(
+        &self,
+        directory: &Path,
+        rpc: &NodeRpc,
+        status: &mut Status,
+        node: &mut Option<Bitcoind>,
+    ) -> Result<(), String> {
         // `finish_temporary` rewrites bitcoin.conf before the restart. Only
         // call it when its current policy could finish, with the same owner
         // guard held until the replacement node has claimed its lock.
         let mut finish_lifecycle = if status.policy.as_ref().is_some_and(|p| p.temporary)
-            && retention::unfinished(&directory)?.is_empty()
+            && retention::unfinished(directory)?.is_empty()
         {
             // Another Cube may currently own the node. Keep this poll's status
             // and retry the finish after that owner releases it.
             match self.exclusive_lifecycle().await {
                 Ok(lifecycle) => Some(lifecycle),
                 Err(error) => {
-                    record_temporary_finish_error(&mut status, error);
+                    record_temporary_finish_error(status, error);
                     None
                 }
             }
@@ -540,16 +671,15 @@ impl Context {
             if cfg != self.config {
                 return Err("Managed node endpoint changed; refresh node settings".into());
             }
-            node = Some(started);
+            *node = Some(started);
             status.policy = None;
         } else if status.policy.is_some() {
             drop(finish_lifecycle);
-            if let Err(error) = retention::maintain(&self.datadir, self.network, &rpc, now()).await
-            {
+            if let Err(error) = retention::maintain(&self.datadir, self.network, rpc, now()).await {
                 status.error = Some(error);
             }
         }
-        Ok(Outcome { status, node })
+        Ok(())
     }
 }
 

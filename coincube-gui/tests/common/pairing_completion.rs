@@ -44,23 +44,7 @@ pub async fn complete_with_fault<T: AsyncRead + AsyncWrite + Unpin>(
         }
         if let Some((stop, kind)) = fault {
             if boundary == stop {
-                if kind == "timeout" {
-                    tokio::time::sleep(std::time::Duration::from_secs(11)).await;
-                }
-                if kind == "unexpected" {
-                    let bad = LocalEnvelope {
-                        payload: Some(Payload::PairingStep(local_v1::PairingStep {
-                            transaction_id: "wrong-id".into(),
-                            phase: reply as i32,
-                            desktop_name: String::new(),
-                        })),
-                    }
-                    .encode_to_vec();
-                    stream.write_u32(bad.len() as u32).await?;
-                    stream.write_all(&bad).await?;
-                    stream.flush().await?;
-                }
-                return Err("injected transport fault".into());
+                return inject_pairing_fault(stream, kind, reply).await;
             }
         }
         id = Some(step.transaction_id.clone());
@@ -77,4 +61,29 @@ pub async fn complete_with_fault<T: AsyncRead + AsyncWrite + Unpin>(
         stream.flush().await?;
     }
     Ok(())
+}
+
+async fn inject_pairing_fault<T: AsyncWrite + Unpin>(
+    stream: &mut T,
+    kind: &str,
+    reply: local_v1::pairing_step::Phase,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    use local_v1::local_envelope::Payload;
+    if kind == "timeout" {
+        tokio::time::sleep(std::time::Duration::from_secs(11)).await;
+    }
+    if kind == "unexpected" {
+        let bad = LocalEnvelope {
+            payload: Some(Payload::PairingStep(local_v1::PairingStep {
+                transaction_id: "wrong-id".into(),
+                phase: reply as i32,
+                desktop_name: String::new(),
+            })),
+        }
+        .encode_to_vec();
+        stream.write_u32(bad.len() as u32).await?;
+        stream.write_all(&bad).await?;
+        stream.flush().await?;
+    }
+    Err("injected transport fault".into())
 }

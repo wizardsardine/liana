@@ -4,7 +4,7 @@
 //! launcher_capture -- --ignored`. All Cubes are synthetic fixtures.
 
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{Duration, Instant},
 };
 
@@ -158,6 +158,14 @@ fn home(light: bool) -> Home {
     home
 }
 
+fn capture_appearance(light: bool) -> (&'static str, theme::Theme) {
+    if light {
+        ("light", theme::Theme::light())
+    } else {
+        ("dark", theme::Theme::dark())
+    }
+}
+
 fn key(i: usize) -> CubeCatalogKey {
     CubeCatalogKey {
         chain: ChainId::Bitcoin,
@@ -178,12 +186,7 @@ fn launcher_capture_sizes() {
     std::fs::create_dir_all(&directory).unwrap();
     let mut renderer = renderer().expect("wgpu headless renderer");
     for light in [false, true] {
-        let appearance = if light { "light" } else { "dark" };
-        let palette = if light {
-            theme::Theme::light()
-        } else {
-            theme::Theme::dark()
-        };
+        let (appearance, palette) = capture_appearance(light);
         let mut home = home(light);
         if let State::Cubes { cubes, .. } = &mut home.state {
             for i in cubes.len()..12 {
@@ -314,12 +317,7 @@ fn launcher_capture() {
     let mut renderer = renderer().expect("wgpu headless renderer");
     let size = Size::new(1440.0, 900.0);
     for light in [false, true] {
-        let appearance = if light { "light" } else { "dark" };
-        let palette = if light {
-            theme::Theme::light()
-        } else {
-            theme::Theme::dark()
-        };
+        let (appearance, palette) = capture_appearance(light);
         let shot = |home: &Home, name: &str, renderer: &mut iced::Renderer| {
             save(
                 renderer,
@@ -385,87 +383,11 @@ fn launcher_capture() {
             all.catalog.filter = NetworkFilter::Network(ChainId::BitcoinBlake2bTestnet4);
             shot(&all, "12-filters-none", &mut renderer);
         }
-        // Browse -> details on the second Cube: every 82ms of the 820ms turn.
-        home.catalog.selected = Some(key(pick));
-        for step in 0..=10u64 {
-            home.catalog.motion = Some(Motion::at(
-                None,
-                Instant::now() - Duration::from_millis(step * 82),
-            ));
-            shot(&home, &format!("02-spin-{:04}ms", step * 82), &mut renderer);
-        }
-        home.catalog.motion = None;
-        shot(&home, "03-details", &mut renderer);
-        // Handoff to another Cube: 160ms delay, then its turn.
-        home.catalog.selected = Some(key(other));
-        for ms in [0u64, 80, 160, 400, 980] {
-            home.catalog.motion = Some(Motion::at(
-                Some(key(pick)),
-                Instant::now() - Duration::from_millis(ms),
-            ));
-            shot(&home, &format!("04-handoff-{ms:04}ms"), &mut renderer);
-        }
-        home.catalog.motion = None;
-        // Back to browse.
-        home.catalog.selected = None;
-        for ms in [0u64, 250, 820] {
-            home.catalog.motion = Some(Motion::returning_at(
-                key(other),
-                Instant::now() - Duration::from_millis(ms),
-            ));
-            shot(&home, &format!("05-return-{ms:04}ms"), &mut renderer);
-        }
-        home.catalog.motion = None;
-        home.catalog.page = 1;
-        shot(&home, "06-floor-page2", &mut renderer);
-        home.catalog.page = 0;
+        capture_motion_frames(&mut home, pick, other, &mut renderer, &shot);
 
         // A 30fps sequence for the recording: spin in, hold, hand off, return.
         if std::env::var("LAUNCHER_CAPTURE_SEQUENCE").is_ok() {
-            let mut frame = 0;
-            let mut seq = |home: &Home, renderer: &mut iced::Renderer| {
-                shot(home, &format!("seq-{frame:04}"), renderer);
-                frame += 1;
-            };
-            home.catalog.selected = None;
-            home.catalog.motion = None;
-            for _ in 0..10 {
-                seq(&home, &mut renderer);
-            }
-            home.catalog.selected = Some(key(pick));
-            for ms in (0..=840u64).step_by(33) {
-                home.catalog.motion =
-                    Some(Motion::at(None, Instant::now() - Duration::from_millis(ms)));
-                seq(&home, &mut renderer);
-            }
-            home.catalog.motion = None;
-            for _ in 0..20 {
-                seq(&home, &mut renderer);
-            }
-            home.catalog.selected = Some(key(other));
-            for ms in (0..=1000u64).step_by(33) {
-                home.catalog.motion = Some(Motion::at(
-                    Some(key(pick)),
-                    Instant::now() - Duration::from_millis(ms),
-                ));
-                seq(&home, &mut renderer);
-            }
-            home.catalog.motion = None;
-            for _ in 0..20 {
-                seq(&home, &mut renderer);
-            }
-            home.catalog.selected = None;
-            for ms in (0..=840u64).step_by(33) {
-                home.catalog.motion = Some(Motion::returning_at(
-                    key(other),
-                    Instant::now() - Duration::from_millis(ms),
-                ));
-                seq(&home, &mut renderer);
-            }
-            home.catalog.motion = None;
-            for _ in 0..10 {
-                seq(&home, &mut renderer);
-            }
+            capture_motion_sequence(&mut home, pick, other, &mut renderer, &shot);
         }
 
         // A short window scrolls the stage above the frame top: the GPU
@@ -486,79 +408,193 @@ fn launcher_capture() {
         );
         home.catalog.selected = None;
 
-        // Details -> unlock on the same floor, through the real unlock stage.
-        home.catalog.selected = Some(key(pick));
-        home.catalog.open_from_floor = true;
-        let cube = if let State::Cubes { cubes, .. } = &home.state {
-            cubes[pick].clone()
-        } else {
-            unreachable!()
-        };
-        let context = home.launcher_scene_context(&cube).expect("floor context");
-        let mode = home.theme_mode;
-        let steps: Vec<f32> = if std::env::var("LAUNCHER_CAPTURE_SEQUENCE").is_ok() {
-            (0..=25)
-                .map(|i| super::launcher_scene::ease(i as f32 / 25.0))
-                .collect()
-        } else {
-            vec![0.0, 0.25, 0.5, 0.75]
-        };
-        // The real PIN and passkey screens, with synthetic Cubes only.
-        let success = || crate::pin_entry::PinEntrySuccess::LoadApp {
-            datadir: crate::dir::CoincubeDirectory::new(Default::default()),
-            config: crate::app::Config::new(false),
-            network: cube.network.bitcoin_network(),
-            internal_bitcoind: None,
-            backup: None,
-            wallet_settings: None,
-            connect_client: None,
-        };
-        let entry =
-            crate::pin_entry::PinEntry::new(cube.clone(), Default::default(), success(), None);
-        for progress in steps {
-            let element = launcher_presenter::unlock_turn_with_floor_controls(
-                &cube,
-                mode,
-                &context,
-                Some(progress),
-                entry.view_with_theme_and_floor(mode, Some(&context)),
-            );
-            save(
-                &mut renderer,
-                element,
-                size,
-                &palette,
-                directory.join(format!(
-                    "{appearance}-07-unlock-turn-{:04}.png",
-                    (progress * 1000.0) as u32
-                )),
-            );
-        }
-        save(
+        capture_unlock_frames(
+            &mut home,
+            pick,
             &mut renderer,
-            entry.view_with_theme_and_floor(mode, Some(&context)),
             size,
             &palette,
-            directory.join(format!("{appearance}-08-unlock.png")),
-        );
-        // The unlock screens without a Launcher page behind them.
-        save(
-            &mut renderer,
-            entry.view_with_theme(mode),
-            size,
-            &palette,
-            directory.join(format!("{appearance}-09-unlock-lone.png")),
-        );
-        let passkey =
-            crate::passkey_unlock::PasskeyUnlock::new(cube.clone(), Default::default(), success());
-        save(
-            &mut renderer,
-            passkey.view_with_theme_and_floor(mode, Some(&context)),
-            size,
-            &palette,
-            directory.join(format!("{appearance}-11-unlock-passkey.png")),
+            &directory,
+            appearance,
         );
     }
+}
+
+fn capture_motion_frames(
+    home: &mut Home,
+    pick: usize,
+    other: usize,
+    renderer: &mut iced::Renderer,
+    shot: &impl Fn(&Home, &str, &mut iced::Renderer),
+) {
+    // Browse -> details on the second Cube: every 82ms of the 820ms turn.
+    home.catalog.selected = Some(key(pick));
+    for step in 0..=10u64 {
+        home.catalog.motion = Some(Motion::at(
+            None,
+            Instant::now() - Duration::from_millis(step * 82),
+        ));
+        shot(home, &format!("02-spin-{:04}ms", step * 82), renderer);
+    }
+    home.catalog.motion = None;
+    shot(home, "03-details", renderer);
+    // Handoff to another Cube: 160ms delay, then its turn.
+    home.catalog.selected = Some(key(other));
+    for ms in [0u64, 80, 160, 400, 980] {
+        home.catalog.motion = Some(Motion::at(
+            Some(key(pick)),
+            Instant::now() - Duration::from_millis(ms),
+        ));
+        shot(home, &format!("04-handoff-{ms:04}ms"), renderer);
+    }
+    home.catalog.motion = None;
+    // Back to browse.
+    home.catalog.selected = None;
+    for ms in [0u64, 250, 820] {
+        home.catalog.motion = Some(Motion::returning_at(
+            key(other),
+            Instant::now() - Duration::from_millis(ms),
+        ));
+        shot(home, &format!("05-return-{ms:04}ms"), renderer);
+    }
+    home.catalog.motion = None;
+    home.catalog.page = 1;
+    shot(home, "06-floor-page2", renderer);
+    home.catalog.page = 0;
+}
+
+fn capture_motion_sequence(
+    home: &mut Home,
+    pick: usize,
+    other: usize,
+    renderer: &mut iced::Renderer,
+    shot: &impl Fn(&Home, &str, &mut iced::Renderer),
+) {
+    let mut frame = 0;
+    let mut seq = |home: &Home, renderer: &mut iced::Renderer| {
+        shot(home, &format!("seq-{frame:04}"), renderer);
+        frame += 1;
+    };
+    home.catalog.selected = None;
+    home.catalog.motion = None;
+    for _ in 0..10 {
+        seq(home, renderer);
+    }
+    home.catalog.selected = Some(key(pick));
+    for ms in (0..=840u64).step_by(33) {
+        home.catalog.motion = Some(Motion::at(None, Instant::now() - Duration::from_millis(ms)));
+        seq(home, renderer);
+    }
+    home.catalog.motion = None;
+    for _ in 0..20 {
+        seq(home, renderer);
+    }
+    home.catalog.selected = Some(key(other));
+    for ms in (0..=1000u64).step_by(33) {
+        home.catalog.motion = Some(Motion::at(
+            Some(key(pick)),
+            Instant::now() - Duration::from_millis(ms),
+        ));
+        seq(home, renderer);
+    }
+    home.catalog.motion = None;
+    for _ in 0..20 {
+        seq(home, renderer);
+    }
+    home.catalog.selected = None;
+    for ms in (0..=840u64).step_by(33) {
+        home.catalog.motion = Some(Motion::returning_at(
+            key(other),
+            Instant::now() - Duration::from_millis(ms),
+        ));
+        seq(home, renderer);
+    }
+    home.catalog.motion = None;
+    for _ in 0..10 {
+        seq(home, renderer);
+    }
+}
+
+fn capture_unlock_frames(
+    home: &mut Home,
+    pick: usize,
+    renderer: &mut iced::Renderer,
+    size: Size,
+    palette: &theme::Theme,
+    directory: &Path,
+    appearance: &str,
+) {
+    // Details -> unlock on the same floor, through the real unlock stage.
+    home.catalog.selected = Some(key(pick));
+    home.catalog.open_from_floor = true;
+    let cube = if let State::Cubes { cubes, .. } = &home.state {
+        cubes[pick].clone()
+    } else {
+        unreachable!()
+    };
+    let context = home.launcher_scene_context(&cube).expect("floor context");
+    let mode = home.theme_mode;
+    let steps: Vec<f32> = if std::env::var("LAUNCHER_CAPTURE_SEQUENCE").is_ok() {
+        (0..=25)
+            .map(|i| super::launcher_scene::ease(i as f32 / 25.0))
+            .collect()
+    } else {
+        vec![0.0, 0.25, 0.5, 0.75]
+    };
+    // The real PIN and passkey screens, with synthetic Cubes only.
+    let success = || crate::pin_entry::PinEntrySuccess::LoadApp {
+        datadir: crate::dir::CoincubeDirectory::new(Default::default()),
+        config: crate::app::Config::new(false),
+        network: cube.network.bitcoin_network(),
+        internal_bitcoind: None,
+        backup: None,
+        wallet_settings: None,
+        connect_client: None,
+    };
+    let entry = crate::pin_entry::PinEntry::new(cube.clone(), Default::default(), success(), None);
+    for progress in steps {
+        let element = launcher_presenter::unlock_turn_with_floor_controls(
+            &cube,
+            mode,
+            &context,
+            Some(progress),
+            entry.view_with_theme_and_floor(mode, Some(&context)),
+        );
+        save(
+            renderer,
+            element,
+            size,
+            palette,
+            directory.join(format!(
+                "{appearance}-07-unlock-turn-{:04}.png",
+                (progress * 1000.0) as u32
+            )),
+        );
+    }
+    save(
+        renderer,
+        entry.view_with_theme_and_floor(mode, Some(&context)),
+        size,
+        palette,
+        directory.join(format!("{appearance}-08-unlock.png")),
+    );
+    // The unlock screens without a Launcher page behind them.
+    save(
+        renderer,
+        entry.view_with_theme(mode),
+        size,
+        palette,
+        directory.join(format!("{appearance}-09-unlock-lone.png")),
+    );
+    let passkey =
+        crate::passkey_unlock::PasskeyUnlock::new(cube.clone(), Default::default(), success());
+    save(
+        renderer,
+        passkey.view_with_theme_and_floor(mode, Some(&context)),
+        size,
+        palette,
+        directory.join(format!("{appearance}-11-unlock-passkey.png")),
+    );
 }
 
 /// O-Launcher's opening: the tumble, the settled loading face as the edge
@@ -585,12 +621,7 @@ fn launcher_capture_opening() {
         contexts: Vec::new(),
     };
     for light in [false, true] {
-        let appearance = if light { "light" } else { "dark" };
-        let palette = if light {
-            theme::Theme::light()
-        } else {
-            theme::Theme::dark()
-        };
+        let (appearance, palette) = capture_appearance(light);
         let mode = if light {
             coincube_ui::theme::palette::ThemeMode::Light
         } else {
@@ -607,30 +638,7 @@ fn launcher_capture_opening() {
             .expect("the selected Cube's floor");
         let t0 = Instant::now();
         let mut shot = |opening: &Opening, now: Instant, stage: Stage, name: &str| {
-            let face = launcher_presenter::OpeningFace {
-                cube: &cube,
-                quote: &quote,
-                outgoing: None,
-                stage,
-                stalled: opening.stalled(now),
-                cancel: || (),
-                without_spark: || (),
-            };
-            let base: Element<'_, ()> = match opening.floor() {
-                Some(floor) => {
-                    launcher_presenter::opening_on_floor(floor, face, mode, opening, now)
-                }
-                None => launcher_presenter::opening_full_screen(face, mode, opening, now),
-            };
-            let wash = opening.wash(now);
-            let element: Element<'_, ()> = if wash > 0.0 {
-                iced::widget::Stack::new()
-                    .push(base)
-                    .push(launcher_presenter::opening_wash(cube.network, wash))
-                    .into()
-            } else {
-                base
-            };
+            let element = opening_capture_element(&cube, &quote, opening, now, stage, mode);
             save(
                 &mut renderer,
                 element,
@@ -664,6 +672,38 @@ fn launcher_capture_opening() {
             Stage::StartingDaemon,
             "9-reduced-frame",
         );
+    }
+}
+
+fn opening_capture_element<'a>(
+    cube: &'a CubeSettings,
+    quote: &'a coincube_ui::component::quote_display::Quote,
+    opening: &'a super::launcher_opening::Opening,
+    now: Instant,
+    stage: super::launcher_opening::Stage,
+    mode: coincube_ui::theme::palette::ThemeMode,
+) -> Element<'a, ()> {
+    let face = launcher_presenter::OpeningFace {
+        cube,
+        quote,
+        outgoing: None,
+        stage,
+        stalled: opening.stalled(now),
+        cancel: || (),
+        without_spark: || (),
+    };
+    let base: Element<'_, ()> = match opening.floor() {
+        Some(floor) => launcher_presenter::opening_on_floor(floor, face, mode, opening, now),
+        None => launcher_presenter::opening_full_screen(face, mode, opening, now),
+    };
+    let wash = opening.wash(now);
+    if wash > 0.0 {
+        iced::widget::Stack::new()
+            .push(base)
+            .push(launcher_presenter::opening_wash(cube.network, wash))
+            .into()
+    } else {
+        base
     }
 }
 
@@ -757,12 +797,7 @@ fn launcher_capture_empty_modes() {
     std::fs::create_dir_all(&directory).unwrap();
     let mut renderer = renderer().expect("wgpu headless renderer");
     for light in [false, true] {
-        let appearance = if light { "light" } else { "dark" };
-        let palette = if light {
-            theme::Theme::light()
-        } else {
-            theme::Theme::dark()
-        };
+        let (appearance, palette) = capture_appearance(light);
         let mut home = home(light);
         home.state = State::NoCube { create_cube: false };
         for mode in [LauncherMode::Cubes, LauncherMode::List] {

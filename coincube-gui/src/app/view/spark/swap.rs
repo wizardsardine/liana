@@ -443,24 +443,7 @@ fn details_card<'a>(
         }
         _ => None,
     };
-    let estimate = price
-        .filter(|_| !(masked && swap.max_for_view()))
-        .and_then(|price| {
-            let amount = if swap.max_for_view() {
-                Some(swap.balance(from))
-            } else {
-                swap.typed_amount()
-            }?;
-            let out = converted_at(
-                AssetAmount {
-                    asset: from,
-                    amount,
-                },
-                price,
-                decimals,
-            );
-            Some(format_asset(out.asset, out.amount, decimals))
-        });
+    let estimate = swap_details_estimate(swap, from, price, decimals, masked);
 
     let figures = Column::new()
         .spacing(8)
@@ -524,6 +507,33 @@ fn details_card<'a>(
         .push(iced::widget::rule::horizontal(1))
         .push(section(footer))
         .into()
+}
+
+fn swap_details_estimate(
+    swap: &SparkSwap,
+    from: WalletAsset,
+    price: Option<f64>,
+    decimals: u32,
+    masked: bool,
+) -> Option<String> {
+    price
+        .filter(|_| !(masked && swap.max_for_view()))
+        .and_then(|price| {
+            let amount = if swap.max_for_view() {
+                Some(swap.balance(from))
+            } else {
+                swap.typed_amount()
+            }?;
+            let out = converted_at(
+                AssetAmount {
+                    asset: from,
+                    amount,
+                },
+                price,
+                decimals,
+            );
+            Some(format_asset(out.asset, out.amount, decimals))
+        })
 }
 
 fn review_card<'a>(

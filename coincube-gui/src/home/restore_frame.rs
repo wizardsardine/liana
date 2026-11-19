@@ -41,46 +41,7 @@ pub(crate) fn stepper<'a, M: 'a>(steps: &[&'static str], active: usize) -> Eleme
             |row, (index, label)| {
                 let current = index == active;
                 let done = index < active;
-                let mark: Element<'a, M> = if done {
-                    coincube_ui::icon::check_icon()
-                        .size(12)
-                        .style(|theme: &theme::Theme| iced::widget::text::Style {
-                            color: Some(theme.colors.shell.good),
-                        })
-                        .into()
-                } else {
-                    p2_regular((index + 1).to_string())
-                        .size(12)
-                        .style(move |theme| {
-                            if current {
-                                theme::text::primary(theme)
-                            } else {
-                                theme::text::secondary(theme)
-                            }
-                        })
-                        .into()
-                };
-                let number = Container::new(mark)
-                    .width(Length::Fixed(24.0))
-                    .height(Length::Fixed(24.0))
-                    .center_x(Length::Fixed(24.0))
-                    .center_y(Length::Fixed(24.0))
-                    .style(move |theme: &theme::Theme| iced::widget::container::Style {
-                        background: current
-                            .then_some(iced::Background::Color(theme.colors.shell.selected)),
-                        border: iced::Border {
-                            color: if current {
-                                theme.colors.shell.accent
-                            } else if done {
-                                theme.colors.shell.good
-                            } else {
-                                theme.colors.shell.line
-                            },
-                            width: 1.0,
-                            radius: 12.0.into(),
-                        },
-                        ..Default::default()
-                    });
+                let number = step_number(index, current, done);
                 let row = row.push(
                     Row::new()
                         .spacing(13)
@@ -102,6 +63,48 @@ pub(crate) fn stepper<'a, M: 'a>(steps: &[&'static str], active: usize) -> Eleme
             },
         )
         .into()
+}
+
+fn step_number<'a, M: 'a>(index: usize, current: bool, done: bool) -> Container<'a, M> {
+    let mark: Element<'a, M> = if done {
+        coincube_ui::icon::check_icon()
+            .size(12)
+            .style(|theme: &theme::Theme| iced::widget::text::Style {
+                color: Some(theme.colors.shell.good),
+            })
+            .into()
+    } else {
+        p2_regular((index + 1).to_string())
+            .size(12)
+            .style(move |theme| {
+                if current {
+                    theme::text::primary(theme)
+                } else {
+                    theme::text::secondary(theme)
+                }
+            })
+            .into()
+    };
+    Container::new(mark)
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
+        .center_x(Length::Fixed(24.0))
+        .center_y(Length::Fixed(24.0))
+        .style(move |theme: &theme::Theme| iced::widget::container::Style {
+            background: current.then_some(iced::Background::Color(theme.colors.shell.selected)),
+            border: iced::Border {
+                color: if current {
+                    theme.colors.shell.accent
+                } else if done {
+                    theme.colors.shell.good
+                } else {
+                    theme.colors.shell.line
+                },
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            ..Default::default()
+        })
 }
 
 /// The step rail: the strip in a 52px band over a full-width rule.

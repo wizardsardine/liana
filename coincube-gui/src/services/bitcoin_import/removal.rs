@@ -3,7 +3,11 @@
 //! This is intentionally separate from `delete_wallet`: imported wallets have
 //! no Vault id, and a wallet-id-derived path alone is not proof of ownership.
 
-use std::{fs, io::ErrorKind, path::Path};
+use std::{
+    fs,
+    io::ErrorKind,
+    path::{Path, PathBuf},
+};
 
 use async_fd_lock::LockWrite;
 
@@ -12,7 +16,9 @@ use super::{
     OWNER_FILE,
 };
 use crate::{
-    app::settings::{self, CubeSettings, ImportedWalletAttachment, Settings, SettingsError},
+    app::settings::{
+        self, CubeSettings, ImportedWalletAttachment, Settings, SettingsError, WalletId,
+    },
     dir::NetworkDirectory,
 };
 
@@ -174,57 +180,20 @@ async fn remove_cube_import_within(
         .as_ref()
         .or(staged_owner.as_ref())
         .or(final_owner.as_ref());
-    if journal.is_none() {
-        if let Some(path) = final_from_attachment.clone() {
-            if super::blocking_fs(move || Ok(storage_present(&path))).await? {
-                return Err(
-                    "Imported wallet storage lacks an owner; no files were removed.".into(),
-                );
-            }
-        }
-    }
-    for owner in [
-        file_journal.as_ref(),
-        staged_owner.as_ref(),
-        final_owner.as_ref(),
-    ]
-    .iter()
-    .flatten()
-    {
-        check_journal(owner, expected, expected_attachment)?;
-        if let Some(primary) = journal {
-            if owner.cube_id != primary.cube_id
-                || owner.operation_id != primary.operation_id
-                || owner.wallet != primary.wallet
-            {
-                return Err("The import ownership records disagree; no files were removed.".into());
-            }
-        }
-    }
-    let destination = journal.map(|owner| owner.final_path(directory));
-    if let (Some(expected_path), Some(actual_path)) =
-        (final_from_attachment.as_ref(), destination.as_ref())
-    {
-        if expected_path != actual_path {
-            return Err("The import destination differs from this Cube's wallet.".into());
-        }
-    }
-    let stage_present = match journal {
-        Some(owner) => checked_owner_directory(&stage, owner)?,
-        None => {
-            if stage.exists() {
-                return Err("Staged import data lacks an owner; no files were removed.".into());
-            }
-            false
-        }
-    };
-    let final_present = match (journal, destination.as_ref()) {
-        (Some(owner), Some(path)) => checked_owner_directory(path, owner)?,
-        (None, Some(path)) if path.exists() => {
-            return Err("Imported wallet storage lacks an owner; no files were removed.".into());
-        }
-        _ => false,
-    };
+    check_import_storage_owners(
+        journal,
+        final_from_attachment.as_deref(),
+        [
+            file_journal.as_ref(),
+            staged_owner.as_ref(),
+            final_owner.as_ref(),
+        ],
+        expected,
+        expected_attachment,
+    )
+    .await?;
+    let (destination, stage_present, final_present) =
+        check_import_storage_paths(directory, journal, &stage, final_from_attachment.as_deref())?;
     // A stale modal after successful deletion carries a wallet id but no
     // longer proves ownership of a settings row. There is nothing left to
     // retry when both the Cube and its exact operation records are absent.
@@ -255,6 +224,94 @@ async fn remove_cube_import_within(
             return Err(crate::daemon::stopping::STILL_STOPPING.to_string());
         }
     }
+    remove_import_key_storage(
+        directory,
+        expected,
+        expected_attachment,
+        intent.operation_id,
+    )
+    .await?;
+
+    remove_import_files(
+        &stage,
+        destination.as_deref(),
+        stage_present,
+        final_present,
+        &journal_file,
+    )?;
+    remove_import_settings(directory, expected, wallet_id).await?;
+    Ok(())
+}
+
+async fn check_import_storage_owners(
+    journal: Option<&Journal>,
+    final_from_attachment: Option<&Path>,
+    owners: [Option<&Journal>; 3],
+    expected: &CubeSettings,
+    expected_attachment: Option<&ImportedWalletAttachment>,
+) -> Result<(), String> {
+    if journal.is_none() {
+        if let Some(path) = final_from_attachment.map(Path::to_path_buf) {
+            if super::blocking_fs(move || Ok(storage_present(&path))).await? {
+                return Err(
+                    "Imported wallet storage lacks an owner; no files were removed.".into(),
+                );
+            }
+        }
+    }
+    for owner in owners.iter().flatten() {
+        check_journal(owner, expected, expected_attachment)?;
+        if let Some(primary) = journal {
+            if owner.cube_id != primary.cube_id
+                || owner.operation_id != primary.operation_id
+                || owner.wallet != primary.wallet
+            {
+                return Err("The import ownership records disagree; no files were removed.".into());
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_import_storage_paths(
+    directory: &NetworkDirectory,
+    journal: Option<&Journal>,
+    stage: &Path,
+    final_from_attachment: Option<&Path>,
+) -> Result<(Option<PathBuf>, bool, bool), String> {
+    let destination = journal.map(|owner| owner.final_path(directory));
+    if let (Some(expected_path), Some(actual_path)) =
+        (final_from_attachment, destination.as_deref())
+    {
+        if expected_path != actual_path {
+            return Err("The import destination differs from this Cube's wallet.".into());
+        }
+    }
+    let stage_present = match journal {
+        Some(owner) => checked_owner_directory(stage, owner)?,
+        None => {
+            if stage.exists() {
+                return Err("Staged import data lacks an owner; no files were removed.".into());
+            }
+            false
+        }
+    };
+    let final_present = match (journal, destination.as_ref()) {
+        (Some(owner), Some(path)) => checked_owner_directory(path, owner)?,
+        (None, Some(path)) if path.exists() => {
+            return Err("Imported wallet storage lacks an owner; no files were removed.".into());
+        }
+        _ => false,
+    };
+    Ok((destination, stage_present, final_present))
+}
+
+async fn remove_import_key_storage(
+    directory: &NetworkDirectory,
+    expected: &CubeSettings,
+    expected_attachment: Option<&ImportedWalletAttachment>,
+    operation_id: uuid::Uuid,
+) -> Result<(), String> {
     if let Some(attachment) = expected_attachment {
         if expected.network.is_blake2b() {
             // The local-key repository refuses every BTCB2 scope, so a BTCB2
@@ -263,7 +320,7 @@ async fn remove_cube_import_within(
             let key_root = directory
                 .path()
                 .join("imported-local-keys")
-                .join(intent.operation_id.to_string());
+                .join(operation_id.to_string());
             if super::blocking_fs(move || Ok(storage_present(&key_root))).await? {
                 return Err(
                     "Unexpected imported key storage for a Bitcoin Blake2b Cube; no files were removed."
@@ -277,20 +334,29 @@ async fn remove_cube_import_within(
             .remove_operation_storage()?;
         }
     }
+    Ok(())
+}
 
+fn remove_import_files(
+    stage: &Path,
+    destination: Option<&Path>,
+    stage_present: bool,
+    final_present: bool,
+    journal_file: &Path,
+) -> Result<(), String> {
     // Keep the Cube visible until cleanup finishes. An interrupted removal
     // can be retried from its delete dialog, even if some owned files are gone.
     if stage_present {
         remove_owned_directory(
-            &stage,
+            stage,
             stage.parent().ok_or("Missing import data directory")?,
         )?;
     }
     if final_present {
-        let path = destination.as_ref().expect("checked destination");
+        let path = destination.expect("checked destination");
         remove_owned_directory(path, path.parent().ok_or("Missing import data directory")?)?;
     }
-    match fs::remove_file(&journal_file) {
+    match fs::remove_file(journal_file) {
         Ok(()) => sync_directory(
             journal_file
                 .parent()
@@ -299,6 +365,14 @@ async fn remove_cube_import_within(
         Err(error) if error.kind() == ErrorKind::NotFound => (),
         Err(error) => return Err(error.to_string()),
     }
+    Ok(())
+}
+
+async fn remove_import_settings(
+    directory: &NetworkDirectory,
+    expected: &CubeSettings,
+    wallet_id: Option<&WalletId>,
+) -> Result<(), String> {
     settings::update_settings_file_checked(directory, |mut current| {
         checked_live_cube(&current, expected).map_err(SettingsError::WritingFile)?;
         if let Some(wallet_id) = wallet_id {
