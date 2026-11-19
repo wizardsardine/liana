@@ -971,7 +971,7 @@ impl BitcoindSettingsState {
                 return clipboard::write(value);
             }
             NodeSettingsMessage::RestartNodeToApply => {
-                return self.restart_node_to_apply(cache);
+                return self.restart_managed_node(cache, None);
             }
             NodeSettingsMessage::CustomEsploraEdited(value) => {
                 self.custom_esplora_url.value = value;
@@ -1361,12 +1361,13 @@ impl BitcoindSettingsState {
         Task::none()
     }
 
-    fn restart_node_to_apply(&mut self, cache: &Cache) -> Task<Message> {
-        // Restart the managed node now so freshly-toggled
-        // inbound-over-Tor settings take effect, reusing the setup
-        // progress panel + result handler. `force_restart` stops
-        // the running node first (same flavour, so `maybe_start`
-        // would otherwise reuse it).
+    fn restart_managed_node(
+        &mut self,
+        cache: &Cache,
+        resources: Option<NodeResources>,
+    ) -> Task<Message> {
+        // Reuse the setup progress and result handling. Force a restart so
+        // resource changes or the inbound Tor preference take effect.
         let Some(flavor) = self
             .bitcoind_settings
             .as_ref()
@@ -1400,7 +1401,7 @@ impl BitcoindSettingsState {
                 flavor,
                 None,
                 true,
-                None,
+                resources,
                 self.managed_owner_path(),
             ),
             |r| {
@@ -1503,54 +1504,7 @@ impl BitcoindSettingsState {
         ) else {
             return Task::none();
         };
-        // Only the internal managed node carries resource settings.
-        let Some(flavor) = self
-            .bitcoind_settings
-            .as_ref()
-            .and_then(|s| s.managed_flavor)
-        else {
-            return Task::none();
-        };
-        // Same refusal as the restart: nothing is rewritten,
-        // stopped or started for a mismatched provider.
-        if let Err(e) = provider_serves_network(flavor, cache.network) {
-            self.warning = Some(Error::Unexpected(e));
-            return Task::none();
-        }
-        // Reuse the setup progress panel + result handler; the
-        // force-restart applies the rewritten conf (same flavour,
-        // so `maybe_start` would otherwise reuse the running node).
-        self.pending_node_setup = Some(PendingNodeSetup {
-            mode: Some(true),
-            addr: form::Value::default(),
-            rpc_auth_vals: RpcAuthValues::default(),
-            selected_auth_type: RpcAuthType::CookieFile,
-            processing: true,
-            flavor,
-            internal_stage: InternalSetupStage::Installing,
-            internal_error: None,
-            download_progress: 100.0,
-        });
-        let coincube_datadir = cache.datadir_path.clone();
-        let network = cache.network;
-        Task::perform(
-            ensure_tor_and_start_managed_for_owner(
-                coincube_datadir,
-                network,
-                flavor,
-                None,
-                true,
-                Some(resources),
-                self.managed_owner_path(),
-            ),
-            |r| {
-                Message::View(view::Message::Settings(
-                    view::SettingsMessage::NodeSettings(
-                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
-                    ),
-                ))
-            },
-        )
+        self.restart_managed_node(cache, Some(resources))
     }
 
     fn apply_node_retention(&mut self) -> Task<Message> {
