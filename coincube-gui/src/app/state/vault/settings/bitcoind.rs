@@ -1340,65 +1340,8 @@ impl State for BitcoindSettingsState {
         // this chain's Connect/Knots switch.
         let imported = cache.has_imported_bitcoin && cache.imported_node.is_some();
         if cache.chain().is_blake2b() && !imported {
-            let cfg = self.full_config.as_ref();
-            let local = cfg.is_some_and(|cfg| {
-                matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
-            });
-            let pending = cfg.is_some_and(|cfg| cfg.pending_bitcoind.is_some());
-            let active = if local {
-                "Bitcoin Knots (Bitcoin Blake2b)"
-            } else {
-                "COINCUBE | Connect"
-            };
-            let mut panels = vec![
-                view::vault::settings::node_backend_status(
-                    active, if local { icon::bitcoin_icon() } else { icon::network_icon() },
-                    cache.node_bitcoind_sync_progress, cache.node_bitcoind_sync_heights,
-                    cache.node_bitcoind_ibd, cache.node_bitcoind_subversion.as_deref(),
-                    cache.node_bitcoind_last_log.as_deref(),
-                    self.node_log_open,
-                    local && cfg.is_some_and(|cfg| cfg.fallback_esplora.is_some()),
-                    !local && pending, recovery_in_progress, false,
-                    cfg.is_some_and(|cfg| cfg.auto_switch_to_pending != Some(false)),
-                    self.node_switch_processing, cache.daemon_switch_in_progress,
-                    self.warning.as_ref().map(shown_warning),
-                ).map(|msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg))),
-                coincube_ui::component::text::text(coincube_ui::locale::copy("The pruned Bitcoin Knots node uses outbound peer connections. Inbound Tor and node resource editing are unavailable for Bitcoin Blake2b.")).into(),
-            ];
-            if let Some(card) = self.background_install_card(cache) {
-                panels.insert(
-                    1,
-                    card.map(|msg| {
-                        view::Message::Settings(view::SettingsMessage::NodeSettings(msg))
-                    }),
-                );
-            }
-            // This chain's node is always pruned: explain a refused switch here
-            // too, as the Bitcoin view does.
-            if !local && pending {
-                if let Some(why) = pruned_switch_refusal(cache) {
-                    panels.push(view::vault::settings::pruned_node_notice(why));
-                }
-            }
-            return self.with_scan_discard_modal(view::vault::settings::bitcoind_settings(
-                menu, cache, panels,
-            ));
+            return self.blake2b_node_view(menu, cache, recovery_in_progress);
         }
-        let can_edit_bitcoind_settings =
-            self.bitcoind_settings.is_some() && !self.rescan_settings.processing;
-        let can_edit_electrum_settings =
-            self.electrum_settings.is_some() && !self.rescan_settings.processing;
-        let settings_edit = self
-            .bitcoind_settings
-            .as_ref()
-            .map(|settings| settings.edit)
-            == Some(true)
-            || self
-                .electrum_settings
-                .as_ref()
-                .map(|settings| settings.edit)
-                == Some(true);
-        let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
         // Recovery must be available while Connect is still active: its
         // pending managed node may need history before it can be selected.
         let history_managed = self.pending_node_setup.is_none()
@@ -1434,338 +1377,29 @@ impl State for BitcoindSettingsState {
                 || cache.node_history.busy);
         let content = view::vault::settings::bitcoind_settings(menu, cache, {
             let mut setting_panels = Vec::new();
-            let mut advanced_disclosure = false;
             let mut advanced_panels: Vec<Element<'_, view::Message>> = Vec::new();
 
-            // Top panel: either Connect re-login flow or backend status + switch.
-            let map_node_msg =
-                |msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg));
-            if let Some(ref setup) = self.pending_node_setup {
-                match setup.mode {
-                    None => {
-                        setting_panels.push(
-                            view::vault::settings::node_setup_mode_picker_panel().map(map_node_msg),
-                        );
-                    }
-                    Some(false) => {
-                        setting_panels.push(
-                            view::vault::settings::pending_node_setup_panel(
-                                &setup.addr,
-                                &setup.rpc_auth_vals,
-                                &setup.selected_auth_type,
-                                setup.processing,
-                            )
-                            .map(map_node_msg),
-                        );
-                    }
-                    Some(true) => {
-                        setting_panels.push(
-                            view::vault::settings::internal_node_setup_panel(
-                                setup.flavor,
-                                setup.internal_stage == InternalSetupStage::Downloading,
-                                setup.internal_stage == InternalSetupStage::Installing,
-                                setup.internal_stage == InternalSetupStage::Done,
-                                setup.internal_error.as_deref(),
-                                setup.download_progress,
-                            )
-                            .map(map_node_msg),
-                        );
-                    }
-                }
-            } else {
-                let (
-                    active_backend,
-                    active_icon,
-                    can_switch_to_connect,
-                    can_switch_to_bitcoind,
-                    can_setup_local_node,
-                ) = if let Some(summary) = cache
-                    .imported_node
-                    .as_ref()
-                    .filter(|_| cache.has_imported_bitcoin)
-                {
-                    // An imported wallet syncs from the server chosen at import
-                    // (Connect, public or own Esplora, or Electrum), never a
-                    // local node: nothing to switch to or set up here.
-                    (summary.server, icon::network_icon(), false, false, false)
-                } else if let Some(cfg) = &self.full_config {
-                    let (ab, ai) = match &cfg.bitcoin_backend {
-                        Some(BitcoinBackend::Esplora(_)) => {
-                            ("COINCUBE | Connect", icon::network_icon())
-                        }
-                        Some(BitcoinBackend::Bitcoind(_)) => {
-                            // Flavour-neutral: the exact build (Core vs Knots)
-                            // comes from the node's runtime subversion,
-                            // surfaced separately below.
-                            ("Local Node", icon::bitcoin_icon())
-                        }
-                        Some(BitcoinBackend::Electrum(_)) => ("Electrum", icon::network_icon()),
-                        None => ("None", icon::network_icon()),
-                    };
-                    let ctc = cfg.fallback_esplora.is_some()
-                        && matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)));
-                    let ctb = cfg.pending_bitcoind.is_some()
-                        && matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)));
-                    // A running background install is that local node; a
-                    // second setup would race it for the same node.
-                    let csl = matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)))
-                        && cfg.pending_bitcoind.is_none()
-                        && !cache.background_node_install.is_running();
-                    // When the config exists but no backend is configured,
-                    // unlock the "Use Connect" / "Set up local node" paths
-                    // so the user has a recovery route. Without this the
-                    // page renders read-only "None" with no escape hatch.
-                    let (ctc, csl) = if cfg.bitcoin_backend.is_none() {
-                        warn!(
-                            "Node settings: daemon config has no bitcoin_backend; \
-                             unlocking recovery buttons. fallback_esplora={:?} pending_bitcoind={:?}",
-                            cfg.fallback_esplora.is_some(),
-                            cfg.pending_bitcoind.is_some(),
-                        );
-                        (true, true)
-                    } else {
-                        (ctc, csl)
-                    };
-                    (ab, ai, ctc, ctb, csl)
-                } else {
-                    // No daemon config at all (e.g. ExternalCoincubed). The
-                    // GUI has nothing to write here, so leave the recovery
-                    // buttons hidden; clicking them would silently fail
-                    // because `apply_connect_jwt` early-returns on missing
-                    // config. Logged so we notice if this state appears
-                    // for setups where the GUI *should* own the config.
-                    warn!(
-                        "Node settings: daemon.config() returned None \
-                         (external coincubed?) — backend picker hidden"
-                    );
-                    ("None", icon::network_icon(), false, false, false)
-                };
-                let warning_str = self
-                    .warning
-                    .as_ref()
-                    .filter(|_| {
-                        self.node_switch_processing
-                            || can_switch_to_connect
-                            || can_switch_to_bitcoind
-                    })
-                    .map(shown_warning);
-                setting_panels.push(
-                    view::vault::settings::node_backend_status(
-                        active_backend,
-                        active_icon,
-                        cache.node_bitcoind_sync_progress,
-                        cache.node_bitcoind_sync_heights,
-                        cache.node_bitcoind_ibd,
-                        cache.node_bitcoind_subversion.as_deref(),
-                        cache.node_bitcoind_last_log.as_deref(),
-                        self.node_log_open,
-                        can_switch_to_connect,
-                        can_switch_to_bitcoind,
-                        // The history card carries the switch while it shows.
-                        recovery_in_progress || history_card,
-                        can_setup_local_node,
-                        self.full_config
-                            .as_ref()
-                            .is_some_and(|cfg| cfg.auto_switch_to_pending != Some(false)),
-                        self.node_switch_processing,
-                        cache.daemon_switch_in_progress,
-                        warning_str,
-                    )
-                    .map(map_node_msg),
-                );
-                if let Some(card) = self.background_install_card(cache) {
-                    setting_panels.push(card.map(map_node_msg));
-                }
-                if let Some(summary) = cache
-                    .imported_node
-                    .as_ref()
-                    .filter(|_| cache.has_imported_bitcoin)
-                {
-                    setting_panels.push(view::vault::settings::imported_history_section(summary));
-                }
-                // Standing notice, not just a click-time warning: the
-                // automatic switch is refused too, and the "will switch
-                // once synced" copy above would otherwise go unexplained.
-            }
+            self.push_node_status_panels(
+                cache,
+                recovery_in_progress || history_card,
+                &mut setting_panels,
+            );
 
-            if history_managed {
-                if history_card {
-                    let synced = cache.node_bitcoind_ibd == Some(false);
-                    use view::vault::settings::LocalNodeSwitchStep;
-                    let switching = self.node_switch_processing || cache.daemon_switch_in_progress;
-                    let can_switch = synced
-                        && !switching
-                        && self.full_config.as_ref().is_some_and(|cfg| {
-                            cfg.pending_bitcoind.is_some()
-                                && matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)))
-                        })
-                        && local_node_serves_vault(cache).is_ok();
-                    let switch_step = if switching {
-                        LocalNodeSwitchStep::Switching
-                    } else if local_in_use && !recovery_in_progress {
-                        LocalNodeSwitchStep::Complete
-                    } else if can_switch {
-                        LocalNodeSwitchStep::Ready
-                    } else {
-                        LocalNodeSwitchStep::Waiting
-                    };
-                    setting_panels.push(
-                        view::vault::settings::wallet_history_section(
-                            &self.recovery_start,
-                            &cache.node_history,
-                            self.recovery_advanced,
-                            self.recovery_date_picker_open,
-                            cache
-                                .node_bitcoind_sync_heights
-                                .map(|(blocks, _)| blocks)
-                                .filter(|_| synced),
-                            switch_step,
-                        )
-                        .map(map_node_msg),
-                    );
-                    if self.recovery_advanced {
-                        setting_panels.push(
-                            view::vault::settings::rolling_retention_section(
-                                &self.retention_days,
-                                &cache.node_history,
-                                cache.node_bitcoind_pruning,
-                                cache.node_bitcoind_sync_heights.map(|(blocks, _)| blocks),
-                            )
-                            .map(map_node_msg),
-                        );
-                    }
-                }
-                if self.full_config.as_ref().is_some_and(|cfg| {
-                    matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
-                }) {
-                    // The artboard's "Advanced node settings" disclosure holds
-                    // the node's own settings, Tor, resources and rescan.
-                    advanced_disclosure = true;
-                    setting_panels.push(crate::app::view::settings::page::disclosure(
-                        "tenshu.settings.node.advanced",
-                        coincube_ui::locale::copy("Advanced node settings"),
-                        None,
-                        self.node_advanced,
-                        map_node_msg(view::NodeSettingsMessage::NodeAdvancedToggled),
-                    ));
-                    if self.node_advanced {
-                        advanced_panels.push(
-                            view::vault::settings::rolling_retention_section(
-                                &self.retention_days,
-                                &cache.node_history,
-                                cache.node_bitcoind_pruning,
-                                cache.node_bitcoind_sync_heights.map(|(blocks, _)| blocks),
-                            )
-                            .map(map_node_msg),
-                        );
-                    }
-                }
-            }
-            // Panels below join the disclosure when there is one.
-            let mut node_panels = Vec::new();
-
-            // An imported wallet syncs only from the server chosen at import,
-            // shown by its own server and history section above. The daemon's
-            // Bitcoind/Electrum controls would edit a config it does not use
-            // (or, on Bitcoin Blake2b, do nothing), so they are not offered.
-            if !cache.has_imported_bitcoin
-                && (self.bitcoind_settings.is_some() || self.electrum_settings.is_some())
-            {
-                if let Some(settings) = self.bitcoind_settings.as_ref() {
-                    node_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
-                        move |msg| {
-                            view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
-                        },
-                    ));
-                }
-
-                // "Inbound connections": inbound-over-Tor controls, placed
-                // directly below the node card. Shown only for the managed local
-                // node on mainnet (the feature is mainnet-only), and hidden
-                // during a node setup/flavour switch.
-                if cache.network == Network::Bitcoin
-                    && self.pending_node_setup.is_none()
-                    && matches!(
-                        self.full_config
-                            .as_ref()
-                            .and_then(|c| c.bitcoin_backend.as_ref()),
-                        Some(BitcoinBackend::Bitcoind(_))
-                    )
-                {
-                    node_panels.push(view::vault::settings::inbound_tor_section(
-                        self.inbound_tor_pref.enabled,
-                        self.inbound_tor_pref.outbound_via_tor,
-                        self.inbound_tor_pref.max_upload_target_mb_day.is_some(),
-                        crate::node::tor::managed_tor_ports().is_some(),
-                        crate::node::tor::onion_key_exists(&cache.datadir_path, cache.network),
-                        crate::node::bitcoind::tor_supported_on_host(),
-                        cache.node_net_stats.as_ref(),
-                    ));
-                }
-
-                // "Node resources": prune target + mempool cap for the internal
-                // managed node. All networks (unlike inbound-Tor), the managed
-                // node only, and hidden during a setup/flavour switch/restart.
-                if self.pending_node_setup.is_none()
-                    && self
-                        .bitcoind_settings
-                        .as_ref()
-                        .and_then(|s| s.managed_flavor)
-                        .is_some()
-                    && matches!(
-                        self.full_config
-                            .as_ref()
-                            .and_then(|c| c.bitcoin_backend.as_ref()),
-                        Some(BitcoinBackend::Bitcoind(_))
-                    )
-                {
-                    node_panels.push(view::vault::settings::node_resources_section(
-                        &self.node_prune_mb,
-                        &self.node_max_mempool_mb,
-                        false,
-                    ));
-                }
-
-                // "Your own Esplora": only meaningful when the chain source
-                // *is* Esplora — a local bitcoind already answers its own
-                // queries, so there's nothing to redirect (PR D5).
-                if self.pending_node_setup.is_none()
-                    && matches!(
-                        self.full_config
-                            .as_ref()
-                            .and_then(|c| c.bitcoin_backend.as_ref()),
-                        Some(BitcoinBackend::Esplora(_))
-                    )
-                {
-                    node_panels.push(
-                        view::vault::settings::custom_esplora_section(
-                            &self.custom_esplora_url,
-                            self.custom_esplora_probing,
-                            self.custom_esplora_status.as_ref(),
-                        )
-                        .map(map_node_msg),
-                    );
-                }
-
-                if let Some(settings) = self.electrum_settings.as_ref() {
-                    node_panels.push(settings.view(cache, can_edit_electrum_settings).map(
-                        move |msg| {
-                            view::Message::Settings(view::SettingsMessage::ElectrumSettings(msg))
-                        },
-                    ));
-                }
-            }
-            // An imported wallet searches more addresses instead of rescanning
-            // from a date (its Wallet history group).
-            if !cache.has_imported_bitcoin {
-                node_panels.push(
-                    self.rescan_settings
-                        .view(cache, can_do_rescan)
-                        .map(move |msg| {
-                            view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
-                        }),
+            if history_card {
+                self.push_node_history_panels(
+                    cache,
+                    local_in_use,
+                    recovery_in_progress,
+                    &mut setting_panels,
                 );
             }
+            let advanced_disclosure = history_managed
+                && self.push_advanced_node_disclosure(
+                    cache,
+                    &mut setting_panels,
+                    &mut advanced_panels,
+                );
+            let node_panels = self.node_edit_panels(cache);
             if advanced_disclosure {
                 if self.node_advanced {
                     advanced_panels.extend(node_panels);
@@ -1779,6 +1413,466 @@ impl State for BitcoindSettingsState {
             setting_panels
         });
 
+        self.with_node_settings_modal(content)
+    }
+}
+
+struct NodeBackendStatus {
+    name: &'static str,
+    icon: coincube_ui::widget::Text<'static>,
+    can_switch_to_connect: bool,
+    can_switch_to_bitcoind: bool,
+    can_setup_local_node: bool,
+}
+
+impl BitcoindSettingsState {
+    fn blake2b_node_view<'a>(
+        &'a self,
+        menu: &'a Menu,
+        cache: &'a Cache,
+        recovery_in_progress: bool,
+    ) -> Element<'a, view::Message> {
+        let cfg = self.full_config.as_ref();
+        let local =
+            cfg.is_some_and(|cfg| matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_))));
+        let pending = cfg.is_some_and(|cfg| cfg.pending_bitcoind.is_some());
+        let active = if local {
+            "Bitcoin Knots (Bitcoin Blake2b)"
+        } else {
+            "COINCUBE | Connect"
+        };
+        let mut panels = vec![
+            view::vault::settings::node_backend_status(
+                active, if local { icon::bitcoin_icon() } else { icon::network_icon() },
+                cache.node_bitcoind_sync_progress, cache.node_bitcoind_sync_heights,
+                cache.node_bitcoind_ibd, cache.node_bitcoind_subversion.as_deref(),
+                cache.node_bitcoind_last_log.as_deref(),
+                self.node_log_open,
+                local && cfg.is_some_and(|cfg| cfg.fallback_esplora.is_some()),
+                !local && pending, recovery_in_progress, false,
+                cfg.is_some_and(|cfg| cfg.auto_switch_to_pending != Some(false)),
+                self.node_switch_processing, cache.daemon_switch_in_progress,
+                self.warning.as_ref().map(shown_warning),
+            ).map(|msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg))),
+            coincube_ui::component::text::text(coincube_ui::locale::copy("The pruned Bitcoin Knots node uses outbound peer connections. Inbound Tor and node resource editing are unavailable for Bitcoin Blake2b.")).into(),
+        ];
+        if let Some(card) = self.background_install_card(cache) {
+            panels.insert(
+                1,
+                card.map(|msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg))),
+            );
+        }
+        // This chain's node is always pruned: explain a refused switch here
+        // too, as the Bitcoin view does.
+        if !local && pending {
+            if let Some(why) = pruned_switch_refusal(cache) {
+                panels.push(view::vault::settings::pruned_node_notice(why));
+            }
+        }
+        self.with_scan_discard_modal(view::vault::settings::bitcoind_settings(
+            menu, cache, panels,
+        ))
+    }
+
+    fn node_backend_status(&self, cache: &Cache) -> NodeBackendStatus {
+        if let Some(summary) = cache
+            .imported_node
+            .as_ref()
+            .filter(|_| cache.has_imported_bitcoin)
+        {
+            // An imported wallet syncs from the server chosen at import
+            // (Connect, public or own Esplora, or Electrum), never a
+            // local node: nothing to switch to or set up here.
+            NodeBackendStatus {
+                name: summary.server,
+                icon: icon::network_icon(),
+                can_switch_to_connect: false,
+                can_switch_to_bitcoind: false,
+                can_setup_local_node: false,
+            }
+        } else if let Some(cfg) = &self.full_config {
+            let (ab, ai) = match &cfg.bitcoin_backend {
+                Some(BitcoinBackend::Esplora(_)) => ("COINCUBE | Connect", icon::network_icon()),
+                Some(BitcoinBackend::Bitcoind(_)) => {
+                    // Flavour-neutral: the exact build (Core vs Knots)
+                    // comes from the node's runtime subversion,
+                    // surfaced separately below.
+                    ("Local Node", icon::bitcoin_icon())
+                }
+                Some(BitcoinBackend::Electrum(_)) => ("Electrum", icon::network_icon()),
+                None => ("None", icon::network_icon()),
+            };
+            let ctc = cfg.fallback_esplora.is_some()
+                && matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)));
+            let ctb = cfg.pending_bitcoind.is_some()
+                && matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)));
+            // A running background install is that local node; a
+            // second setup would race it for the same node.
+            let csl = matches!(&cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)))
+                && cfg.pending_bitcoind.is_none()
+                && !cache.background_node_install.is_running();
+            // When the config exists but no backend is configured,
+            // unlock the "Use Connect" / "Set up local node" paths
+            // so the user has a recovery route. Without this the
+            // page renders read-only "None" with no escape hatch.
+            let (ctc, csl) = if cfg.bitcoin_backend.is_none() {
+                warn!(
+                                "Node settings: daemon config has no bitcoin_backend; \
+                                 unlocking recovery buttons. fallback_esplora={:?} pending_bitcoind={:?}",
+                                cfg.fallback_esplora.is_some(),
+                                cfg.pending_bitcoind.is_some(),
+                            );
+                (true, true)
+            } else {
+                (ctc, csl)
+            };
+            NodeBackendStatus {
+                name: ab,
+                icon: ai,
+                can_switch_to_connect: ctc,
+                can_switch_to_bitcoind: ctb,
+                can_setup_local_node: csl,
+            }
+        } else {
+            // No daemon config at all (e.g. ExternalCoincubed). The
+            // GUI has nothing to write here, so leave the recovery
+            // buttons hidden; clicking them would silently fail
+            // because `apply_connect_jwt` early-returns on missing
+            // config. Logged so we notice if this state appears
+            // for setups where the GUI *should* own the config.
+            warn!(
+                "Node settings: daemon.config() returned None \
+                             (external coincubed?) — backend picker hidden"
+            );
+            NodeBackendStatus {
+                name: "None",
+                icon: icon::network_icon(),
+                can_switch_to_connect: false,
+                can_switch_to_bitcoind: false,
+                can_setup_local_node: false,
+            }
+        }
+    }
+
+    fn push_node_status_panels<'a>(
+        &'a self,
+        cache: &'a Cache,
+        history_visible: bool,
+        setting_panels: &mut Vec<Element<'a, view::Message>>,
+    ) {
+        // Top panel: either Connect re-login flow or backend status + switch.
+        let map_node_msg = |msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg));
+        if let Some(ref setup) = self.pending_node_setup {
+            match setup.mode {
+                None => {
+                    setting_panels.push(
+                        view::vault::settings::node_setup_mode_picker_panel().map(map_node_msg),
+                    );
+                }
+                Some(false) => {
+                    setting_panels.push(
+                        view::vault::settings::pending_node_setup_panel(
+                            &setup.addr,
+                            &setup.rpc_auth_vals,
+                            &setup.selected_auth_type,
+                            setup.processing,
+                        )
+                        .map(map_node_msg),
+                    );
+                }
+                Some(true) => {
+                    setting_panels.push(
+                        view::vault::settings::internal_node_setup_panel(
+                            setup.flavor,
+                            setup.internal_stage == InternalSetupStage::Downloading,
+                            setup.internal_stage == InternalSetupStage::Installing,
+                            setup.internal_stage == InternalSetupStage::Done,
+                            setup.internal_error.as_deref(),
+                            setup.download_progress,
+                        )
+                        .map(map_node_msg),
+                    );
+                }
+            }
+        } else {
+            let NodeBackendStatus {
+                name: active_backend,
+                icon: active_icon,
+                can_switch_to_connect,
+                can_switch_to_bitcoind,
+                can_setup_local_node,
+            } = self.node_backend_status(cache);
+            let warning_str = self
+                .warning
+                .as_ref()
+                .filter(|_| {
+                    self.node_switch_processing || can_switch_to_connect || can_switch_to_bitcoind
+                })
+                .map(shown_warning);
+            setting_panels.push(
+                view::vault::settings::node_backend_status(
+                    active_backend,
+                    active_icon,
+                    cache.node_bitcoind_sync_progress,
+                    cache.node_bitcoind_sync_heights,
+                    cache.node_bitcoind_ibd,
+                    cache.node_bitcoind_subversion.as_deref(),
+                    cache.node_bitcoind_last_log.as_deref(),
+                    self.node_log_open,
+                    can_switch_to_connect,
+                    can_switch_to_bitcoind,
+                    // The history card carries the switch while it shows.
+                    history_visible,
+                    can_setup_local_node,
+                    self.full_config
+                        .as_ref()
+                        .is_some_and(|cfg| cfg.auto_switch_to_pending != Some(false)),
+                    self.node_switch_processing,
+                    cache.daemon_switch_in_progress,
+                    warning_str,
+                )
+                .map(map_node_msg),
+            );
+            if let Some(card) = self.background_install_card(cache) {
+                setting_panels.push(card.map(map_node_msg));
+            }
+            if let Some(summary) = cache
+                .imported_node
+                .as_ref()
+                .filter(|_| cache.has_imported_bitcoin)
+            {
+                setting_panels.push(view::vault::settings::imported_history_section(summary));
+            }
+            // Standing notice, not just a click-time warning: the
+            // automatic switch is refused too, and the "will switch
+            // once synced" copy above would otherwise go unexplained.
+        }
+    }
+
+    fn push_node_history_panels<'a>(
+        &'a self,
+        cache: &'a Cache,
+        local_in_use: bool,
+        recovery_in_progress: bool,
+        setting_panels: &mut Vec<Element<'a, view::Message>>,
+    ) {
+        let map_node_msg = |msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg));
+        let synced = cache.node_bitcoind_ibd == Some(false);
+        use view::vault::settings::LocalNodeSwitchStep;
+        let switching = self.node_switch_processing || cache.daemon_switch_in_progress;
+        let can_switch = synced
+            && !switching
+            && self.full_config.as_ref().is_some_and(|cfg| {
+                cfg.pending_bitcoind.is_some()
+                    && matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Esplora(_)))
+            })
+            && local_node_serves_vault(cache).is_ok();
+        let switch_step = if switching {
+            LocalNodeSwitchStep::Switching
+        } else if local_in_use && !recovery_in_progress {
+            LocalNodeSwitchStep::Complete
+        } else if can_switch {
+            LocalNodeSwitchStep::Ready
+        } else {
+            LocalNodeSwitchStep::Waiting
+        };
+        setting_panels.push(
+            view::vault::settings::wallet_history_section(
+                &self.recovery_start,
+                &cache.node_history,
+                self.recovery_advanced,
+                self.recovery_date_picker_open,
+                cache
+                    .node_bitcoind_sync_heights
+                    .map(|(blocks, _)| blocks)
+                    .filter(|_| synced),
+                switch_step,
+            )
+            .map(map_node_msg),
+        );
+        if self.recovery_advanced {
+            setting_panels.push(
+                view::vault::settings::rolling_retention_section(
+                    &self.retention_days,
+                    &cache.node_history,
+                    cache.node_bitcoind_pruning,
+                    cache.node_bitcoind_sync_heights.map(|(blocks, _)| blocks),
+                )
+                .map(map_node_msg),
+            );
+        }
+    }
+
+    fn push_advanced_node_disclosure<'a>(
+        &'a self,
+        cache: &'a Cache,
+        setting_panels: &mut Vec<Element<'a, view::Message>>,
+        advanced_panels: &mut Vec<Element<'a, view::Message>>,
+    ) -> bool {
+        let map_node_msg = |msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg));
+        if self
+            .full_config
+            .as_ref()
+            .is_some_and(|cfg| matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_))))
+        {
+            // The artboard's "Advanced node settings" disclosure holds
+            // the node's own settings, Tor, resources and rescan.
+            setting_panels.push(crate::app::view::settings::page::disclosure(
+                "tenshu.settings.node.advanced",
+                coincube_ui::locale::copy("Advanced node settings"),
+                None,
+                self.node_advanced,
+                map_node_msg(view::NodeSettingsMessage::NodeAdvancedToggled),
+            ));
+            if self.node_advanced {
+                advanced_panels.push(
+                    view::vault::settings::rolling_retention_section(
+                        &self.retention_days,
+                        &cache.node_history,
+                        cache.node_bitcoind_pruning,
+                        cache.node_bitcoind_sync_heights.map(|(blocks, _)| blocks),
+                    )
+                    .map(map_node_msg),
+                );
+            }
+            return true;
+        }
+        false
+    }
+
+    fn node_edit_panels<'a>(&'a self, cache: &'a Cache) -> Vec<Element<'a, view::Message>> {
+        if cache.has_imported_bitcoin {
+            return Vec::new();
+        }
+        let can_edit_bitcoind_settings =
+            self.bitcoind_settings.is_some() && !self.rescan_settings.processing;
+        let can_edit_electrum_settings =
+            self.electrum_settings.is_some() && !self.rescan_settings.processing;
+        let settings_edit = self
+            .bitcoind_settings
+            .as_ref()
+            .map(|settings| settings.edit)
+            == Some(true)
+            || self
+                .electrum_settings
+                .as_ref()
+                .map(|settings| settings.edit)
+                == Some(true);
+        let can_do_rescan = !self.rescan_settings.processing && !settings_edit;
+        let mut node_panels = Vec::new();
+
+        // An imported wallet syncs only from the server chosen at import,
+        // shown by its own server and history section above. The daemon's
+        // Bitcoind/Electrum controls would edit a config it does not use
+        // (or, on Bitcoin Blake2b, do nothing), so they are not offered.
+        if self.bitcoind_settings.is_some() || self.electrum_settings.is_some() {
+            if let Some(settings) = self.bitcoind_settings.as_ref() {
+                node_panels.push(settings.view(cache, can_edit_bitcoind_settings).map(
+                    move |msg| {
+                        view::Message::Settings(view::SettingsMessage::BitcoindSettings(msg))
+                    },
+                ));
+            }
+
+            self.push_node_network_panels(cache, &mut node_panels);
+
+            if let Some(settings) = self.electrum_settings.as_ref() {
+                node_panels.push(settings.view(cache, can_edit_electrum_settings).map(
+                    move |msg| {
+                        view::Message::Settings(view::SettingsMessage::ElectrumSettings(msg))
+                    },
+                ));
+            }
+        }
+        node_panels.push(
+            self.rescan_settings
+                .view(cache, can_do_rescan)
+                .map(move |msg| {
+                    view::Message::Settings(view::SettingsMessage::RescanSettings(msg))
+                }),
+        );
+        node_panels
+    }
+
+    fn push_node_network_panels<'a>(
+        &'a self,
+        cache: &'a Cache,
+        node_panels: &mut Vec<Element<'a, view::Message>>,
+    ) {
+        let map_node_msg = |msg| view::Message::Settings(view::SettingsMessage::NodeSettings(msg));
+        // "Inbound connections": inbound-over-Tor controls, placed
+        // directly below the node card. Shown only for the managed local
+        // node on mainnet (the feature is mainnet-only), and hidden
+        // during a node setup/flavour switch.
+        if cache.network == Network::Bitcoin
+            && self.pending_node_setup.is_none()
+            && matches!(
+                self.full_config
+                    .as_ref()
+                    .and_then(|c| c.bitcoin_backend.as_ref()),
+                Some(BitcoinBackend::Bitcoind(_))
+            )
+        {
+            node_panels.push(view::vault::settings::inbound_tor_section(
+                self.inbound_tor_pref.enabled,
+                self.inbound_tor_pref.outbound_via_tor,
+                self.inbound_tor_pref.max_upload_target_mb_day.is_some(),
+                crate::node::tor::managed_tor_ports().is_some(),
+                crate::node::tor::onion_key_exists(&cache.datadir_path, cache.network),
+                crate::node::bitcoind::tor_supported_on_host(),
+                cache.node_net_stats.as_ref(),
+            ));
+        }
+
+        // "Node resources": prune target + mempool cap for the internal
+        // managed node. All networks (unlike inbound-Tor), the managed
+        // node only, and hidden during a setup/flavour switch/restart.
+        if self.pending_node_setup.is_none()
+            && self
+                .bitcoind_settings
+                .as_ref()
+                .and_then(|s| s.managed_flavor)
+                .is_some()
+            && matches!(
+                self.full_config
+                    .as_ref()
+                    .and_then(|c| c.bitcoin_backend.as_ref()),
+                Some(BitcoinBackend::Bitcoind(_))
+            )
+        {
+            node_panels.push(view::vault::settings::node_resources_section(
+                &self.node_prune_mb,
+                &self.node_max_mempool_mb,
+                false,
+            ));
+        }
+
+        // "Your own Esplora": only meaningful when the chain source
+        // *is* Esplora — a local bitcoind already answers its own
+        // queries, so there's nothing to redirect (PR D5).
+        if self.pending_node_setup.is_none()
+            && matches!(
+                self.full_config
+                    .as_ref()
+                    .and_then(|c| c.bitcoin_backend.as_ref()),
+                Some(BitcoinBackend::Esplora(_))
+            )
+        {
+            node_panels.push(
+                view::vault::settings::custom_esplora_section(
+                    &self.custom_esplora_url,
+                    self.custom_esplora_probing,
+                    self.custom_esplora_status.as_ref(),
+                )
+                .map(map_node_msg),
+            );
+        }
+    }
+
+    fn with_node_settings_modal<'a>(
+        &self,
+        content: Element<'a, view::Message>,
+    ) -> Element<'a, view::Message> {
         // A pending Core↔Knots switch pops a confirmation modal over the page;
         // clicking the backdrop cancels it.
         if self.pending_scan_discard.is_some() {
@@ -1797,9 +1891,7 @@ impl State for BitcoindSettingsState {
             content
         }
     }
-}
 
-impl BitcoindSettingsState {
     /// `content` under the "switching discards the running scan" confirmation, when
     /// one is pending; clicking the backdrop cancels it. Shared by the Bitcoin and
     /// Bitcoin Blake2b views, so neither can lose the confirmation its switch waits on.
