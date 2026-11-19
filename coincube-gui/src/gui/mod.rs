@@ -2560,6 +2560,87 @@ impl GUI {
         }))
     }
 
+    // A log-out or a sign-in from any tab reaches every tab, with its kind
+    // and where it came from (`Tab::invalidate_fork_session`). A
+    // `SetSession` counts as a sign-in only if the tab it came from will
+    // accept it: its account panel drops a completion of an operation
+    // begun before that tab's last auth invalidation
+    // (`ConnectAccountPanel::stale_completion`), and a completion the
+    // panel is about to drop must not tell the other tabs anything — this
+    // is the first reader of the variant, ahead of that dispatch.
+    fn tab_auth_change(
+        &self,
+        message: &Message,
+    ) -> Option<(tab::AuthChange, pane_grid::Pane, usize)> {
+        let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message else {
+            return None;
+        };
+        let (pane_id, tab_id) = (*pane_id, *tab_id);
+        let msg = connect_account_message(inner)?;
+        match msg {
+            crate::app::view::ConnectAccountMessage::LogOut => {
+                Some((tab::AuthChange::LogOut, pane_id, tab_id))
+            }
+            crate::app::view::ConnectAccountMessage::SetSession(login, epoch)
+            | crate::app::view::ConnectAccountMessage::OtpVerified(login, epoch, _)
+            | crate::app::view::ConnectAccountMessage::TwoFactorVerified(
+                crate::services::coincube::TwoFactorLogin { login, .. },
+                epoch,
+                _,
+            )
+            | crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
+                login,
+                epoch,
+                refreshed: false,
+            } => {
+                let origin_is_home = self
+                    .panes
+                    .get(pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .is_some_and(|tab| matches!(&tab.state, tab::State::Home(_)));
+                // A Home panel adopts a verified login directly; an
+                // App panel commits it first and announces it with
+                // `AuthCommitAccepted`. The authenticator step
+                // finishes a login the same way the email code does.
+                let eligible = !matches!(
+                    msg,
+                    crate::app::view::ConnectAccountMessage::OtpVerified(..)
+                        | crate::app::view::ConnectAccountMessage::TwoFactorVerified(..)
+                ) || origin_is_home;
+                let origin_epoch = self
+                    .panes
+                    .get(pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+                    .and_then(|tab| match &tab.state {
+                        tab::State::App(app) => Some(app.connect_auth_epoch()),
+                        tab::State::Home(home) => Some(home.connect_account.auth_epoch()),
+                        _ => None,
+                    });
+                let same_fork_session = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .is_some_and(|tab| {
+                matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
+            });
+                match origin_epoch {
+                    Some(current) if *epoch >= current && !same_fork_session && eligible => Some((
+                        tab::AuthChange::SignIn {
+                            user_id: login.user.id,
+                            token: zeroize::Zeroizing::new(login.token.clone()),
+                        },
+                        pane_id,
+                        tab_id,
+                    )),
+                    // Stale for its own tab (dropped there on dispatch), or
+                    // no account panel to judge it: not a sign-in.
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2661,91 +2742,7 @@ impl GUI {
                 self.relay_connect_signed_out_by(reason);
             }
         }
-        // A log-out or a sign-in from any tab reaches every tab, with its kind
-        // and where it came from (`Tab::invalidate_fork_session`). A
-        // `SetSession` counts as a sign-in only if the tab it came from will
-        // accept it: its account panel drops a completion of an operation
-        // begun before that tab's last auth invalidation
-        // (`ConnectAccountPanel::stale_completion`), and a completion the
-        // panel is about to drop must not tell the other tabs anything — this
-        // is the first reader of the variant, ahead of that dispatch.
-        let auth_change = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => {
-                match connect_account_message(inner) {
-                    Some(msg) => match msg {
-                        crate::app::view::ConnectAccountMessage::LogOut => {
-                            Some((tab::AuthChange::LogOut, *pane_id, *tab_id))
-                        }
-                        crate::app::view::ConnectAccountMessage::SetSession(login, epoch)
-                        | crate::app::view::ConnectAccountMessage::OtpVerified(login, epoch, _)
-                        | crate::app::view::ConnectAccountMessage::TwoFactorVerified(
-                            crate::services::coincube::TwoFactorLogin { login, .. },
-                            epoch,
-                            _,
-                        )
-                        | crate::app::view::ConnectAccountMessage::AuthCommitAccepted {
-                            login,
-                            epoch,
-                            refreshed: false,
-                        } => {
-                            let origin_is_home = self
-                                .panes
-                                .get(*pane_id)
-                                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                                .is_some_and(|tab| matches!(&tab.state, tab::State::Home(_)));
-                            // A Home panel adopts a verified login directly; an
-                            // App panel commits it first and announces it with
-                            // `AuthCommitAccepted`. The authenticator step
-                            // finishes a login the same way the email code does.
-                            let eligible =
-                                !matches!(
-                                msg,
-                                crate::app::view::ConnectAccountMessage::OtpVerified(..)
-                                    | crate::app::view::ConnectAccountMessage::TwoFactorVerified(..)
-                            ) || origin_is_home;
-                            let origin_epoch = self
-                                .panes
-                                .get(*pane_id)
-                                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                                .and_then(|tab| match &tab.state {
-                                    tab::State::App(app) => Some(app.connect_auth_epoch()),
-                                    tab::State::Home(home) => {
-                                        Some(home.connect_account.auth_epoch())
-                                    }
-                                    _ => None,
-                                });
-                            let same_fork_session = self
-                        .panes
-                        .get(*pane_id)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                        .is_some_and(|tab| {
-                            matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
-                        });
-                            match origin_epoch {
-                                Some(current)
-                                    if *epoch >= current && !same_fork_session && eligible =>
-                                {
-                                    Some((
-                                        tab::AuthChange::SignIn {
-                                            user_id: login.user.id,
-                                            token: zeroize::Zeroizing::new(login.token.clone()),
-                                        },
-                                        *pane_id,
-                                        *tab_id,
-                                    ))
-                                }
-                                // Stale for its own tab (dropped there on dispatch), or
-                                // no account panel to judge it: not a sign-in.
-                                _ => None,
-                            }
-                        }
-                        _ => None,
-                    },
-                    None => None,
-                }
-            }
-            _ => None,
-        };
+        let auth_change = self.tab_auth_change(&message);
         let auth_from_fork_app = if auth_change.is_some() {
             match &message {
                 Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) => self
