@@ -866,21 +866,23 @@ impl Home {
         Task::none()
     }
 
+    fn select_catalog_item(&mut self, key: CubeCatalogKey) -> Task<Message> {
+        if let Some(task) = self.select_on_other_network(&key, PendingIntent::Select) {
+            return task;
+        }
+        self.catalog.selected = self.catalog_selectable(&key).then_some(key.clone());
+        self.catalog.motion = None;
+        self.catalog.open_from_floor = false;
+        if let Some(index) = project(self).floor_position(&key) {
+            self.catalog.page = index / self.catalog.page_size();
+        }
+        Task::none()
+    }
+
     pub(super) fn update_catalog(&mut self, message: CatalogMessage) -> Task<Message> {
         match message {
             CatalogMessage::Activity(message) => self.update_activity(message),
-            CatalogMessage::Select(key) => {
-                if let Some(task) = self.select_on_other_network(&key, PendingIntent::Select) {
-                    return task;
-                }
-                self.catalog.selected = self.catalog_selectable(&key).then_some(key.clone());
-                self.catalog.motion = None;
-                self.catalog.open_from_floor = false;
-                if let Some(index) = project(self).floor_position(&key) {
-                    self.catalog.page = index / self.catalog.page_size();
-                }
-                Task::none()
-            }
+            CatalogMessage::Select(key) => self.select_catalog_item(key),
             CatalogMessage::SelectFloor(key) => self.select_catalog_floor(key),
             CatalogMessage::KeyHover(part, over) => {
                 self.catalog.key.hover(part, over);
