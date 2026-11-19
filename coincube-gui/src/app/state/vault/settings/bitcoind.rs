@@ -4784,10 +4784,101 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn history_controls_follow_switch_intent_and_advanced_disclosure() {
+    fn configure_history_controls_case(
+        cfg: &mut Config,
+        cache: &mut Cache,
+        managed: &BitcoindConfig,
+        local: bool,
+        external: bool,
+        blake2b: bool,
+        clicked: bool,
+    ) {
         use crate::node::history::{Binding, Phase, Recovery};
         use coincube_core::miniscript::bitcoin::{hashes::Hash, BlockHash};
+
+        if local {
+            cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(managed.clone()));
+            cfg.pending_bitcoind = None;
+            if clicked {
+                // The transfer finished at 974579. Four new headers must
+                // not revive its switch prompt once the node is in use.
+                let hash = BlockHash::all_zeros();
+                let mut job = Recovery::new(
+                    Binding {
+                        genesis: hash,
+                        node_instance: "fixture".into(),
+                        endpoint: "fixture".into(),
+                        wallet: "fixture".into(),
+                        descriptor: "fixture".into(),
+                    },
+                    974000,
+                    974579,
+                    hash,
+                )
+                .unwrap();
+                job.phase = Phase::Complete;
+                cache.node_history.job = Some(job);
+                cache.node_history.reconciled = true;
+                cache.node_history_switch_requested = true;
+                cache.local_node_transfer_visible = true;
+                cache.node_bitcoind_sync_progress = Some(1.0);
+                cache.node_bitcoind_sync_heights = Some((974579, 974583));
+            }
+        }
+        if external {
+            cfg.pending_bitcoind = Some(bitcoind_config(BitcoindRpcAuth::CookieFile(
+                PathBuf::from("/tmp/external-node/.cookie"),
+            )));
+        }
+        if blake2b {
+            cache.fiat_chain = crate::chain::ChainId::BitcoinBlake2b;
+        }
+    }
+    fn assert_history_controls(
+        labels: &[String],
+        (local, external, blake2b, clicked, advanced, expected, retention): (
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+            bool,
+        ),
+    ) {
+        for (label, visible) in [
+            ("Move this Vault to your local node", expected),
+            ("Vault moved to your local node", local && clicked),
+            (
+                "Bring this Vault's history to your node",
+                expected || (local && clicked),
+            ),
+            ("Start from Connect's history", expected),
+        ] {
+            assert_eq!(labels.iter().any(|text| text == label), visible,
+                "missing/unsupported history controls: local={local} external={external} blake2b={blake2b}: {label}");
+        }
+        assert_eq!(
+            labels
+                .iter()
+                .any(|text| text == "Recover from this date or block"),
+            expected && advanced
+        );
+        assert_eq!(
+            labels.iter().any(|text| text == "Block retention"),
+            retention
+        );
+        if local && clicked {
+            assert!(labels.iter().any(|text| text == "In use · Local Node"));
+            assert!(labels.iter().any(|text| text == "Catching up 99.9%"));
+            assert!(!labels.iter().any(|text| text == "Switch to local node"));
+            assert!(labels.iter().any(|text| text
+                == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
+        }
+    }
+
+    #[tokio::test]
+    async fn history_controls_follow_switch_intent_and_advanced_disclosure() {
         use iced::advanced::{
             layout,
             renderer::Headless,
@@ -4841,43 +4932,9 @@ mod tests {
         ] {
             let mut cfg = cfg.clone();
             let mut cache = cache.clone();
-            if local {
-                cfg.bitcoin_backend = Some(BitcoinBackend::Bitcoind(managed.clone()));
-                cfg.pending_bitcoind = None;
-                if clicked {
-                    // The transfer finished at 974579. Four new headers must
-                    // not revive its switch prompt once the node is in use.
-                    let hash = BlockHash::all_zeros();
-                    let mut job = Recovery::new(
-                        Binding {
-                            genesis: hash,
-                            node_instance: "fixture".into(),
-                            endpoint: "fixture".into(),
-                            wallet: "fixture".into(),
-                            descriptor: "fixture".into(),
-                        },
-                        974000,
-                        974579,
-                        hash,
-                    )
-                    .unwrap();
-                    job.phase = Phase::Complete;
-                    cache.node_history.job = Some(job);
-                    cache.node_history.reconciled = true;
-                    cache.node_history_switch_requested = true;
-                    cache.local_node_transfer_visible = true;
-                    cache.node_bitcoind_sync_progress = Some(1.0);
-                    cache.node_bitcoind_sync_heights = Some((974579, 974583));
-                }
-            }
-            if external {
-                cfg.pending_bitcoind = Some(bitcoind_config(BitcoindRpcAuth::CookieFile(
-                    PathBuf::from("/tmp/external-node/.cookie"),
-                )));
-            }
-            if blake2b {
-                cache.fiat_chain = crate::chain::ChainId::BitcoinBlake2b;
-            }
+            configure_history_controls_case(
+                &mut cfg, &mut cache, &managed, local, external, blake2b, clicked,
+            );
             let mut state = BitcoindSettingsState::new(Some(cfg.clone()), &cache, false, false);
             assert!(
                 state.retention_days.value.is_empty(),
@@ -4914,36 +4971,12 @@ mod tests {
             element
                 .as_widget_mut()
                 .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
-            for (label, visible) in [
-                ("Move this Vault to your local node", expected),
-                ("Vault moved to your local node", local && clicked),
+            assert_history_controls(
+                &labels.0,
                 (
-                    "Bring this Vault's history to your node",
-                    expected || (local && clicked),
+                    local, external, blake2b, clicked, advanced, expected, retention,
                 ),
-                ("Start from Connect's history", expected),
-            ] {
-                assert_eq!(labels.0.iter().any(|text| text == label), visible,
-                    "missing/unsupported history controls: local={local} external={external} blake2b={blake2b}: {label}");
-            }
-            assert_eq!(
-                labels
-                    .0
-                    .iter()
-                    .any(|text| text == "Recover from this date or block"),
-                expected && advanced
             );
-            assert_eq!(
-                labels.0.iter().any(|text| text == "Block retention"),
-                retention
-            );
-            if local && clicked {
-                assert!(labels.0.iter().any(|text| text == "In use · Local Node"));
-                assert!(labels.0.iter().any(|text| text == "Catching up 99.9%"));
-                assert!(!labels.0.iter().any(|text| text == "Switch to local node"));
-                assert!(labels.0.iter().any(|text| text
-                    == "All steps complete. COINCUBE Desktop reads this Vault from your node."));
-            }
         }
     }
 
