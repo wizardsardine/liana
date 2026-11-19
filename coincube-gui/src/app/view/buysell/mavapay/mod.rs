@@ -478,7 +478,7 @@ impl MavapayState {
     ) -> iced::Task<view::Message> {
         let coincube_client = coincube_client.clone();
 
-        let task = iced::Task::perform(
+        iced::Task::perform(
             async move {
                 // Step 1: Create quote with Mavapay
                 let quote = match MavapayClient(&coincube_client).create_quote(request).await {
@@ -505,9 +505,7 @@ impl MavapayState {
                     e,
                 )),
             },
-        );
-
-        task
+        )
     }
 
     fn update_buy_input(
@@ -1056,7 +1054,7 @@ impl MavapayState {
                     view::BuySellMessage::SessionError("Unable to fulfil invoice", err),
                 )));
             }
-            msg @ (MavapayMessage::SellInvoiceFulfilled { .. }) => {
+            msg @ MavapayMessage::SellInvoiceFulfilled { .. } => {
                 return self.update_sell_fulfilled(msg)
             }
             MavapayMessage::SellSendFailed { error: err, .. } => {
@@ -1200,7 +1198,7 @@ impl MavapayState {
     ) -> iced::Task<view::Message> {
         let client = coincube_client.clone();
 
-        let task = iced::Task::perform(
+        iced::Task::perform(
             async move {
                 let mut res = MavapayClient(&client).get_order(&order_id).await;
 
@@ -1230,9 +1228,7 @@ impl MavapayState {
                     err.to_string(),
                 )),
             },
-        );
-
-        task
+        )
     }
 
     fn update_checkout_order(
