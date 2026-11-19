@@ -6229,16 +6229,16 @@ impl ConnectAccountPanel {
             DuressMessage::ReloadCubes => {
                 return self.reload_duress_cubes();
             }
-            DuressMessage::CancelEnrollment => {
-                // Ignore cancel while a server enroll_duress is in flight:
-                // clear_duress_enroll zeroizes the duress PIN/code, so the
-                // EnrollResult success handler would have nothing left to
-                // persist — leaving the server enrolled but this device
-                // un-armed. The Cancel button is disabled in this state too;
-                // this is the authoritative backstop.
-                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
-                    self.clear_duress_enroll();
-                }
+            // Ignore cancel while a server enroll_duress is in flight:
+            // clear_duress_enroll zeroizes the duress PIN/code, so the
+            // EnrollResult success handler would have nothing left to
+            // persist — leaving the server enrolled but this device
+            // un-armed. The Cancel button is disabled in this state too;
+            // this is the authoritative backstop.
+            DuressMessage::CancelEnrollment
+                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) =>
+            {
+                self.clear_duress_enroll();
             }
             message @ (DuressMessage::DuressPinChanged(_)
             | DuressMessage::DuressPinConfirmChanged(_)
@@ -7158,7 +7158,7 @@ impl ConnectAccountPanel {
     fn update_contacts(&mut self, msg: ContactsMessage) -> iced::Task<Message> {
         match msg {
             ContactsMessage::ContactsLoaded(contacts, gen) => {
-                return self.apply_contacts_loaded(contacts, gen)
+                self.apply_contacts_loaded(contacts, gen)
             }
 
             message @ (ContactsMessage::InvitesLoaded(_, _)
