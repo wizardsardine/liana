@@ -2762,23 +2762,71 @@ impl GUI {
         }
     }
 
-    fn update_in_language(&mut self, message: Message) -> Task<Message> {
-        self.reconcile_overlay_origins();
-        let message = match self.intercept_verified_unlock_duress(message) {
-            std::ops::ControlFlow::Continue(message) => message,
-            std::ops::ControlFlow::Break(task) => return task,
-        };
-        if let Some(task) = self.intercept_device_preference(&message) {
-            return task;
+    fn unlock_duress_target(&self, message: &Message) -> Option<(pane_grid::Pane, usize)> {
+        match message {
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::PinEntry(crate::pin_entry::Message::DuressDetected { .. })
+                ) =>
+            {
+                self.panes
+                    .get(*pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
+                    .and_then(|tab| match &tab.state {
+                        tab::State::PinEntry(pin) => {
+                            let crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } =
+                                &pin.on_success;
+                            crate::chain::same_path(
+                                datadir.path(),
+                                self.config.coincube_directory.path(),
+                            )
+                            .then_some((*pane_id, *tab_id))
+                        }
+                        _ => None,
+                    })
+            }
+            _ => None,
         }
-        let message = match self.route_tab_callback(message) {
-            std::ops::ControlFlow::Continue(message) => message,
-            std::ops::ControlFlow::Break(task) => return task,
-        };
-        let opening_pin = self.fork_pin_candidate(&message);
-        // Shared-client restore reaches readiness without SetSession. Capture
-        // its exact current origin before Pane converts this to an originless intent.
-        let ready_unlock = match &message {
+    }
+
+    fn adopt_pending_unlock_candidates(
+        &mut self,
+        ready_unlock: Option<ForkUnlockCandidate>,
+        opening_pin: Option<(pane_grid::Pane, usize, ForkUnlockCandidate)>,
+    ) {
+        if let Some(candidate) = ready_unlock {
+            for (_, pane) in self.panes.iter_mut() {
+                for tab in &mut pane.tabs {
+                    if let tab::State::PinEntry(pin) = &mut tab.state {
+                        pin.adopt_connect_candidate(
+                            &candidate.root,
+                            candidate.client.clone(),
+                            candidate.user_id,
+                        );
+                    }
+                }
+            }
+        }
+
+        if let Some((pane_id, tab_id, candidate)) = opening_pin {
+            if let Some(tab::Tab {
+                state: tab::State::PinEntry(pin),
+                ..
+            }) = self
+                .panes
+                .get_mut(pane_id)
+                .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
+            {
+                pin.adopt_connect_candidate(&candidate.root, candidate.client, candidate.user_id);
+            }
+        }
+    }
+
+    // Shared-client restore reaches readiness without SetSession. Capture
+    // its exact current origin before Pane converts this to an originless intent.
+    fn ready_unlock_candidate(&self, message: &Message) -> Option<ForkUnlockCandidate> {
+        match message {
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
                     inner.as_ref(),
@@ -2789,46 +2837,11 @@ impl GUI {
                 self.verified_unlock_origin(*pane_id, *tab_id)
             }
             _ => None,
-        };
-        if let Some(task) = self.adopt_sibling_session_on_init(&message) {
-            return task;
         }
-        // The signed-out-by-Connect notice is one notice for the whole app
-        // (L3): whichever tab learns it, or dismisses it, every tab follows.
-        if let Message::Pane(_, pane::Message::Tab(_, inner)) = &message {
-            let relay = match inner.as_ref() {
-                tab::Message::Run(AppMessage::ConnectSignedOutBy(reason))
-                | tab::Message::Launch(home::Message::ConnectSignedOutBy(reason)) => {
-                    Some(Some(*reason))
-                }
-                tab::Message::Run(AppMessage::View(
-                    crate::app::view::Message::DismissConnectSignOut,
-                ))
-                | tab::Message::Launch(home::Message::View(
-                    home::ViewMessage::DismissConnectSignOut,
-                )) => Some(None),
-                _ => None,
-            };
-            if let Some(reason) = relay {
-                self.relay_connect_signed_out_by(reason);
-            }
-        }
-        let auth_change = self.tab_auth_change(&message);
-        let auth_from_fork_app = if auth_change.is_some() {
-            match &message {
-                Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) => self
-                    .panes
-                    .get(*pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                    .is_some_and(
-                        |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
-                    ),
-                _ => false,
-            }
-        } else {
-            false
-        };
-        let completed_login = match &message {
+    }
+
+    fn completed_tab_login(message: &Message) -> Option<crate::services::coincube::LoginResponse> {
+        match message {
             Message::Pane(_, pane::Message::Tab(_, inner)) => {
                 match connect_account_message(inner) {
                     Some(crate::app::view::ConnectAccountMessage::SetSession(login, _))
@@ -2847,7 +2860,67 @@ impl GUI {
                 }
             }
             _ => None,
+        }
+    }
+
+    fn relay_tab_sign_out_notice(&mut self, message: &Message) {
+        // The signed-out-by-Connect notice is one notice for the whole app
+        // (L3): whichever tab learns it, or dismisses it, every tab follows.
+        if let Message::Pane(_, pane::Message::Tab(_, inner)) = message {
+            let relay = match inner.as_ref() {
+                tab::Message::Run(AppMessage::ConnectSignedOutBy(reason))
+                | tab::Message::Launch(home::Message::ConnectSignedOutBy(reason)) => {
+                    Some(Some(*reason))
+                }
+                tab::Message::Run(AppMessage::View(
+                    crate::app::view::Message::DismissConnectSignOut,
+                ))
+                | tab::Message::Launch(home::Message::View(
+                    home::ViewMessage::DismissConnectSignOut,
+                )) => Some(None),
+                _ => None,
+            };
+            if let Some(reason) = relay {
+                self.relay_connect_signed_out_by(reason);
+            }
+        }
+    }
+
+    fn update_in_language(&mut self, message: Message) -> Task<Message> {
+        self.reconcile_overlay_origins();
+        let message = match self.intercept_verified_unlock_duress(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
         };
+        if let Some(task) = self.intercept_device_preference(&message) {
+            return task;
+        }
+        let message = match self.route_tab_callback(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
+        };
+        let opening_pin = self.fork_pin_candidate(&message);
+        let ready_unlock = self.ready_unlock_candidate(&message);
+        if let Some(task) = self.adopt_sibling_session_on_init(&message) {
+            return task;
+        }
+        self.relay_tab_sign_out_notice(&message);
+        let auth_change = self.tab_auth_change(&message);
+        let auth_from_fork_app = if auth_change.is_some() {
+            match &message {
+                Message::Pane(pane_id, pane::Message::Tab(tab_id, _)) => self
+                    .panes
+                    .get(*pane_id)
+                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
+                    .is_some_and(
+                        |tab| matches!(&tab.state, tab::State::App(app) if app.requires_connect()),
+                    ),
+                _ => false,
+            }
+        } else {
+            false
+        };
+        let completed_login = Self::completed_tab_login(&message);
         let accepted_before = auth_change
             .as_ref()
             .and_then(|(_, pane_id, tab_id)| self.accepted_tab_auth_revision(*pane_id, *tab_id));
@@ -2887,31 +2960,7 @@ impl GUI {
                     tab::Message::PinEntry(crate::pin_entry::Message::DuressDetected { .. })
                 )
         );
-        let unlock_duress_target = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
-                if matches!(
-                    inner.as_ref(),
-                    tab::Message::PinEntry(crate::pin_entry::Message::DuressDetected { .. })
-                ) =>
-            {
-                self.panes
-                    .get(*pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                    .and_then(|tab| match &tab.state {
-                        tab::State::PinEntry(pin) => {
-                            let crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } =
-                                &pin.on_success;
-                            crate::chain::same_path(
-                                datadir.path(),
-                                self.config.coincube_directory.path(),
-                            )
-                            .then_some((*pane_id, *tab_id))
-                        }
-                        _ => None,
-                    })
-            }
-            _ => None,
-        };
+        let unlock_duress_target = self.unlock_duress_target(&message);
         if unlock_duress_message && unlock_duress_target.is_none() {
             return Task::none();
         }
@@ -2933,33 +2982,7 @@ impl GUI {
             self.seal_verified_seed_export_duress_surface(pane_id, tab_id);
         }
         auth_tasks.push(routed);
-        if let Some(candidate) = ready_unlock {
-            for (_, pane) in self.panes.iter_mut() {
-                for tab in &mut pane.tabs {
-                    if let tab::State::PinEntry(pin) = &mut tab.state {
-                        pin.adopt_connect_candidate(
-                            &candidate.root,
-                            candidate.client.clone(),
-                            candidate.user_id,
-                        );
-                    }
-                }
-            }
-        }
-
-        if let Some((pane_id, tab_id, candidate)) = opening_pin {
-            if let Some(tab::Tab {
-                state: tab::State::PinEntry(pin),
-                ..
-            }) = self
-                .panes
-                .get_mut(pane_id)
-                .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == tab_id))
-            {
-                pin.adopt_connect_candidate(&candidate.root, candidate.client, candidate.user_id);
-            }
-        }
-
+        self.adopt_pending_unlock_candidates(ready_unlock, opening_pin);
         self.refresh_sidebar_session_status();
         auth_tasks.push(self.sync_min_window_size());
         Task::batch(auth_tasks)
