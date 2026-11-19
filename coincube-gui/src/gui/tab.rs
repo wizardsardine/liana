@@ -1344,24 +1344,9 @@ impl Tab {
             // Once closed, `idle_for()` is `None`, so this does not repeat.
             #[cfg(feature = "mcp-proposals")]
             State::Installer(installer) if installer.context.mcp_proposal.is_some() => {
-                if idle_expired
-                    || installer
-                        .context
-                        .mcp_proposal
-                        .as_ref()
-                        .is_some_and(|p| !p.unlocked())
-                {
-                    installer.expire_mcp_proposal();
-                    if !installer.proposal_install_dispatched || installer.proposal_finished {
-                        let root = installer.datadir.clone();
-                        let chain = installer.context.bitcoin_config.chain;
-                        let failure = installer.proposal_failure.clone();
-                        installer.stop();
-                        let (mut home, task) = Home::new_for_chain(root, Some(chain));
-                        home.set_error(failure.unwrap_or_else(|| "Proposal setup locked. Reopen the Cube and approve a new client to continue.".into()));
-                        self.state = State::Home(home);
-                        return task.map(Message::Launch);
-                    }
+                if let Some((home, task)) = Self::expire_idle_proposal(installer, idle_expired) {
+                    self.state = State::Home(home);
+                    return task.map(Message::Launch);
                 }
                 Task::none()
             }
@@ -1374,16 +1359,45 @@ impl Tab {
             }
             _ => Task::none(),
         };
-        if matches!(&self.state, State::App(app) if app.cube_settings().network.is_blake2b()) {
-            self.guard_fork_task(task)
-        } else {
-            if matches!(self.state, State::App(_)) {
+        match &self.state {
+            State::App(app) if app.cube_settings().network.is_blake2b() => {
+                self.guard_fork_task(task)
+            }
+            State::App(_) => {
                 let generation = self.app_generation;
                 task.map(move |message| Message::AppAsync(generation, Box::new(message)))
-            } else {
-                task
             }
+            _ => task,
         }
+    }
+
+    #[cfg(feature = "mcp-proposals")]
+    fn expire_idle_proposal(
+        installer: &mut Installer,
+        idle_expired: bool,
+    ) -> Option<(Home, Task<crate::home::Message>)> {
+        if !idle_expired
+            && installer
+                .context
+                .mcp_proposal
+                .as_ref()
+                .is_none_or(|p| p.unlocked())
+        {
+            return None;
+        }
+        installer.expire_mcp_proposal();
+        if installer.proposal_install_dispatched && !installer.proposal_finished {
+            return None;
+        }
+        let root = installer.datadir.clone();
+        let chain = installer.context.bitcoin_config.chain;
+        let failure = installer.proposal_failure.clone();
+        installer.stop();
+        let (mut home, task) = Home::new_for_chain(root, Some(chain));
+        home.set_error(failure.unwrap_or_else(|| {
+            "Proposal setup locked. Reopen the Cube and approve a new client to continue.".into()
+        }));
+        Some((home, task))
     }
 
     /// The global Connect auth boundary, broadcast by `GUI::update` to every
