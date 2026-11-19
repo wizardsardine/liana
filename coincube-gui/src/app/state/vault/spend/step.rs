@@ -122,6 +122,12 @@ pub trait Step {
         true
     }
     fn interrupt(&mut self) {}
+    /// The step is on screen again after `interrupt`: request whatever was
+    /// in flight when it was left. Called only while the step is shown, as
+    /// tasks' results go to whatever is on screen when they land.
+    fn resume(&mut self) -> Task<Message> {
+        Task::none()
+    }
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, _draft: &TransactionDraft) {}
     fn reload_wallet(&mut self, _wallet: Arc<Wallet>) {}
     fn subscription(&self) -> Subscription<Message> {
@@ -465,36 +471,7 @@ impl DefineSpend {
                 }
             }
             view::CreateSpendMessage::FetchFeeEstimate(block_target) => {
-                self.custom_feerate = false;
-                self.loading_fee_estimate = Some(block_target);
-                self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
-                // The current draft was built at the rate this preset
-                // replaces: Prepare must not build from it. A draft still in
-                // flight is dropped too; `FeeEstimated` drafts again.
-                self.amount_left_to_select = None;
-                self.redraft_seq = self.redraft_seq.wrapping_add(1);
-                self.draft_pending = false;
-                let request = self.fee_estimate_request;
-                return Task::perform(
-                    async move {
-                        let fee_estimator = FeeEstimator::new();
-                        let feerate = match block_target {
-                            1 => fee_estimator.get_high_priority_rate().await,
-                            6 => fee_estimator.get_mid_priority_rate().await,
-                            _ => fee_estimator.get_low_priority_rate().await,
-                        };
-
-                        feerate
-                    },
-                    move |feerate| {
-                        Message::View(view::Message::CreateSpend(
-                            CreateSpendMessage::FeeEstimated {
-                                request,
-                                feerate: feerate.ok(),
-                            },
-                        ))
-                    },
-                );
+                return self.fetch_fee_estimate(block_target);
             }
             view::CreateSpendMessage::Generate => return self.prepare_spend(daemon),
             view::CreateSpendMessage::SelectCoin(i) => {
@@ -532,10 +509,12 @@ impl DefineSpend {
     }
 
     fn prepare_spend(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
-        // A preset's estimate is on its way: the rate in the field is about
-        // to be replaced.
+        // A preset's estimate is on its way (the rate in the field is about
+        // to be replaced), or the draft at the current rate has not landed:
+        // the same holds as the view's Prepare.
         if self.generating
             || self.loading_fee_estimate.is_some()
+            || self.drafting()
             || self.tampered
             || !self.form_values_are_valid(false)
             || self.exists_duplicate()
@@ -781,6 +760,40 @@ impl DefineSpend {
         self.check_valid();
     }
 
+    /// Fetch the estimate for a preset's block target (1/6/24). The current
+    /// draft was built at the rate this preset replaces: Prepare must not
+    /// build from it. A draft still in flight is dropped too; `FeeEstimated`
+    /// drafts again.
+    fn fetch_fee_estimate(&mut self, block_target: usize) -> Task<Message> {
+        self.custom_feerate = false;
+        self.loading_fee_estimate = Some(block_target);
+        self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
+        self.amount_left_to_select = None;
+        self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.draft_pending = false;
+        let request = self.fee_estimate_request;
+        Task::perform(
+            async move {
+                let fee_estimator = FeeEstimator::new();
+                let feerate = match block_target {
+                    1 => fee_estimator.get_high_priority_rate().await,
+                    6 => fee_estimator.get_mid_priority_rate().await,
+                    _ => fee_estimator.get_low_priority_rate().await,
+                };
+
+                feerate
+            },
+            move |feerate| {
+                Message::View(view::Message::CreateSpend(
+                    CreateSpendMessage::FeeEstimated {
+                        request,
+                        feerate: feerate.ok(),
+                    },
+                ))
+            },
+        )
+    }
+
     fn invalidate_preparation(&mut self) {
         self.preparation_id = PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed);
         self.generating = false;
@@ -810,8 +823,8 @@ impl DefineSpend {
     }
 
     /// Start the form on Normal (~1h, 6-block target): its estimate is
-    /// fetched on the first message the step receives, i.e. once the step is
-    /// on screen. A recovery spend uses this because it opens on the
+    /// fetched by `resume` once the step is on screen (the panel's Next or
+    /// `reload`). A recovery spend uses this because it opens on the
     /// path-selection step, where the panel's `reload` default would be lost.
     pub fn starting_on_normal_feerate(mut self) -> Self {
         self.resume_fee_estimate = Some(NORMAL_FEE_TARGET);
@@ -1375,22 +1388,6 @@ impl Step for DefineSpend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        // The step was left while a preset's estimate or a draft was on its
-        // way: request it again before anything else, so a Prepare arriving
-        // first cannot build at the rate the preset was replacing.
-        if self.resume_fee_estimate.is_some() || self.resume_redraft {
-            self.resume_redraft = false;
-            let resumed = match self.resume_fee_estimate.take() {
-                // The estimate landing drafts again.
-                Some(block_target) => self.update_spend_form(
-                    daemon.clone(),
-                    cache,
-                    CreateSpendMessage::FetchFeeEstimate(block_target),
-                ),
-                None => self.schedule_redraft(),
-            };
-            return Task::batch([resumed, self.update(daemon, cache, message)]);
-        }
         match message {
             Message::UpdatePanelCache(_) => {
                 // Update sync_status from cache, same as VaultOverview does
@@ -1508,17 +1505,24 @@ impl Step for DefineSpend {
 
     fn interrupt(&mut self) {
         self.invalidate_preparation();
-        // The estimate in flight is delivered to whatever is on screen when
-        // it lands, not to this step: drop it (it is stale once nothing is
-        // loading) and fetch the preset again when the step is back.
-        if let Some(block_target) = self.loading_fee_estimate.take() {
-            self.resume_fee_estimate = Some(block_target);
-        }
-        // So is a draft's debounce tick or result: draft again on return,
-        // rather than wait on a draft that never lands.
-        if self.draft_pending {
-            self.draft_pending = false;
-            self.resume_redraft = true;
+        // An estimate, debounce tick or draft in flight is delivered to
+        // whatever is on screen when it lands, not to this step: `resume`
+        // requests it again once the step is back. Until then the loading
+        // estimate and pending draft stay set, so Prepare stays held.
+        self.resume_fee_estimate = self.loading_fee_estimate;
+        self.resume_redraft = self.draft_pending;
+    }
+
+    fn resume(&mut self) -> Task<Message> {
+        let redraft = std::mem::take(&mut self.resume_redraft);
+        match self.resume_fee_estimate.take() {
+            // A fetch dropped by `interrupt`, or the Normal default a new
+            // recovery form starts on (`starting_on_normal_feerate`). A new
+            // request: an earlier estimate, if it still lands here, is stale.
+            // This estimate landing drafts again.
+            Some(block_target) => self.fetch_fee_estimate(block_target),
+            _ if redraft && self.draft_pending => self.schedule_redraft(),
+            _ => Task::none(),
         }
     }
 
@@ -3519,62 +3523,80 @@ mod tests {
 
     /// Leaving the step (another menu entry, or Back) while a preset's
     /// estimate or a draft is on its way: those land on whatever is on
-    /// screen, so the step must not wait on them when it is back.
+    /// screen, so the step requests them again once it is shown (`resume`,
+    /// from the panel's `reload` or a step change), never while hidden, and
+    /// holds Prepare until then.
     #[tokio::test]
-    async fn leaving_mid_fetch_or_mid_draft_resumes_on_return() {
+    async fn leaving_mid_fetch_or_mid_draft_resumes_once_shown_again() {
         let daemon = Arc::new(crate::daemon::client::Coincubed::new(
             crate::utils::mock::Daemon::new(vec![]).run(),
         ));
         let mut state = branta_form();
-        let send = |state: &mut DefineSpend, message: view::CreateSpendMessage| {
-            state.update(
-                daemon.clone(),
-                &Cache::default(),
-                Message::View(view::Message::CreateSpend(message)),
-            )
+        let send = |state: &mut DefineSpend, message: Message| {
+            state.update(daemon.clone(), &Cache::default(), message)
+        };
+        let generate = || {
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::Generate,
+            ))
         };
         state.amount_left_to_select = Some(Amount::ZERO);
 
         // Fast is fetching when the step is left.
         drop(send(
             &mut state,
-            view::CreateSpendMessage::FetchFeeEstimate(1),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FetchFeeEstimate(1),
+            )),
         ));
         let fast = state.fee_estimate_request;
         state.interrupt();
-        assert_eq!(state.loading_fee_estimate, None);
         assert_eq!(state.resume_fee_estimate, Some(1));
+        assert_eq!(state.loading_fee_estimate, Some(1), "Prepare stays held");
 
-        // Back on the step, a Prepare arriving first finds Fast fetching
-        // again, so it does not build at the old rate.
-        assert!(send(&mut state, view::CreateSpendMessage::Generate).units() > 0);
+        // While hidden, the cache refresh still reaches the panel: nothing
+        // is requested, as its result would land on another page.
+        drop(send(&mut state, Message::UpdatePanelCache(false)));
+        assert_eq!(state.resume_fee_estimate, Some(1));
+        assert_eq!(state.fee_estimate_request, fast);
+        // Prepare is refused before the step is back.
+        assert_eq!(send(&mut state, generate()).units(), 0);
+        assert!(!state.generating);
+
+        // Shown again: Fast is fetched anew.
+        assert!(state.resume().units() > 0);
         assert_eq!(state.resume_fee_estimate, None);
         assert_eq!(state.loading_fee_estimate, Some(1));
         assert_ne!(state.fee_estimate_request, fast);
-        assert!(!state.generating);
+        assert_eq!(state.resume().units(), 0, "nothing left to resume");
         // The first fetch's estimate, if it does reach the step, is dropped.
         drop(send(
             &mut state,
-            view::CreateSpendMessage::FeeEstimated {
-                request: fast,
-                feerate: Some(40),
-            },
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FeeEstimated {
+                    request: fast,
+                    feerate: Some(40),
+                },
+            )),
         ));
         assert_eq!(state.feerate.value, "2");
         assert_eq!(state.loading_fee_estimate, Some(1));
 
-        // A draft pending when the step is left is drafted again on return.
+        // A draft pending when the step is left: Prepare stays held (the
+        // previous draft's selection is stale), and the draft is requested
+        // again once shown.
         state.loading_fee_estimate = None;
+        state.amount_left_to_select = Some(Amount::ZERO);
         drop(state.schedule_redraft());
         state.interrupt();
-        assert!(!state.draft_pending);
         assert!(state.resume_redraft);
+        assert!(state.drafting());
+        drop(send(&mut state, Message::UpdatePanelCache(false)));
+        assert!(state.resume_redraft, "not while hidden");
+        assert_eq!(send(&mut state, generate()).units(), 0);
+        assert!(!state.generating);
         let seq = state.redraft_seq;
-        drop(state.update(
-            daemon.clone(),
-            &Cache::default(),
-            Message::UpdatePanelCache(false),
-        ));
+        assert!(state.resume().units() > 0);
         assert!(!state.resume_redraft);
         assert!(state.draft_pending);
         assert_ne!(state.redraft_seq, seq);
@@ -3602,18 +3624,23 @@ mod tests {
             BitcoinDisplayUnit::Sats,
         )
         .starting_on_normal_feerate();
-        // The panel's Next: load the step, then hand it the message.
+        // The panel's Next: load the step, resume it, then hand it the
+        // message.
         let next = |state: &mut DefineSpend, timelock: u16| {
             state.load(
                 &coins,
                 100,
                 &TransactionDraft::new(Network::Bitcoin, Some(timelock)),
             );
-            state.update(
-                daemon.clone(),
-                &Cache::default(),
-                Message::View(view::Message::Next),
-            )
+            let resumed = state.resume();
+            Task::batch([
+                resumed,
+                state.update(
+                    daemon.clone(),
+                    &Cache::default(),
+                    Message::View(view::Message::Next),
+                ),
+            ])
         };
 
         // First shown: Normal is fetched.
