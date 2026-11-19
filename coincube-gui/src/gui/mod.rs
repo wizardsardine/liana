@@ -4005,9 +4005,7 @@ impl GUI {
         // Always fetch BTC/USD for USDt→sats conversion, even when
         // fiat display is disabled. Use the configured source if
         // available, otherwise fall back to the default source.
-        let usd_source = fiat_sett
-            .map(|s| s.source)
-            .unwrap_or(PriceSource::default());
+        let usd_source = fiat_sett.map(|s| s.source).unwrap_or_default();
         if let Some(fresh_usd) = self
             .global_cache
             .fresh_fiat_price(usd_source, Currency::USD)
