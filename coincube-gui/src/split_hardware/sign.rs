@@ -559,16 +559,20 @@ impl SigningSession {
         self.handle
     }
 
-    /// Multisig: asks the device whether the policy is registered, and
-    /// registers it (the user approves on the device) when it is not. The
+    /// Multisig: asks the device whether the policy is registered, under
+    /// any name, and registers it (the user approves on the device) when it
+    /// is not. The
     /// token the device returns, if any, is held only in this session.
     pub async fn register(&mut self) -> Result<RegistrationOutcome, SignError> {
         if !self.policy.shape.is_multisig() {
             return Ok(RegistrationOutcome::NotNeeded);
         }
         let (name, policy) = (&self.policy.name, &self.policy.descriptor);
-        let registered = match self.device.is_wallet_registered(name, policy).await {
-            Ok(registered) => registered,
+        // Any registration of this policy counts, whatever app made it and
+        // whatever it is called: registering it again only adds a duplicate
+        // the user has to approve and later clean up.
+        let registered = match self.device.find_wallet_registration(name, policy).await {
+            Ok(found) => found.is_some(),
             Err(async_hwi::Error::UnimplementedMethod) => {
                 return Err(SignError::UnsupportedDevice(self.kind))
             }
@@ -590,11 +594,12 @@ impl SigningSession {
         // A token-returning device (Ledger) cannot, until a handle is bound
         // with the token; `sign` checks that bound handle instead.
         if hmac.is_none()
-            && !self
+            && self
                 .device
-                .is_wallet_registered(name, policy)
+                .find_wallet_registration(name, policy)
                 .await
                 .map_err(device_error)?
+                .is_none()
         {
             return Err(SignError::PolicyNotRegistered);
         }
@@ -639,11 +644,14 @@ impl SigningSession {
                 bound
             }
         };
+        // Checked on the handle that signs: a Coldcard handle also remembers
+        // a registration found under another name and signs against it.
         if multisig
-            && !device
-                .is_wallet_registered(&self.policy.name, &self.policy.descriptor)
+            && device
+                .find_wallet_registration(&self.policy.name, &self.policy.descriptor)
                 .await
                 .map_err(device_error)?
+                .is_none()
         {
             return Err(SignError::PolicyNotRegistered);
         }

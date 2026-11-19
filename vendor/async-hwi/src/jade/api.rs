@@ -153,6 +153,11 @@ pub struct GetRegisteredDescriptorResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct GetRegisteredMultisigParams<'a> {
+    pub multisig_name: &'a str,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct RegisterDescriptorParams<'a> {
     pub network: &'a str,
     pub descriptor_name: &'a str,

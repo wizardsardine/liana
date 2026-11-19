@@ -73,6 +73,15 @@ impl From<bip389::ParseError> for Error {
 
 impl std::error::Error for Error {}
 
+/// A wallet registration found on a device.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WalletRegistration {
+    /// The name the device keeps it under. `None` for a registration the
+    /// device does not address by name (a Coldcard multisig wallet, found by
+    /// its M, N and fingerprints).
+    pub name: Option<String>,
+}
+
 /// HWI is the common Hardware Wallet Interface.
 #[async_trait]
 pub trait HWI: Debug {
@@ -88,6 +97,26 @@ pub trait HWI: Debug {
     async fn register_wallet(&self, name: &str, policy: &str) -> Result<Option<[u8; 32]>, Error>;
     /// Returns true if the wallet is registered on the device.
     async fn is_wallet_registered(&self, name: &str, policy: &str) -> Result<bool, Error>;
+    /// Looks for a registration of `policy` on the device under any name,
+    /// including one another wallet app made (Specter, Sparrow, ...).
+    ///
+    /// The default only knows the registration under `name`, which is all a
+    /// device can report when it keeps no registry (Ledger: the session
+    /// HMAC) or looks registrations up by content anyway (BitBox02). Devices
+    /// that store named registrations (Jade, Coldcard) search all of them, so
+    /// a wallet registered elsewhere is not registered a second time.
+    async fn find_wallet_registration(
+        &self,
+        name: &str,
+        policy: &str,
+    ) -> Result<Option<WalletRegistration>, Error> {
+        Ok(self
+            .is_wallet_registered(name, policy)
+            .await?
+            .then(|| WalletRegistration {
+                name: Some(name.to_string()),
+            }))
+    }
     /// Display address on the device screen.
     async fn display_address(&self, script: &AddressScript) -> Result<(), Error>;
     /// Sign a partially signed bitcoin transaction (PSBT).
