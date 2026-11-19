@@ -3192,6 +3192,211 @@ impl Tab {
         Continue(command.map(Message::Run))
     }
 
+    fn route_active_duress_message(
+        &mut self,
+        message: crate::app::view::duress::active_screen::Message,
+    ) -> TabDispatchResult {
+        use crate::app::view::duress::active_screen::Message;
+        match message {
+            Message::SignInPressed => {
+                std::ops::ControlFlow::Continue(self.check_duress_for_sign_in())
+            }
+            Message::StateChecked(active) => self.on_active_duress_checked(active),
+        }
+    }
+
+    fn check_duress_for_sign_in(&mut self) -> Task<Message> {
+        let State::DuressActive(screen) = &mut self.state else {
+            unreachable!();
+        };
+        // Gated entirely on server-side duress state. Read cached
+        // Connect auth (preserved through the wipe) and check
+        // get_duress_state BEFORE rendering any sign-in surface. No
+        // credential prompt ever appears here.
+        match (screen.datadir().cloned(), screen.network()) {
+            (Some(datadir), Some(network)) => {
+                screen.checking = true;
+                screen.error = None;
+                duress_state_check_task(datadir, network)
+            }
+            _ => {
+                // No way to reach the server (no network resolved) —
+                // safe default is to stay locked.
+                screen.error = Some("Duress mode is active. Try again later.".to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_active_duress_checked(&mut self, active: Option<bool>) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::DuressActive(screen) = &mut self.state else {
+            unreachable!();
+        };
+        Continue(match active {
+            Some(false) => {
+                // Server reports duress cleared from another device.
+                // Update local state and exit into the normal flow.
+                if let Some(datadir) = screen.datadir().cloned() {
+                    let root = datadir.path();
+                    if !Self::clear_local_duress_state(screen, root) {
+                        return Break(Task::none());
+                    }
+                    let network = screen.network();
+                    let (home, command) = Home::new(datadir, network);
+                    self.state = State::Home(home);
+                    return Break(command.map(Message::Launch));
+                }
+                screen.checking = false;
+                Task::none()
+            }
+            // Still active, or the check failed/was unreachable —
+            // never reveal more than the cryptic message already does.
+            _ => {
+                screen.checking = false;
+                screen.error = Some("Duress mode is active. Try again later.".to_string());
+                Task::none()
+            }
+        })
+    }
+
+    fn clear_local_duress_state(
+        screen: &mut crate::app::view::duress::active_screen::DuressActiveScreen,
+        root: &std::path::Path,
+    ) -> bool {
+        // A server clear must NEVER drop us into the normal
+        // app with un-wiped Cube data. If the activation
+        // wipe failed all its retries (or was interrupted),
+        // the journal is still pending — finish it first,
+        // and if it STILL can't complete, stay locked (the
+        // launch-time reconcile retries on next start).
+        // This is the same invariant `State::new` enforces.
+        let journal = crate::services::duress::journal::WipeJournal::new(root);
+        if journal.is_pending() {
+            complete_pending_wipe(root, &journal);
+            if journal.is_pending() {
+                screen.checking = false;
+                screen.error = Some("Duress mode is active. Try again later.".to_string());
+                return false;
+            }
+        }
+        // Skip the write on a real read error rather than
+        // clobbering valid state with a default; the next
+        // poll re-clears once the file is readable again.
+        match crate::services::duress::DuressLocalState::load(root) {
+            Ok(mut st) => {
+                st.active = false;
+                st.unlock_at = None;
+                if let Err(e) = st.save(root) {
+                    error!("duress: failed to clear local state: {e}");
+                }
+            }
+            Err(e) => error!("duress: reading duress state failed; not overwriting: {e}"),
+        }
+        true
+    }
+
+    fn finish_wallets_after_unlock(&mut self, message: Message) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let Message::WalletsLoadedAfterUnlock {
+            cube_signer,
+            spark_backend,
+            config,
+            datadir,
+            network,
+            cube,
+            wallet_settings,
+            internal_bitcoind,
+            backup,
+            connect_client,
+            migration_error,
+            enc_key_error,
+        } = message
+        else {
+            unreachable!();
+        };
+        // Surfaced through the app's normal toast path once the Cube is
+        // up. Deliberately not fatal: the seed files were left exactly
+        // as they were, so the Cube opens — but a silent "your files
+        // were not upgraded" is what this whole PR exists to stop.
+        //
+        // Two of the three branches below land in `Loader` or `Login`,
+        // which cannot show a toast, so park it and let
+        // `flush_migration_warning` deliver it when `App` arrives.
+        // The duress-off notice stays on disk until `App` shows it.
+        self.pending_duress_notice = (migration_error.as_deref() == Some(DURESS_DISARM_NOTICE))
+            .then(|| datadir.path().to_path_buf());
+        self.pending_unlock_warnings = migration_error.into_iter().chain(enc_key_error).collect();
+        // A failure to resolve the signer here does not stop the Cube
+        // opening: fall back to the signer the unlock parked in the
+        // session, so P2P, Connect blinding and the Vault builder keep
+        // it.
+        let cube_signer = cube_signer_after_unlock(cube_signer, &cube);
+        Continue(if let Some(wallet_settings) = wallet_settings {
+            if let Some(auth) = &wallet_settings.remote_backend_auth {
+                let (mut home, command) = Home::new(datadir.clone(), Some(network));
+                home.set_error(auth.retired_backend_notice());
+                self.state = State::Home(home);
+                command.map(Message::Launch)
+            } else {
+                let (loader, command) = if cube
+                    .bitcoin_import
+                    .as_ref()
+                    .is_some_and(|i| i.active_attachment().is_some())
+                {
+                    Loader::new_imported(
+                        datadir.clone(),
+                        config.clone(),
+                        network,
+                        internal_bitcoind.clone(),
+                        backup.clone(),
+                        wallet_settings.clone(),
+                        cube,
+                        cube_signer,
+                        spark_backend,
+                        connect_client,
+                    )
+                } else {
+                    Loader::new(
+                        datadir.clone(),
+                        config.clone(),
+                        network,
+                        internal_bitcoind.clone(),
+                        backup.clone(),
+                        Some(wallet_settings.clone()),
+                        cube,
+                        cube_signer,
+                        spark_backend,
+                    )
+                };
+                self.state = State::Loader(loader);
+                command.map(Message::Load)
+            }
+        } else {
+            let (app, command) = match App::new_without_wallet(
+                cube_signer,
+                spark_backend,
+                config,
+                datadir,
+                network,
+                cube,
+            ) {
+                Ok(app) => app,
+                Err(error) => {
+                    let error = match error {
+                        app::error::Error::Daemon(error) => loader::Error::Daemon(error),
+                        error => loader::Error::Unexpected(crate::user_error::report(&error)),
+                    };
+                    return Break(Task::done(Message::Load(loader::Message::App(Err(error)))));
+                }
+            };
+            self.state = State::App(app);
+            command.map(Message::Run)
+        })
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -4897,87 +5102,12 @@ impl Tab {
                 }
                 m => unlock.update(m).map(Message::PasskeyUnlock),
             },
-            (State::DuressActive(screen), Message::Duress(msg)) => match msg {
-                crate::app::view::duress::active_screen::Message::SignInPressed => {
-                    // Gated entirely on server-side duress state. Read cached
-                    // Connect auth (preserved through the wipe) and check
-                    // get_duress_state BEFORE rendering any sign-in surface. No
-                    // credential prompt ever appears here.
-                    match (screen.datadir().cloned(), screen.network()) {
-                        (Some(datadir), Some(network)) => {
-                            screen.checking = true;
-                            screen.error = None;
-                            duress_state_check_task(datadir, network)
-                        }
-                        _ => {
-                            // No way to reach the server (no network resolved) —
-                            // safe default is to stay locked.
-                            screen.error =
-                                Some("Duress mode is active. Try again later.".to_string());
-                            Task::none()
-                        }
-                    }
+            (State::DuressActive(_), Message::Duress(msg)) => {
+                match self.route_active_duress_message(msg) {
+                    std::ops::ControlFlow::Continue(task) => task,
+                    std::ops::ControlFlow::Break(task) => return task,
                 }
-                crate::app::view::duress::active_screen::Message::StateChecked(active) => {
-                    match active {
-                        Some(false) => {
-                            // Server reports duress cleared from another device.
-                            // Update local state and exit into the normal flow.
-                            if let Some(datadir) = screen.datadir().cloned() {
-                                let root = datadir.path();
-                                // A server clear must NEVER drop us into the normal
-                                // app with un-wiped Cube data. If the activation
-                                // wipe failed all its retries (or was interrupted),
-                                // the journal is still pending — finish it first,
-                                // and if it STILL can't complete, stay locked (the
-                                // launch-time reconcile retries on next start).
-                                // This is the same invariant `State::new` enforces.
-                                let journal =
-                                    crate::services::duress::journal::WipeJournal::new(root);
-                                if journal.is_pending() {
-                                    complete_pending_wipe(root, &journal);
-                                    if journal.is_pending() {
-                                        screen.checking = false;
-                                        screen.error = Some(
-                                            "Duress mode is active. Try again later.".to_string(),
-                                        );
-                                        return Task::none();
-                                    }
-                                }
-                                // Skip the write on a real read error rather than
-                                // clobbering valid state with a default; the next
-                                // poll re-clears once the file is readable again.
-                                match crate::services::duress::DuressLocalState::load(root) {
-                                    Ok(mut st) => {
-                                        st.active = false;
-                                        st.unlock_at = None;
-                                        if let Err(e) = st.save(root) {
-                                            error!("duress: failed to clear local state: {e}");
-                                        }
-                                    }
-                                    Err(e) => error!(
-                                        "duress: reading duress state failed; not overwriting: {e}"
-                                    ),
-                                }
-                                let network = screen.network();
-                                let (home, command) = Home::new(datadir, network);
-                                self.state = State::Home(home);
-                                return command.map(Message::Launch);
-                            }
-                            screen.checking = false;
-                            Task::none()
-                        }
-                        // Still active, or the check failed/was unreachable —
-                        // never reveal more than the cryptic message already does.
-                        _ => {
-                            screen.checking = false;
-                            screen.error =
-                                Some("Duress mode is active. Try again later.".to_string());
-                            Task::none()
-                        }
-                    }
-                }
-            },
+            }
             (
                 _,
                 Message::DuressActivated {
@@ -5006,104 +5136,10 @@ impl Tab {
                 unlock.relocked();
                 Task::none()
             }
-            (
-                _,
-                Message::WalletsLoadedAfterUnlock {
-                    cube_signer,
-                    spark_backend,
-                    config,
-                    datadir,
-                    network,
-                    cube,
-                    wallet_settings,
-                    internal_bitcoind,
-                    backup,
-                    connect_client,
-                    migration_error,
-                    enc_key_error,
-                },
-            ) => {
-                // Surfaced through the app's normal toast path once the Cube is
-                // up. Deliberately not fatal: the seed files were left exactly
-                // as they were, so the Cube opens — but a silent "your files
-                // were not upgraded" is what this whole PR exists to stop.
-                //
-                // Two of the three branches below land in `Loader` or `Login`,
-                // which cannot show a toast, so park it and let
-                // `flush_migration_warning` deliver it when `App` arrives.
-                // The duress-off notice stays on disk until `App` shows it.
-                self.pending_duress_notice = (migration_error.as_deref()
-                    == Some(DURESS_DISARM_NOTICE))
-                .then(|| datadir.path().to_path_buf());
-                self.pending_unlock_warnings =
-                    migration_error.into_iter().chain(enc_key_error).collect();
-                // A failure to resolve the signer here does not stop the Cube
-                // opening: fall back to the signer the unlock parked in the
-                // session, so P2P, Connect blinding and the Vault builder keep
-                // it.
-                let cube_signer = cube_signer_after_unlock(cube_signer, &cube);
-                if let Some(wallet_settings) = wallet_settings {
-                    if let Some(auth) = &wallet_settings.remote_backend_auth {
-                        let (mut home, command) = Home::new(datadir.clone(), Some(network));
-                        home.set_error(auth.retired_backend_notice());
-                        self.state = State::Home(home);
-                        command.map(Message::Launch)
-                    } else {
-                        let (loader, command) = if cube
-                            .bitcoin_import
-                            .as_ref()
-                            .is_some_and(|i| i.active_attachment().is_some())
-                        {
-                            Loader::new_imported(
-                                datadir.clone(),
-                                config.clone(),
-                                network,
-                                internal_bitcoind.clone(),
-                                backup.clone(),
-                                wallet_settings.clone(),
-                                cube,
-                                cube_signer,
-                                spark_backend,
-                                connect_client,
-                            )
-                        } else {
-                            Loader::new(
-                                datadir.clone(),
-                                config.clone(),
-                                network,
-                                internal_bitcoind.clone(),
-                                backup.clone(),
-                                Some(wallet_settings.clone()),
-                                cube,
-                                cube_signer,
-                                spark_backend,
-                            )
-                        };
-                        self.state = State::Loader(loader);
-                        command.map(Message::Load)
-                    }
-                } else {
-                    let (app, command) = match App::new_without_wallet(
-                        cube_signer,
-                        spark_backend,
-                        config,
-                        datadir,
-                        network,
-                        cube,
-                    ) {
-                        Ok(app) => app,
-                        Err(error) => {
-                            let error = match error {
-                                app::error::Error::Daemon(error) => loader::Error::Daemon(error),
-                                error => {
-                                    loader::Error::Unexpected(crate::user_error::report(&error))
-                                }
-                            };
-                            return Task::done(Message::Load(loader::Message::App(Err(error))));
-                        }
-                    };
-                    self.state = State::App(app);
-                    command.map(Message::Run)
+            (_, msg @ Message::WalletsLoadedAfterUnlock { .. }) => {
+                match self.finish_wallets_after_unlock(msg) {
+                    std::ops::ControlFlow::Continue(task) => task,
+                    std::ops::ControlFlow::Break(task) => return task,
                 }
             }
             _ => Task::none(),
