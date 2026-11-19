@@ -1677,6 +1677,61 @@ fn arm_duress_marker(
     })
 }
 
+async fn persist_duress_marker_names(
+    network_dirs: &[crate::dir::NetworkDirectory],
+    prior_settings: &[settings::Settings],
+    armed_cubes: &[ArmedMarker],
+) -> Result<(), String> {
+    for (i, network_dir) in network_dirs.iter().enumerate() {
+        let names: Vec<(String, String)> = armed_cubes
+            .iter()
+            .filter(|m| prior_settings[i].cubes.iter().any(|c| c.id == m.cube_id))
+            .map(|m| (m.cube_id.clone(), m.file_name.clone()))
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let written = crate::app::settings::update_settings_file(network_dir, |mut s| {
+            for cube in s.cubes.iter_mut() {
+                if let Some((_, name)) = names.iter().find(|(id, _)| *id == cube.id) {
+                    cube.duress_slot_file = Some(name.clone());
+                }
+            }
+            Some(s)
+        })
+        .await;
+        written.map_err(|e| format!("Couldn't save the duress settings for your Cubes ({e})."))?;
+    }
+    Ok(())
+}
+
+fn persist_duress_local_state(
+    root: &std::path::Path,
+    duress_code: &str,
+    account_id: Option<String>,
+) -> Result<(), String> {
+    // load() already maps a missing file to Ok(default); a real parse/IO
+    // error must NOT be papered over with a default that save() then writes
+    // back, clobbering valid state. Propagate it (rolling back step 1).
+    let mut st = crate::services::duress::DuressLocalState::load(root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+    st.enrolled = true;
+    // Enrollment is now fully recorded, so the orphan breadcrumb has done
+    // its job. Cleared in the same write that sets `enrolled`, so the two
+    // can never disagree.
+    st.arming = false;
+    // A pending "migration turned duress off" notice is false from here
+    // on: the user has just turned it back on.
+    st.migration_disarm_notice = false;
+    st.account_id = account_id;
+    if !duress_code.is_empty() {
+        let key = crate::services::duress::cipher::DeviceKey::load_or_create(root)
+            .map_err(|e| e.to_string())?;
+        st.duress_code = Some(key.encrypt(duress_code)?);
+    }
+    st.save(root).map_err(|e| e.to_string())
+}
+
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     duress_pin: zeroize::Zeroizing<String>,
@@ -1786,33 +1841,12 @@ pub(crate) async fn persist_duress_enrollment(
     //     duress as unarmed while the file sat there. Persist before declaring
     //     success, and roll the markers back if it fails, exactly as step 2
     //     does.
-    for (i, network_dir) in network_dirs.iter().enumerate() {
-        let names: Vec<(String, String)> = armed_cubes
-            .iter()
-            .filter(|m| prior_settings[i].cubes.iter().any(|c| c.id == m.cube_id))
-            .map(|m| (m.cube_id.clone(), m.file_name.clone()))
-            .collect();
-        if names.is_empty() {
-            continue;
-        }
-        let written = crate::app::settings::update_settings_file(network_dir, |mut s| {
-            for cube in s.cubes.iter_mut() {
-                if let Some((_, name)) = names.iter().find(|(id, _)| *id == cube.id) {
-                    cube.duress_slot_file = Some(name.clone());
-                }
-            }
-            Some(s)
-        })
-        .await;
-        if let Err(e) = written {
-            let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
-            let still_armed = rollback_duress_markers(&armed_cubes);
-            return Err(describe_rollback(
-                format!("Couldn't save the duress settings for your Cubes ({e})."),
-                still_armed,
-                lost,
-            ));
-        }
+    if let Err(error) =
+        persist_duress_marker_names(&network_dirs, &prior_settings, &armed_cubes).await
+    {
+        let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
+        let still_armed = rollback_duress_markers(&armed_cubes);
+        return Err(describe_rollback(error, still_armed, lost));
     }
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
@@ -1825,29 +1859,7 @@ pub(crate) async fn persist_duress_enrollment(
     //    encryption are fail-loud. If this fails AFTER step 1 armed the PIN
     //    hashes, roll those back too — otherwise Cubes stay armed (and would
     //    wipe on the duress PIN) while the matching enrollment state is missing.
-    let local: Result<(), String> = (|| {
-        // load() already maps a missing file to Ok(default); a real parse/IO
-        // error must NOT be papered over with a default that save() then writes
-        // back, clobbering valid state. Propagate it (rolling back step 1).
-        let mut st = crate::services::duress::DuressLocalState::load(&root)
-            .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
-        st.enrolled = true;
-        // Enrollment is now fully recorded, so the orphan breadcrumb has done
-        // its job. Cleared in the same write that sets `enrolled`, so the two
-        // can never disagree.
-        st.arming = false;
-        // A pending "migration turned duress off" notice is false from here
-        // on: the user has just turned it back on.
-        st.migration_disarm_notice = false;
-        st.account_id = account_id;
-        if !duress_code.is_empty() {
-            let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
-                .map_err(|e| e.to_string())?;
-            st.duress_code = Some(key.encrypt(&duress_code)?);
-        }
-        st.save(&root).map_err(|e| e.to_string())
-    })();
-    if let Err(e) = local {
+    if let Err(e) = persist_duress_local_state(&root, &duress_code, account_id) {
         let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
         let still_armed = rollback_duress_markers(&armed_cubes);
         return Err(describe_rollback(e, still_armed, lost));
