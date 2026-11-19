@@ -26,6 +26,15 @@ use iced::{Subscription, Task};
 
 static PREPARATION_ID: AtomicU64 = AtomicU64::new(1);
 static FEE_ESTIMATE_ID: AtomicU64 = AtomicU64::new(1);
+/// Redraft generations are drawn from one process-wide counter, not one per
+/// `DefineSpend`: task results go to whichever panel is on screen, so a draft
+/// started in one spend form (Send, Recovery, or a Send panel since replaced)
+/// must never carry a generation another form could accept.
+static REDRAFT_SEQ: AtomicU64 = AtomicU64::new(1);
+
+fn next_redraft_seq() -> u64 {
+    REDRAFT_SEQ.fetch_add(1, AtomicOrdering::Relaxed)
+}
 const TAMPER_WARNING: &str = "This payment request’s address does not match its verification data. Do not send. Return and replace the payment request.";
 const AMOUNT_MISMATCH_WARNING: &str = "The prepared amount does not match the Bitcoin payment request. Return and resolve the amount before sending.";
 
@@ -246,9 +255,10 @@ pub struct DefineSpend {
     unconfirmed_balance: Amount,
     sync_status: SyncStatus,
     bitcoin_unit: BitcoinDisplayUnit,
-    /// Monotonic generation counter for debounced/async redrafts. Bumped
-    /// every time a redraft is scheduled so that stale debounce ticks and
-    /// in-flight coin-selection results can be discarded.
+    /// Generation token for debounced/async redrafts, drawn from the
+    /// process-wide `REDRAFT_SEQ`. Replaced every time a redraft is scheduled
+    /// so that stale debounce ticks and in-flight coin-selection results —
+    /// this form's or another spend form's — are discarded.
     redraft_seq: u64,
     /// A redraft is scheduled or running and its result has not landed yet:
     /// the footer says it is calculating instead of asking for fields the
@@ -315,7 +325,7 @@ impl DefineSpend {
             unconfirmed_balance,
             sync_status,
             bitcoin_unit,
-            redraft_seq: 0,
+            redraft_seq: next_redraft_seq(),
             draft_pending: false,
             preparation_id: PREPARATION_ID.fetch_add(1, AtomicOrdering::Relaxed),
             lookup_ticket: None,
@@ -352,10 +362,9 @@ impl DefineSpend {
                 self.batch_label.value = label;
             }
             view::CreateSpendMessage::Clear => {
-                // Keep the redraft generation counting up, so a draft or
+                // `Self::new` draws a fresh redraft generation, so a draft or
                 // debounce tick still in flight from before Clear can never
                 // match a generation of the cleared form.
-                let redraft_seq = self.redraft_seq.wrapping_add(1);
                 *self = Self::new(
                     self.network,
                     self.wallet.clone(),
@@ -372,7 +381,6 @@ impl DefineSpend {
                     self.sync_status.clone(),
                     self.bitcoin_unit,
                 );
-                self.redraft_seq = redraft_seq;
                 // A cleared form starts on Normal, as a new one does.
                 return Task::done(Message::View(view::Message::CreateSpend(
                     CreateSpendMessage::FetchFeeEstimate(NORMAL_FEE_TARGET),
@@ -781,7 +789,7 @@ impl DefineSpend {
         self.loading_fee_estimate = Some(block_target);
         self.fee_estimate_request = FEE_ESTIMATE_ID.fetch_add(1, AtomicOrdering::Relaxed);
         self.amount_left_to_select = None;
-        self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.redraft_seq = next_redraft_seq();
         self.draft_pending = false;
         let request = self.fee_estimate_request;
         Task::perform(
@@ -923,7 +931,7 @@ impl DefineSpend {
     /// that token. If the user keeps typing, each keystroke bumps the token so
     /// only the final, settled edit actually runs coin selection.
     fn schedule_redraft(&mut self) -> Task<Message> {
-        self.redraft_seq = self.redraft_seq.wrapping_add(1);
+        self.redraft_seq = next_redraft_seq();
         self.draft_pending = true;
         let seq = self.redraft_seq;
         Task::perform(
@@ -1470,7 +1478,7 @@ impl Step for DefineSpend {
                     // if all forms are valid (checked in the redraft method). This
                     // is not a keystroke path, so run it immediately (still off the
                     // UI thread) rather than debouncing.
-                    self.redraft_seq = self.redraft_seq.wrapping_add(1);
+                    self.redraft_seq = next_redraft_seq();
                     let seq = self.redraft_seq;
                     let task = self.run_redraft(daemon, seq);
                     self.check_valid();
@@ -3381,6 +3389,78 @@ mod tests {
         };
         let task = state.update(daemon, &Cache::default(), Message::RedraftDebounce(*seq));
         assert_eq!(task.units(), 0, "a pre-Clear debounce tick does nothing");
+    }
+
+    /// Two spend forms (Send and Recovery, or a Send panel and the one that
+    /// replaced it) never share a redraft generation: results are delivered
+    /// to whichever panel is on screen, so a per-form counter let one form's
+    /// draft be accepted by another.
+    #[test]
+    fn spend_forms_never_share_a_redraft_generation() {
+        let mut send = branta_form();
+        let mut recovery = branta_form();
+        let mut seen = std::collections::HashSet::new();
+        assert!(seen.insert(send.redraft_seq));
+        assert!(seen.insert(recovery.redraft_seq));
+        for _ in 0..8 {
+            drop(send.schedule_redraft());
+            assert!(seen.insert(send.redraft_seq), "send reused a generation");
+            drop(recovery.schedule_redraft());
+            assert!(
+                seen.insert(recovery.redraft_seq),
+                "recovery reused a generation"
+            );
+        }
+    }
+
+    /// A draft started in one spend form must not land on another form that
+    /// is on screen when it completes, even on that form's first draft.
+    #[tokio::test]
+    async fn a_draft_from_another_spend_form_is_ignored() {
+        use serde_json::json;
+        let mut old_send = branta_form();
+        old_send.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = old_send.wallet.preview_change_address();
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        drop(old_send.schedule_redraft());
+        let stale = land_redraft(&mut old_send, daemon.clone()).await;
+
+        // A fresh form (the panel that replaced Send, or Recovery) schedules
+        // its own first draft. With per-form counters both drafts were seq 1.
+        let mut other = branta_form();
+        other.coins.push((coin(2, 80_000, Some(90)), false));
+        let selection = |state: &DefineSpend| -> Vec<bool> {
+            state.coins.iter().map(|(_, selected)| *selected).collect()
+        };
+        let coins_before = selection(&other);
+        drop(other.schedule_redraft());
+        drop(other.update(
+            daemon.clone(),
+            &Cache::default(),
+            redraft_message_clone(&stale),
+        ));
+        assert_eq!(other.fee_amount, None, "no fee from the other form's draft");
+        assert_eq!(other.amount_left_to_select, None);
+        assert!(other.draft_pending, "its own draft is still pending");
+        assert_eq!(
+            selection(&other),
+            coins_before,
+            "the other form's coins are not applied"
+        );
+        // Nor does the other form's debounce tick redraft this one.
+        let Message::RedraftResult { seq, .. } = &stale else {
+            unreachable!()
+        };
+        let task = other.update(daemon, &Cache::default(), Message::RedraftDebounce(*seq));
+        assert_eq!(task.units(), 0, "another form's debounce tick does nothing");
     }
 
     /// Automatic hands the choice back: Prepare waits for the automatic

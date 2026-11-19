@@ -757,6 +757,23 @@ impl BackendRequest {
         if config.main_descriptor != *descriptor {
             return Err(Refusal::IdentityChanged);
         }
+        self.verify_destination_descriptor(descriptor, &latest)?;
+        Wallet::new(descriptor.clone())
+            .load_from_settings(latest_wallet)
+            .map_err(|_| Refusal::IdentityChanged)?;
+        Ok(BoundBackend {
+            wallet_id: self.wallet_id,
+            descriptor: descriptor.clone(),
+            daemon,
+            _lease: lease,
+        })
+    }
+
+    fn verify_destination_descriptor(
+        &self,
+        descriptor: &coincube_core::wallet_descriptor::WalletDescriptor,
+        latest: &CubeSettings,
+    ) -> Result<(), Refusal> {
         match descriptor {
             // A Vault is identified by its recorded descriptor fingerprint.
             coincube_core::wallet_descriptor::WalletDescriptor::Vault(vault) => {
@@ -781,15 +798,7 @@ impl BackendRequest {
                 }
             }
         }
-        Wallet::new(descriptor.clone())
-            .load_from_settings(latest_wallet)
-            .map_err(|_| Refusal::IdentityChanged)?;
-        Ok(BoundBackend {
-            wallet_id: self.wallet_id,
-            descriptor: descriptor.clone(),
-            daemon,
-            _lease: lease,
-        })
+        Ok(())
     }
 }
 

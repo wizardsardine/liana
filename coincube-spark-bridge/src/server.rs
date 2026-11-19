@@ -64,12 +64,32 @@ const PREPARE_TTL: Duration = Duration::from_secs(300);
 /// How often the sweep task wakes up to evict expired prepares.
 const PREPARE_SWEEP_INTERVAL: Duration = Duration::from_secs(60);
 
+async fn write_outbound_frames(mut rx: tokio::sync::mpsc::UnboundedReceiver<Frame>) {
+    let mut stdout = tokio::io::stdout();
+    while let Some(frame) = rx.recv().await {
+        match serde_json::to_string(&frame) {
+            Ok(line) => {
+                if stdout.write_all(line.as_bytes()).await.is_err()
+                    || stdout.write_all(b"\n").await.is_err()
+                    || stdout.flush().await.is_err()
+                {
+                    // Parent hung up; nothing left to do.
+                    break;
+                }
+            }
+            Err(e) => {
+                tracing::error!("failed to serialize outbound frame: {e}");
+            }
+        }
+    }
+}
+
 /// Run the stdin/stdout server until EOF on stdin or a `shutdown` RPC.
 pub async fn run(receive_only: bool) -> anyhow::Result<()> {
     // Single writer task: serializes all stdout writes so responses and
     // events never interleave mid-line. We talk to it over an unbounded
     // channel so request handlers never block on IO.
-    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Frame>();
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<Frame>();
     // `ServerState` holds a clone of the same sender so the event
     // listener registered in `handle_init` can push `Frame::Event`s
     // onto the same stdout stream the response handlers use.
@@ -96,25 +116,7 @@ pub async fn run(receive_only: bool) -> anyhow::Result<()> {
             sweep_expired_prepares(&s).await;
         }
     });
-    let writer_task = tokio::spawn(async move {
-        let mut stdout = tokio::io::stdout();
-        while let Some(frame) = rx.recv().await {
-            match serde_json::to_string(&frame) {
-                Ok(line) => {
-                    if stdout.write_all(line.as_bytes()).await.is_err()
-                        || stdout.write_all(b"\n").await.is_err()
-                        || stdout.flush().await.is_err()
-                    {
-                        // Parent hung up; nothing left to do.
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("failed to serialize outbound frame: {e}");
-                }
-            }
-        }
-    });
+    let writer_task = tokio::spawn(write_outbound_frames(rx));
 
     let stdin = tokio::io::stdin();
     let mut reader = BufReader::new(stdin).lines();
@@ -3935,72 +3937,76 @@ mod usdb_fallback_tests {
     async fn pay_from_decides_full_or_shortfall_conversion() {
         for bitcoin_covers in [true, false] {
             for usdb_covers in [true, false] {
-                let fake = FundedPrepare {
-                    bitcoin_covers,
-                    usdb_covers,
-                    asked: Default::default(),
-                };
-                let shortfall_checked = Cell::new(false);
-                let result = prepare_funded(
-                    WalletAsset::Usdb,
-                    Some(20_000),
-                    |c| fake.call(c),
-                    |_| {
-                        shortfall_checked.set(true);
-                        async { Ok(Some(usdb())) }
-                    },
-                    |p| p.1,
-                    |p| p.0,
-                )
-                .await;
-                assert_eq!(
-                    *fake.asked.borrow(),
-                    vec![Some(usdb_to_bitcoin_conversion())],
-                    "from USDB: one prepare, with the full conversion \
-                     (bitcoin covers: {bitcoin_covers}, USDB covers: {usdb_covers})"
-                );
-                assert!(!shortfall_checked.get());
-                if usdb_covers {
-                    assert_eq!(result.unwrap(), (true, 20_000));
-                } else {
-                    assert!(matches!(
-                        result,
-                        Err(PrepareError::PayFromUsdb(SdkError::InsufficientFunds {
-                            token_identifier: Some(_)
-                        }))
-                    ));
-                }
-
-                let fake = FundedPrepare {
-                    bitcoin_covers,
-                    usdb_covers,
-                    asked: Default::default(),
-                };
-                let result = prepare_funded(
-                    WalletAsset::Bitcoin,
-                    Some(20_000),
-                    |c| fake.call(c),
-                    |needed| async move {
-                        let balance = if bitcoin_covers { 50_000 } else { 12_000 };
-                        Ok(conversion_for_shortfall(balance, 5_000_000, needed))
-                    },
-                    |p| p.1,
-                    |p| p.0,
-                )
-                .await;
-                let asked = fake.asked.borrow().clone();
-                if bitcoin_covers {
-                    assert_eq!(asked, vec![None], "from bitcoin, covered: no conversion");
-                    assert_eq!(result.unwrap(), (false, 20_000));
-                } else {
-                    assert_eq!(
-                        asked,
-                        vec![None, Some(usdb_to_bitcoin_conversion())],
-                        "from bitcoin, short: the shortfall conversion"
-                    );
-                    assert_eq!(result.is_ok(), usdb_covers);
-                }
+                assert_pay_from_conversion_case(bitcoin_covers, usdb_covers).await;
             }
+        }
+    }
+
+    async fn assert_pay_from_conversion_case(bitcoin_covers: bool, usdb_covers: bool) {
+        let fake = FundedPrepare {
+            bitcoin_covers,
+            usdb_covers,
+            asked: Default::default(),
+        };
+        let shortfall_checked = Cell::new(false);
+        let result = prepare_funded(
+            WalletAsset::Usdb,
+            Some(20_000),
+            |c| fake.call(c),
+            |_| {
+                shortfall_checked.set(true);
+                async { Ok(Some(usdb())) }
+            },
+            |p| p.1,
+            |p| p.0,
+        )
+        .await;
+        assert_eq!(
+            *fake.asked.borrow(),
+            vec![Some(usdb_to_bitcoin_conversion())],
+            "from USDB: one prepare, with the full conversion \
+             (bitcoin covers: {bitcoin_covers}, USDB covers: {usdb_covers})"
+        );
+        assert!(!shortfall_checked.get());
+        if usdb_covers {
+            assert_eq!(result.unwrap(), (true, 20_000));
+        } else {
+            assert!(matches!(
+                result,
+                Err(PrepareError::PayFromUsdb(SdkError::InsufficientFunds {
+                    token_identifier: Some(_)
+                }))
+            ));
+        }
+
+        let fake = FundedPrepare {
+            bitcoin_covers,
+            usdb_covers,
+            asked: Default::default(),
+        };
+        let result = prepare_funded(
+            WalletAsset::Bitcoin,
+            Some(20_000),
+            |c| fake.call(c),
+            |needed| async move {
+                let balance = if bitcoin_covers { 50_000 } else { 12_000 };
+                Ok(conversion_for_shortfall(balance, 5_000_000, needed))
+            },
+            |p| p.1,
+            |p| p.0,
+        )
+        .await;
+        let asked = fake.asked.borrow().clone();
+        if bitcoin_covers {
+            assert_eq!(asked, vec![None], "from bitcoin, covered: no conversion");
+            assert_eq!(result.unwrap(), (false, 20_000));
+        } else {
+            assert_eq!(
+                asked,
+                vec![None, Some(usdb_to_bitcoin_conversion())],
+                "from bitcoin, short: the shortfall conversion"
+            );
+            assert_eq!(result.is_ok(), usdb_covers);
         }
     }
 

@@ -1894,6 +1894,52 @@ fn spawn_writer_task(
     });
 }
 
+async fn route_reader_frame(
+    frame: Frame,
+    pending: &PendingMap,
+    event_tx: &broadcast::Sender<Event>,
+    late_outcomes: &LateOutcomes,
+    awaiting_late: &AwaitingLate,
+) {
+    match frame {
+        Frame::Response(resp) => {
+            let waiter = pending.lock().await.remove(&resp.id);
+            let unresolved = awaiting_late.lock().await.contains(&resp.id);
+            match (route_response(waiter.is_some(), unresolved), waiter) {
+                (ResponseRoute::Deliver, Some(sender)) => {
+                    let _ = sender.send(resp);
+                }
+                (ResponseRoute::HoldForReconciliation, _) => {
+                    // The late answer to a send whose caller
+                    // stopped waiting. This is the
+                    // authoritative word on whether that
+                    // payment happened, so it is kept for
+                    // reconciliation instead of dropped.
+                    warn!(
+                        "Spark bridge answered send id {} after its deadline \
+                         — holding the outcome for reconciliation",
+                        resp.id
+                    );
+                    late_outcomes.lock().await.insert(resp.id, resp);
+                }
+                (_, _) => {
+                    warn!(
+                        "Spark bridge response for unknown id {} — dropping",
+                        resp.id
+                    );
+                }
+            }
+        }
+        Frame::Event(event) => {
+            debug!("Spark bridge event: {:?}", event);
+            let _ = event_tx.send(event);
+        }
+        Frame::Request(_) => {
+            warn!("Spark bridge sent a Request frame — ignoring");
+        }
+    }
+}
+
 fn spawn_reader_task(
     stdout: tokio::process::ChildStdout,
     pending: PendingMap,
@@ -1920,43 +1966,8 @@ fn spawn_reader_task(
                             break;
                         }
                     };
-                    match frame {
-                        Frame::Response(resp) => {
-                            let waiter = pending.lock().await.remove(&resp.id);
-                            let unresolved = awaiting_late.lock().await.contains(&resp.id);
-                            match (route_response(waiter.is_some(), unresolved), waiter) {
-                                (ResponseRoute::Deliver, Some(sender)) => {
-                                    let _ = sender.send(resp);
-                                }
-                                (ResponseRoute::HoldForReconciliation, _) => {
-                                    // The late answer to a send whose caller
-                                    // stopped waiting. This is the
-                                    // authoritative word on whether that
-                                    // payment happened, so it is kept for
-                                    // reconciliation instead of dropped.
-                                    warn!(
-                                        "Spark bridge answered send id {} after its deadline \
-                                         — holding the outcome for reconciliation",
-                                        resp.id
-                                    );
-                                    late_outcomes.lock().await.insert(resp.id, resp);
-                                }
-                                (_, _) => {
-                                    warn!(
-                                        "Spark bridge response for unknown id {} — dropping",
-                                        resp.id
-                                    );
-                                }
-                            }
-                        }
-                        Frame::Event(event) => {
-                            debug!("Spark bridge event: {:?}", event);
-                            let _ = event_tx.send(event);
-                        }
-                        Frame::Request(_) => {
-                            warn!("Spark bridge sent a Request frame — ignoring");
-                        }
-                    }
+                    route_reader_frame(frame, &pending, &event_tx, &late_outcomes, &awaiting_late)
+                        .await;
                 }
                 Ok(None) => {
                     debug!("Spark bridge stdout closed");

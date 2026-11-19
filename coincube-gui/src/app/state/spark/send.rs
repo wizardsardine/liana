@@ -274,20 +274,10 @@ fn history_match(
 ) -> HistoryMatch {
     let floor = pending.dispatched_at - RECONCILE_BACKDATE_SLACK_SECS;
     let mut in_progress = false;
-    for p in payments.iter().filter(|p| {
-        is_outgoing(&p.direction)
-            && p.timestamp as i64 >= floor
-            && match pending.token_amount {
-                // A token payment's sats figure is zero: match its token amount.
-                Some(token_amount) => p.token_amount == Some(token_amount),
-                None => p.amount_sat.unsigned_abs() == pending.amount_sat,
-            }
-            // Another invoice's payment is not this one.
-            && match (pending.invoice.as_deref(), p.details.invoice.as_deref()) {
-                (Some(ours), Some(theirs)) => same_invoice(ours, theirs),
-                _ => true,
-            }
-    }) {
+    for p in payments
+        .iter()
+        .filter(|p| matches_pending_send(p, pending, floor))
+    {
         if p.status.eq_ignore_ascii_case("completed") {
             // Identity unconfirmed: the row names no invoice to compare.
             if pending.invoice.is_some() && p.details.invoice.is_none() {
@@ -305,6 +295,25 @@ fn history_match(
     } else {
         HistoryMatch::None
     }
+}
+
+fn matches_pending_send(
+    p: &coincube_spark_protocol::PaymentSummary,
+    pending: &PendingSend,
+    floor: i64,
+) -> bool {
+    is_outgoing(&p.direction)
+        && p.timestamp as i64 >= floor
+        && match pending.token_amount {
+            // A token payment's sats figure is zero: match its token amount.
+            Some(token_amount) => p.token_amount == Some(token_amount),
+            None => p.amount_sat.unsigned_abs() == pending.amount_sat,
+        }
+        // Another invoice's payment is not this one.
+        && match (pending.invoice.as_deref(), p.details.invoice.as_deref()) {
+            (Some(ours), Some(theirs)) => same_invoice(ours, theirs),
+            _ => true,
+        }
 }
 
 /// What the history says about the payment the bridge accepted as
@@ -920,6 +929,711 @@ impl SparkSend {
         self.quote_cross_chain(cache.bitcoin_unit)
     }
 
+    fn destination_input_changed(&mut self, cache: &Cache, value: String) -> Task<Message> {
+        if value.trim() != self.destination_input.trim() {
+            self.tampered_request = None;
+        }
+        self.destination_input = value;
+        // A BOLT11 invoice that names its own amount fills the amount
+        // field in, so the user sees what the invoice asks for rather
+        // than an empty box. Clearing on the way out matters as much as
+        // filling in: swapping one invoice for another must not leave
+        // the previous invoice's amount sitting there.
+        // Not under US Dollar: the field holds dollars there, and a
+        // Lightning invoice is refused at prepare anyway.
+        let carried = bolt11_amount_sat(&self.destination_input)
+            .filter(|_| self.receive_target != SparkSendTarget::SparkUsd);
+        if carried.is_some() || self.invoice_amount_sat.is_some() {
+            self.amount_input = carried
+                .map(|sats| format_amount_for_input(sats, cache.bitcoin_unit))
+                .unwrap_or_default();
+        }
+        self.invoice_amount_sat = carried;
+        // Editing the destination invalidates any in-flight
+        // preview — drop back to Idle so the user can re-prepare.
+        self.phase = SparkSendPhase::Idle;
+        self.abandon_payment_intent();
+        // The routes were resolved for the *old* address, so they mean
+        // nothing now. (A re-Prepare rebuilds them, but leaving a stale
+        // destination lying around is a trap.)
+        self.cross_chain = None;
+        self.schedule_network_detection(cache.network)
+    }
+
+    fn detect_destination_network(&mut self, seq: u64) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+
+        if seq != self.detect_seq {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            return Task::none();
+        };
+        let input = self.destination_input.trim().to_string();
+        Task::perform(
+            async move {
+                backend
+                    .get_cross_chain_routes(input)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::DestinationNetworkDetected(seq, result),
+                ))
+            },
+        )
+    }
+
+    fn destination_network_detected(
+        &mut self,
+        seq: u64,
+        result: Result<CrossChainRoutesOk, String>,
+    ) -> Task<Message> {
+        if seq != self.detect_seq {
+            return Task::none();
+        }
+        // A failed lookup changes nothing: whatever is already known
+        // for this address stands, and Prepare asks again and reports
+        // the error there, where it can be retried.
+        let input = self.destination_input.trim().to_string();
+        if let (Ok(found), Some(asset)) = (result, self.receive_target.stablecoin()) {
+            self.adopt_detection(cross_chain::DetectedDestination::new(input, found, asset));
+        }
+        Task::none()
+    }
+
+    fn select_pay_from(&mut self, asset: WalletAsset) -> Task<Message> {
+        if asset == WalletAsset::Usdb && self.usdb_selectable().is_err() {
+            return Task::none();
+        }
+        if self
+            .receive_target
+            .fixed_pay_from()
+            .is_some_and(|fixed| fixed != asset)
+        {
+            return Task::none();
+        }
+        self.pay_from_picker_open = false;
+        if asset != self.pay_from {
+            self.pay_from = asset;
+            // A preview from the other balance no longer applies.
+            self.phase = SparkSendPhase::Idle;
+            self.abandon_payment_intent();
+        }
+        Task::none()
+    }
+
+    fn start_from(&mut self, asset: WalletAsset) -> Task<Message> {
+        // A stablecoin send is BTC-funded cross-chain and a US Dollar
+        // send moves US Dollar: no choice.
+        if self.receive_target.fixed_pay_from().is_some() || asset == self.pay_from {
+            return Task::none();
+        }
+        self.pay_from_picker_open = false;
+        self.pay_from = asset;
+        self.phase = SparkSendPhase::Idle;
+        self.abandon_payment_intent();
+        Task::none()
+    }
+
+    fn set_receive_target(&mut self, target: SparkSendTarget) -> Task<Message> {
+        if self.receive_target == target {
+            self.receive_picker_open = false;
+            return Task::none();
+        }
+        // Switching what the recipient gets is a different payment —
+        // clear the destination/amount and any in-flight prepare.
+        self.receive_picker_open = false;
+        let previous = std::mem::replace(&mut self.receive_target, target);
+        match target.fixed_pay_from() {
+            Some(asset) => self.pay_from = asset,
+            // Leaving US Dollar over Spark goes back to the default
+            // rather than keep a balance the user didn't pick.
+            None if previous == SparkSendTarget::SparkUsd => self.pay_from = WalletAsset::Bitcoin,
+            None => {}
+        }
+        self.tampered_request = None;
+        self.phase = SparkSendPhase::Idle;
+        self.destination_input.clear();
+        self.amount_input.clear();
+        self.invoice_amount_sat = None;
+        self.abandon_payment_intent();
+        self.cross_chain = None;
+        self.detect_seq = self.detect_seq.wrapping_add(1);
+        self.detected = None;
+        Task::none()
+    }
+
+    fn choose_network(&mut self, chain: String) -> Task<Message> {
+        let changed = self.detected.as_ref().is_some_and(|detected| {
+            detected.chosen.as_deref() != Some(chain.as_str())
+                && detected.choices().contains(&chain)
+        });
+        if let Some(detected) = &mut self.detected {
+            detected.choose(&chain);
+        }
+        // A quote already on its way is for the network chosen
+        // before: drop it rather than let Review show one network
+        // and send on another.
+        if changed && matches!(self.phase, SparkSendPhase::Preparing) {
+            self.preparation_generation = next_preparation_generation();
+            self.phase = SparkSendPhase::Idle;
+            self.cross_chain = None;
+        }
+        Task::none()
+    }
+
+    fn late_answer_checked(
+        &mut self,
+        cache: &Cache,
+        outcome: ReconcileOutcome,
+        answer: SendPaymentOk,
+    ) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+
+        if !matches!(self.phase, SparkSendPhase::OutcomeUnknown { .. }) {
+            return Task::none();
+        }
+        // The bridge did answer after all, accepting the payment: keep
+        // its answer, which turns this into an accepted send. It is
+        // then checked by its id, re-checked by itself while in
+        // flight, and shown as sent with its real amount and fee.
+        self.accepted_send = Some(answer);
+        self.pending_rechecks = 0;
+        self.update(
+            None,
+            cache,
+            Message::View(crate::app::view::Message::SparkSend(
+                SparkSendMessage::ReconcileFinished(outcome),
+            )),
+        )
+    }
+
+    fn balance_loaded(
+        &mut self,
+        cache: &Cache,
+        balance: Option<(u64, Option<coincube_spark_protocol::UsdbBalanceSnapshot>)>,
+    ) -> Task<Message> {
+        if let Some((btc_sats, stable)) = balance {
+            self.balance_sats = super::unified_spark_balance_sats(btc_sats, stable.as_ref(), cache);
+            self.btc_balance_sats = btc_sats;
+            self.usdb_balance = stable.clone();
+            self.usdb_holding = stable.as_ref().filter(|sb| sb.balance > 0).map(|sb| {
+                format!(
+                    "{} {}",
+                    crate::app::breez_spark::assets::format_token_display_u128(
+                        sb.balance,
+                        sb.decimals
+                    ),
+                    sb.ticker
+                )
+            });
+        }
+        Task::none()
+    }
+
+    fn select_transaction(&mut self, idx: usize) -> Task<Message> {
+        if let Some(payment) = self.recent_transactions.get(idx).cloned() {
+            Task::batch(vec![
+                redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+                Task::done(Message::View(crate::app::view::Message::SparkTransactions(
+                    crate::app::view::SparkTransactionsMessage::Preselect(payment),
+                ))),
+            ])
+        } else {
+            Task::none()
+        }
+    }
+
+    fn use_cross_chain_minimum(&mut self, cache: &Cache) -> Task<Message> {
+        if let Some(cross_chain::AmountIssue::BelowMinimum { min_sats }) =
+            self.cross_chain_amount_issue(cache)
+        {
+            self.amount_input = format_amount_for_input(min_sats, cache.bitcoin_unit);
+            self.phase = SparkSendPhase::Idle;
+            self.abandon_payment_intent();
+        }
+        Task::none()
+    }
+
+    fn prepare_requested(&mut self, cache: &Cache) -> Task<Message> {
+        if self.recipient_mismatch() {
+            return Task::none();
+        }
+        let Some(backend) = self.backend.clone() else {
+            self.phase = SparkSendPhase::Error("Spark backend is not available.".to_string());
+            return Task::none();
+        };
+        if self.destination_input.trim().is_empty() {
+            self.phase = SparkSendPhase::Error("Enter a destination first.".to_string());
+            return Task::none();
+        }
+        // An amount read *out of* the invoice must not be handed back to
+        // the SDK: `prepare_send` treats an explicit amount as an
+        // override for an amountless invoice, and passing one alongside
+        // an invoice that already commits to an amount is rejected. The
+        // field is display-only in that case.
+        //
+        // A US Dollar send takes its amount in US Dollars instead.
+        let usd_send = self.receive_target == SparkSendTarget::SparkUsd;
+        let usd_amount = if !usd_send || self.amount_input.trim().is_empty() {
+            None
+        } else {
+            match self.usd_amount() {
+                Some(amount) => Some(amount),
+                None => {
+                    self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
+                        "Enter the amount in US Dollars, with at most {} decimal places.",
+                        "Ingresa el importe en dólares estadounidenses, con un máximo de \
+                         {} decimales.",
+                        self.usdb_decimals(),
+                    ));
+                    return Task::none();
+                }
+            }
+        };
+        let amount_sat =
+            if usd_send || self.invoice_amount_sat.is_some() || self.amount_input.trim().is_empty()
+            {
+                None
+            } else {
+                match parse_amount_to_sats(&self.amount_input, cache.bitcoin_unit) {
+                    Ok(n) => Some(n),
+                    Err(e) => {
+                        self.phase = SparkSendPhase::Error(e);
+                        return Task::none();
+                    }
+                }
+            };
+        let input = self.destination_input.trim().to_string();
+        let generation = self.begin_preparation();
+
+        // The THEY RECEIVE selection decides the path. A stablecoin
+        // target is a BTC-funded cross-chain send: ask the bridge for
+        // routes, then confirm a chain + quote before anything moves.
+        // Providers/chains have no test deployment, so it's mainnet-only.
+        if self.receive_target.is_stablecoin() {
+            return self.prepare_cross_chain(cache, backend, input, generation);
+        }
+
+        self.prepare_bitcoin_rail(cache, backend, input, generation, amount_sat, usd_amount)
+    }
+
+    fn prepare_cross_chain(
+        &mut self,
+        cache: &Cache,
+        backend: Arc<SparkBackend>,
+        input: String,
+        generation: u64,
+    ) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+
+        if !cross_chain::supported_on(cache.network) {
+            self.phase = SparkSendPhase::Error(
+                "Stablecoin sends aren't available on this network.".to_string(),
+            );
+            return Task::none();
+        }
+        // Details already looked the address up: quote the network
+        // it settled on. Otherwise ask now (Prepare pressed before
+        // the lookup came back).
+        if self
+            .current_detection()
+            .is_some_and(|d| !d.network.is_problem())
+        {
+            return self.quote_detected_route(cache);
+        }
+        // Prepare's own lookup supersedes a debounced one still
+        // in flight: its late answer must not land on top.
+        self.detect_seq = self.detect_seq.wrapping_add(1);
+        Task::perform(
+            async move {
+                backend
+                    .get_cross_chain_routes(input)
+                    .await
+                    .map_err(|e| format!("Couldn't check this destination: {e}"))
+            },
+            move |result| {
+                Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::CrossChainRoutesLoaded(generation, result),
+                ))
+            },
+        )
+    }
+
+    fn prepare_bitcoin_rail(
+        &mut self,
+        cache: &Cache,
+        backend: Arc<SparkBackend>,
+        input: String,
+        generation: u64,
+        amount_sat: Option<u64>,
+        usd_amount: Option<u128>,
+    ) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+
+        // A bitcoin rail: classify the destination via `parse_input` and
+        // dispatch to the right prepare RPC (`prepare_send` /
+        // `prepare_lnurl_pay`) in one task, so the user sees a single
+        // "Preparing…" regardless of the underlying rail.
+        let target = self.receive_target;
+        let usd_send = target == SparkSendTarget::SparkUsd;
+        let pay_from = self.pay_from;
+        if pay_from == WalletAsset::Usdb {
+            if let Err(reason) = self.usdb_covers(cache) {
+                // A US Dollar send has no other balance to suggest.
+                self.phase = SparkSendPhase::Error(if usd_send {
+                    coincube_ui::locale::copy(reason).to_string()
+                } else {
+                    coincube_ui::localized_format!(
+                        "{} Pay from bitcoin instead, or lower the amount.",
+                        "{} Paga con bitcoin o reduce el importe.",
+                        coincube_ui::locale::copy(reason)
+                    )
+                });
+                return Task::none();
+            }
+        }
+        let recipient = branta::begin(cache.network).zip(recipient_lookup_request(target, &input));
+        Task::perform(
+            async move {
+                // Review waits for both: a bounded lookup cannot arrive
+                // after confirmation and turn a sent payment into a mismatch.
+                let (result, recipient) = tokio::join!(
+                    resolve_and_prepare(backend, input, amount_sat, usd_amount, target, pay_from),
+                    async move {
+                        match recipient {
+                            Some((ticket, request)) => {
+                                let outcome = ticket.lookup(request).await;
+                                Some((ticket, outcome))
+                            }
+                            None => None,
+                        }
+                    }
+                );
+                (result, recipient)
+            },
+            move |(result, recipient)| {
+                Message::View(crate::app::view::Message::SparkSend(
+                    SparkSendMessage::PreparationFinished {
+                        generation,
+                        result,
+                        recipient,
+                    },
+                ))
+            },
+        )
+    }
+
+    fn preparation_finished(
+        &mut self,
+        generation: u64,
+        result: Result<PreparedSend, String>,
+        recipient: Option<(LookupTicket, LookupResult)>,
+    ) -> Task<Message> {
+        if generation != self.preparation_generation
+            || !matches!(self.phase, SparkSendPhase::Preparing)
+        {
+            return Task::none();
+        }
+        let recipient = recipient.filter(|(ticket, _)| ticket.is_current());
+        if matches!(&recipient, Some((_, LookupResult::Tampered))) {
+            self.tampered_request = Some(self.destination_input.trim().to_string());
+        }
+        match result {
+            Ok(prepared) => {
+                let PreparedSend {
+                    ok,
+                    pay_from,
+                    conversion,
+                    token_payment,
+                } = prepared;
+                self.prepared_pay_from = pay_from;
+                self.prepared_conversion = conversion;
+                self.prepared_token_payment = token_payment;
+                if let Some((ticket, outcome)) = recipient {
+                    self.recipient_receipt = Some((ok.handle.clone(), ticket, outcome));
+                }
+                self.last_send_method = ok.method.clone();
+                self.phase = SparkSendPhase::Prepared(ok);
+                self.refresh_quote_countdown();
+            }
+            Err(err) => {
+                self.phase =
+                    SparkSendPhase::Error(match (&self.cross_chain, self.current_detection()) {
+                        (Some(_), Some(detected))
+                            if cross_chain::is_amount_too_small_error(&err) =>
+                        {
+                            too_small_message(detected.chosen.as_deref())
+                        }
+                        _ => err,
+                    })
+            }
+        }
+        Task::none()
+    }
+
+    fn cross_chain_routes_loaded(
+        &mut self,
+        cache: &Cache,
+        generation: u64,
+        result: Result<CrossChainRoutesOk, String>,
+    ) -> Task<Message> {
+        if generation != self.preparation_generation
+            || !matches!(self.phase, SparkSendPhase::Preparing)
+        {
+            return Task::none();
+        }
+        let found = match result {
+            Ok(found) => found,
+            Err(err) => {
+                self.phase = SparkSendPhase::Error(err);
+                return Task::none();
+            }
+        };
+        let Some(asset) = self.receive_target.stablecoin() else {
+            self.phase = SparkSendPhase::Idle;
+            return Task::none();
+        };
+        let input = self.destination_input.trim().to_string();
+        let detected = cross_chain::DetectedDestination::new(input, found, asset);
+        match &detected.network {
+            // The picked target is a stablecoin, but the pasted string
+            // isn't a recognised cross-chain address. Say so rather than
+            // firing funds somewhere unrecoverable.
+            cross_chain::DetectedNetwork::NotCrossChain => {
+                self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
+                    "That doesn't look like a {} address. Paste the recipient's {} \
+                     address on Ethereum or another EVM chain, Tron, or Solana.",
+                    "Eso no parece una dirección de {}. Pega la dirección de {} del \
+                     destinatario en Ethereum u otra red EVM, Tron o Solana.",
+                    self.receive_target.label(),
+                    self.receive_target.label(),
+                ));
+            }
+            cross_chain::DetectedNetwork::Unreachable { family } => {
+                self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
+                    "No route can currently send {} to this {} address.",
+                    "Ahora mismo ninguna ruta puede enviar {} a esta dirección de {}.",
+                    self.receive_target.label(),
+                    family,
+                ));
+            }
+            cross_chain::DetectedNetwork::Chains { .. } => {}
+        }
+        let quotable = !detected.network.is_problem();
+        self.adopt_detection(detected);
+        if !quotable {
+            return Task::none();
+        }
+        self.quote_detected_route(cache)
+    }
+
+    fn retry_cross_chain(&mut self) -> Task<Message> {
+        // A cross-chain retry re-sends the **same prepared quote**, not a
+        // fresh one. The bridge keeps a token-leg prepare re-sendable
+        // after a failure, so re-sending the identical handle reuses the
+        // provider's swap id and the BTC leg dedups at the protocol level
+        // — it can't pay twice. (The SDK never honoured `idempotency_key`
+        // for these sends, so swap-id reuse is the real guard, not the
+        // key the gui still threads through for the bitcoin rails.)
+        //
+        // Option-1 fallback: once the quote has expired we can't reuse
+        // it, and re-preparing would mint a *new* swap id with no dedup
+        // against an attempt that may already have moved funds. So stop
+        // offering a blind retry and route the user to verify state.
+        let SparkSendPhase::CrossChainFailed { message, policy } = &self.phase else {
+            return Task::none();
+        };
+        let policy = *policy;
+        let message = message.clone();
+        // Defense in depth: the view only offers this button when the
+        // policy allows it. Never act on a stale or replayed message.
+        if !policy.may_retry() {
+            return Task::none();
+        }
+        let reusable = self
+            .cross_chain_prepare
+            .as_ref()
+            .and_then(|p| p.cross_chain.as_deref())
+            .is_some_and(|q| cross_chain::quote_countdown(q, chrono::Utc::now()).can_send());
+        if !reusable {
+            self.cross_chain_prepare = None;
+            self.phase = SparkSendPhase::CrossChainFailed {
+                message,
+                policy: cross_chain::RetryPolicy::MustCheckStateFirst,
+            };
+            return Task::none();
+        }
+        let prepare = self
+            .cross_chain_prepare
+            .clone()
+            .expect("reusable implies a retained prepare");
+        self.dispatch_send(prepare)
+    }
+
+    fn confirm_requested(&mut self) -> Task<Message> {
+        let SparkSendPhase::Prepared(prepare) = &self.phase else {
+            return Task::none();
+        };
+        let prepare = prepare.clone();
+        if self.recipient_mismatch() || self.awaiting_network_ack() {
+            return Task::none();
+        }
+        // A cross-chain quote that has run out must not be sent. The
+        // rate is no longer one the provider honours, so confirming
+        // would either fail or fill at a price the user never saw.
+        if !self.can_confirm(chrono::Utc::now()) {
+            self.phase = SparkSendPhase::Error(
+                "This quote has expired. Get a fresh quote before sending.".to_string(),
+            );
+            return Task::none();
+        }
+        self.dispatch_send(prepare)
+    }
+
+    fn record_unknown_outcome(&mut self, request_id: u64, message: String) -> Task<Message> {
+        // Everything about the payment is kept: the key, the inputs,
+        // and now the request id, so a late answer can still be
+        // claimed. Nothing here says the payment failed.
+        self.accepted_send = None;
+        if let Some(pending) = self.pending_send.as_mut() {
+            pending.request_id = Some(request_id);
+        } else {
+            // Defensive: an unknown outcome with no recorded intent
+            // can still be reconciled against the bridge's late answer.
+            self.pending_send = Some(PendingSend {
+                request_id: Some(request_id),
+                dispatched_at: chrono::Utc::now().timestamp(),
+                amount_sat: 0,
+                token_amount: None,
+                invoice: None,
+                guard: RetryGuard::None,
+            });
+        }
+        let guard = self
+            .pending_send
+            .as_ref()
+            .map(|p| p.guard)
+            .unwrap_or(RetryGuard::None);
+        self.phase = SparkSendPhase::OutcomeUnknown {
+            message,
+            outcome: None,
+            checking: true,
+            guard,
+        };
+        self.reconcile_unknown_send()
+    }
+
+    fn reconcile_requested(&mut self) -> Task<Message> {
+        let SparkSendPhase::OutcomeUnknown {
+            message,
+            checking,
+            guard,
+            ..
+        } = &self.phase
+        else {
+            return Task::none();
+        };
+        if *checking {
+            return Task::none();
+        }
+        self.phase = SparkSendPhase::OutcomeUnknown {
+            message: message.clone(),
+            outcome: None,
+            checking: true,
+            guard: *guard,
+        };
+        self.reconcile_unknown_send()
+    }
+
+    fn reconcile_finished(&mut self, outcome: ReconcileOutcome) -> Task<Message> {
+        let SparkSendPhase::OutcomeUnknown { message, guard, .. } = &self.phase else {
+            return Task::none();
+        };
+        let message = message.clone();
+        let guard = *guard;
+        // A send the bridge accepted, now found settled: it is sent,
+        // with the amount and fee the bridge reported.
+        if outcome == ReconcileOutcome::Landed {
+            if let Some(ok) = self.accepted_send.take() {
+                return self.complete_send(SendPaymentOk {
+                    status: Some("Completed".to_string()),
+                    ..ok
+                });
+            }
+        }
+        // Accepted and still in flight: look again shortly rather
+        // than leave the user to keep pressing "Check again".
+        if matches!(outcome, ReconcileOutcome::Inconclusive(_))
+            && self.accepted_send.is_some()
+            && self.pending_rechecks < PENDING_RECHECK_LIMIT
+        {
+            self.pending_rechecks += 1;
+            self.phase = SparkSendPhase::OutcomeUnknown {
+                message,
+                outcome: None,
+                checking: true,
+                guard,
+            };
+            return self.reconcile_unknown_send_after(PENDING_RECHECK_DELAY);
+        }
+        match &outcome {
+            // The bridge answered late and said it was rejected: that
+            // is a definite failure, so the panel can offer the normal
+            // start-over path.
+            ReconcileOutcome::DefinitelyFailed(reason) => {
+                self.pending_send = None;
+                self.accepted_send = None;
+                self.phase = SparkSendPhase::Error(reason.clone());
+            }
+            _ => {
+                self.phase = SparkSendPhase::OutcomeUnknown {
+                    message,
+                    outcome: Some(outcome),
+                    checking: false,
+                    guard,
+                };
+            }
+        }
+        // Refresh the visible history either way — the user is being
+        // told to check it.
+        fetch_payments_task(self.backend.clone())
+    }
+
+    fn resend_after_unknown(&mut self) -> Task<Message> {
+        use crate::app::view::SparkSendMessage;
+
+        // Only from a reconciliation that found no trace, and only on a
+        // rail whose retry is idempotency-protected. The key and the
+        // inputs are untouched, so re-preparing and confirming re-sends
+        // *this* payment rather than minting a second one.
+        let SparkSendPhase::OutcomeUnknown {
+            outcome: Some(outcome),
+            checking: false,
+            guard,
+            ..
+        } = &self.phase
+        else {
+            return Task::none();
+        };
+        let guard = *guard;
+        if !outcome.may_resend(guard) {
+            return Task::none();
+        }
+        debug_assert!(
+            self.send_idempotency_key.is_some(),
+            "a resend must reuse the original key"
+        );
+        self.pending_send = None;
+        self.accepted_send = None;
+        self.phase = SparkSendPhase::Idle;
+        Task::done(Message::View(crate::app::view::Message::SparkSend(
+            SparkSendMessage::PrepareRequested,
+        )))
+    }
+
     fn begin_preparation(&mut self) -> u64 {
         self.preparation_generation = next_preparation_generation();
         self.recipient_receipt = None;
@@ -1525,71 +2239,11 @@ impl State for SparkSend {
         }
         match msg {
             SparkSendMessage::DestinationInputChanged(value) => {
-                if value.trim() != self.destination_input.trim() {
-                    self.tampered_request = None;
-                }
-                self.destination_input = value;
-                // A BOLT11 invoice that names its own amount fills the amount
-                // field in, so the user sees what the invoice asks for rather
-                // than an empty box. Clearing on the way out matters as much as
-                // filling in: swapping one invoice for another must not leave
-                // the previous invoice's amount sitting there.
-                // Not under US Dollar: the field holds dollars there, and a
-                // Lightning invoice is refused at prepare anyway.
-                let carried = bolt11_amount_sat(&self.destination_input)
-                    .filter(|_| self.receive_target != SparkSendTarget::SparkUsd);
-                if carried.is_some() || self.invoice_amount_sat.is_some() {
-                    self.amount_input = carried
-                        .map(|sats| format_amount_for_input(sats, cache.bitcoin_unit))
-                        .unwrap_or_default();
-                }
-                self.invoice_amount_sat = carried;
-                // Editing the destination invalidates any in-flight
-                // preview — drop back to Idle so the user can re-prepare.
-                self.phase = SparkSendPhase::Idle;
-                self.abandon_payment_intent();
-                // The routes were resolved for the *old* address, so they mean
-                // nothing now. (A re-Prepare rebuilds them, but leaving a stale
-                // destination lying around is a trap.)
-                self.cross_chain = None;
-                self.schedule_network_detection(cache.network)
+                self.destination_input_changed(cache, value)
             }
-            SparkSendMessage::DetectDestinationNetwork(seq) => {
-                if seq != self.detect_seq {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    return Task::none();
-                };
-                let input = self.destination_input.trim().to_string();
-                Task::perform(
-                    async move {
-                        backend
-                            .get_cross_chain_routes(input)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(crate::app::view::Message::SparkSend(
-                            SparkSendMessage::DestinationNetworkDetected(seq, result),
-                        ))
-                    },
-                )
-            }
+            SparkSendMessage::DetectDestinationNetwork(seq) => self.detect_destination_network(seq),
             SparkSendMessage::DestinationNetworkDetected(seq, result) => {
-                if seq != self.detect_seq {
-                    return Task::none();
-                }
-                // A failed lookup changes nothing: whatever is already known
-                // for this address stands, and Prepare asks again and reports
-                // the error there, where it can be retried.
-                let input = self.destination_input.trim().to_string();
-                if let (Ok(found), Some(asset)) = (result, self.receive_target.stablecoin()) {
-                    self.adopt_detection(cross_chain::DetectedDestination::new(
-                        input, found, asset,
-                    ));
-                }
-                Task::none()
+                self.destination_network_detected(seq, result)
             }
             SparkSendMessage::AmountInputChanged(value) => {
                 self.amount_input = value;
@@ -1621,260 +2275,15 @@ impl State for SparkSend {
                 self.pay_from_picker_open = false;
                 Task::none()
             }
-            SparkSendMessage::SelectPayFrom(asset) => {
-                if asset == WalletAsset::Usdb && self.usdb_selectable().is_err() {
-                    return Task::none();
-                }
-                if self
-                    .receive_target
-                    .fixed_pay_from()
-                    .is_some_and(|fixed| fixed != asset)
-                {
-                    return Task::none();
-                }
-                self.pay_from_picker_open = false;
-                if asset != self.pay_from {
-                    self.pay_from = asset;
-                    // A preview from the other balance no longer applies.
-                    self.phase = SparkSendPhase::Idle;
-                    self.abandon_payment_intent();
-                }
-                Task::none()
-            }
-            SparkSendMessage::StartFrom(asset) => {
-                // A stablecoin send is BTC-funded cross-chain and a US Dollar
-                // send moves US Dollar: no choice.
-                if self.receive_target.fixed_pay_from().is_some() || asset == self.pay_from {
-                    return Task::none();
-                }
-                self.pay_from_picker_open = false;
-                self.pay_from = asset;
-                self.phase = SparkSendPhase::Idle;
-                self.abandon_payment_intent();
-                Task::none()
-            }
-            SparkSendMessage::SetReceiveTarget(target) => {
-                if self.receive_target == target {
-                    self.receive_picker_open = false;
-                    return Task::none();
-                }
-                // Switching what the recipient gets is a different payment —
-                // clear the destination/amount and any in-flight prepare.
-                self.receive_picker_open = false;
-                let previous = std::mem::replace(&mut self.receive_target, target);
-                match target.fixed_pay_from() {
-                    Some(asset) => self.pay_from = asset,
-                    // Leaving US Dollar over Spark goes back to the default
-                    // rather than keep a balance the user didn't pick.
-                    None if previous == SparkSendTarget::SparkUsd => {
-                        self.pay_from = WalletAsset::Bitcoin
-                    }
-                    None => {}
-                }
-                self.tampered_request = None;
-                self.phase = SparkSendPhase::Idle;
-                self.destination_input.clear();
-                self.amount_input.clear();
-                self.invoice_amount_sat = None;
-                self.abandon_payment_intent();
-                self.cross_chain = None;
-                self.detect_seq = self.detect_seq.wrapping_add(1);
-                self.detected = None;
-                Task::none()
-            }
-            SparkSendMessage::PrepareRequested => {
-                if self.recipient_mismatch() {
-                    return Task::none();
-                }
-                let Some(backend) = self.backend.clone() else {
-                    self.phase =
-                        SparkSendPhase::Error("Spark backend is not available.".to_string());
-                    return Task::none();
-                };
-                if self.destination_input.trim().is_empty() {
-                    self.phase = SparkSendPhase::Error("Enter a destination first.".to_string());
-                    return Task::none();
-                }
-                // An amount read *out of* the invoice must not be handed back to
-                // the SDK: `prepare_send` treats an explicit amount as an
-                // override for an amountless invoice, and passing one alongside
-                // an invoice that already commits to an amount is rejected. The
-                // field is display-only in that case.
-                //
-                // A US Dollar send takes its amount in US Dollars instead.
-                let usd_send = self.receive_target == SparkSendTarget::SparkUsd;
-                let usd_amount = if !usd_send || self.amount_input.trim().is_empty() {
-                    None
-                } else {
-                    match self.usd_amount() {
-                        Some(amount) => Some(amount),
-                        None => {
-                            self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
-                                "Enter the amount in US Dollars, with at most {} decimal places.",
-                                "Ingresa el importe en dólares estadounidenses, con un máximo de \
-                                 {} decimales.",
-                                self.usdb_decimals(),
-                            ));
-                            return Task::none();
-                        }
-                    }
-                };
-                let amount_sat = if usd_send
-                    || self.invoice_amount_sat.is_some()
-                    || self.amount_input.trim().is_empty()
-                {
-                    None
-                } else {
-                    match parse_amount_to_sats(&self.amount_input, cache.bitcoin_unit) {
-                        Ok(n) => Some(n),
-                        Err(e) => {
-                            self.phase = SparkSendPhase::Error(e);
-                            return Task::none();
-                        }
-                    }
-                };
-                let input = self.destination_input.trim().to_string();
-                let generation = self.begin_preparation();
-
-                // The THEY RECEIVE selection decides the path. A stablecoin
-                // target is a BTC-funded cross-chain send: ask the bridge for
-                // routes, then confirm a chain + quote before anything moves.
-                // Providers/chains have no test deployment, so it's mainnet-only.
-                if self.receive_target.is_stablecoin() {
-                    if !cross_chain::supported_on(cache.network) {
-                        self.phase = SparkSendPhase::Error(
-                            "Stablecoin sends aren't available on this network.".to_string(),
-                        );
-                        return Task::none();
-                    }
-                    // Details already looked the address up: quote the network
-                    // it settled on. Otherwise ask now (Prepare pressed before
-                    // the lookup came back).
-                    if self
-                        .current_detection()
-                        .is_some_and(|d| !d.network.is_problem())
-                    {
-                        return self.quote_detected_route(cache);
-                    }
-                    // Prepare's own lookup supersedes a debounced one still
-                    // in flight: its late answer must not land on top.
-                    self.detect_seq = self.detect_seq.wrapping_add(1);
-                    return Task::perform(
-                        async move {
-                            backend
-                                .get_cross_chain_routes(input)
-                                .await
-                                .map_err(|e| format!("Couldn't check this destination: {e}"))
-                        },
-                        move |result| {
-                            Message::View(crate::app::view::Message::SparkSend(
-                                SparkSendMessage::CrossChainRoutesLoaded(generation, result),
-                            ))
-                        },
-                    );
-                }
-
-                // A bitcoin rail: classify the destination via `parse_input` and
-                // dispatch to the right prepare RPC (`prepare_send` /
-                // `prepare_lnurl_pay`) in one task, so the user sees a single
-                // "Preparing…" regardless of the underlying rail.
-                let target = self.receive_target;
-                let pay_from = self.pay_from;
-                if pay_from == WalletAsset::Usdb {
-                    if let Err(reason) = self.usdb_covers(cache) {
-                        // A US Dollar send has no other balance to suggest.
-                        self.phase = SparkSendPhase::Error(if usd_send {
-                            coincube_ui::locale::copy(reason).to_string()
-                        } else {
-                            coincube_ui::localized_format!(
-                                "{} Pay from bitcoin instead, or lower the amount.",
-                                "{} Paga con bitcoin o reduce el importe.",
-                                coincube_ui::locale::copy(reason)
-                            )
-                        });
-                        return Task::none();
-                    }
-                }
-                let recipient =
-                    branta::begin(cache.network).zip(recipient_lookup_request(target, &input));
-                Task::perform(
-                    async move {
-                        // Review waits for both: a bounded lookup cannot arrive
-                        // after confirmation and turn a sent payment into a mismatch.
-                        let (result, recipient) = tokio::join!(
-                            resolve_and_prepare(
-                                backend, input, amount_sat, usd_amount, target, pay_from
-                            ),
-                            async move {
-                                match recipient {
-                                    Some((ticket, request)) => {
-                                        let outcome = ticket.lookup(request).await;
-                                        Some((ticket, outcome))
-                                    }
-                                    None => None,
-                                }
-                            }
-                        );
-                        (result, recipient)
-                    },
-                    move |(result, recipient)| {
-                        Message::View(crate::app::view::Message::SparkSend(
-                            SparkSendMessage::PreparationFinished {
-                                generation,
-                                result,
-                                recipient,
-                            },
-                        ))
-                    },
-                )
-            }
+            SparkSendMessage::SelectPayFrom(asset) => self.select_pay_from(asset),
+            SparkSendMessage::StartFrom(asset) => self.start_from(asset),
+            SparkSendMessage::SetReceiveTarget(target) => self.set_receive_target(target),
+            SparkSendMessage::PrepareRequested => self.prepare_requested(cache),
             SparkSendMessage::PreparationFinished {
                 generation,
                 result,
                 recipient,
-            } => {
-                if generation != self.preparation_generation
-                    || !matches!(self.phase, SparkSendPhase::Preparing)
-                {
-                    return Task::none();
-                }
-                let recipient = recipient.filter(|(ticket, _)| ticket.is_current());
-                if matches!(&recipient, Some((_, LookupResult::Tampered))) {
-                    self.tampered_request = Some(self.destination_input.trim().to_string());
-                }
-                match result {
-                    Ok(prepared) => {
-                        let PreparedSend {
-                            ok,
-                            pay_from,
-                            conversion,
-                            token_payment,
-                        } = prepared;
-                        self.prepared_pay_from = pay_from;
-                        self.prepared_conversion = conversion;
-                        self.prepared_token_payment = token_payment;
-                        if let Some((ticket, outcome)) = recipient {
-                            self.recipient_receipt = Some((ok.handle.clone(), ticket, outcome));
-                        }
-                        self.last_send_method = ok.method.clone();
-                        self.phase = SparkSendPhase::Prepared(ok);
-                        self.refresh_quote_countdown();
-                    }
-                    Err(err) => {
-                        self.phase = SparkSendPhase::Error(
-                            match (&self.cross_chain, self.current_detection()) {
-                                (Some(_), Some(detected))
-                                    if cross_chain::is_amount_too_small_error(&err) =>
-                                {
-                                    too_small_message(detected.chosen.as_deref())
-                                }
-                                _ => err,
-                            },
-                        )
-                    }
-                }
-                Task::none()
-            }
+            } => self.preparation_finished(generation, result, recipient),
             SparkSendMessage::OpenRecipientIdentity(index) => {
                 if let Some(identity) = self.recipient_identities().get(index) {
                     identity.open();
@@ -1882,83 +2291,10 @@ impl State for SparkSend {
                 Task::none()
             }
             SparkSendMessage::CrossChainRoutesLoaded(generation, result) => {
-                if generation != self.preparation_generation
-                    || !matches!(self.phase, SparkSendPhase::Preparing)
-                {
-                    return Task::none();
-                }
-                let found = match result {
-                    Ok(found) => found,
-                    Err(err) => {
-                        self.phase = SparkSendPhase::Error(err);
-                        return Task::none();
-                    }
-                };
-                let Some(asset) = self.receive_target.stablecoin() else {
-                    self.phase = SparkSendPhase::Idle;
-                    return Task::none();
-                };
-                let input = self.destination_input.trim().to_string();
-                let detected = cross_chain::DetectedDestination::new(input, found, asset);
-                match &detected.network {
-                    // The picked target is a stablecoin, but the pasted string
-                    // isn't a recognised cross-chain address. Say so rather than
-                    // firing funds somewhere unrecoverable.
-                    cross_chain::DetectedNetwork::NotCrossChain => {
-                        self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
-                            "That doesn't look like a {} address. Paste the recipient's {} \
-                             address on Ethereum or another EVM chain, Tron, or Solana.",
-                            "Eso no parece una dirección de {}. Pega la dirección de {} del \
-                             destinatario en Ethereum u otra red EVM, Tron o Solana.",
-                            self.receive_target.label(),
-                            self.receive_target.label(),
-                        ));
-                    }
-                    cross_chain::DetectedNetwork::Unreachable { family } => {
-                        self.phase = SparkSendPhase::Error(coincube_ui::localized_format!(
-                            "No route can currently send {} to this {} address.",
-                            "Ahora mismo ninguna ruta puede enviar {} a esta dirección de {}.",
-                            self.receive_target.label(),
-                            family,
-                        ));
-                    }
-                    cross_chain::DetectedNetwork::Chains { .. } => {}
-                }
-                let quotable = !detected.network.is_problem();
-                self.adopt_detection(detected);
-                if !quotable {
-                    return Task::none();
-                }
-                self.quote_detected_route(cache)
+                self.cross_chain_routes_loaded(cache, generation, result)
             }
-            SparkSendMessage::ChooseNetwork(chain) => {
-                let changed = self.detected.as_ref().is_some_and(|detected| {
-                    detected.chosen.as_deref() != Some(chain.as_str())
-                        && detected.choices().contains(&chain)
-                });
-                if let Some(detected) = &mut self.detected {
-                    detected.choose(&chain);
-                }
-                // A quote already on its way is for the network chosen
-                // before: drop it rather than let Review show one network
-                // and send on another.
-                if changed && matches!(self.phase, SparkSendPhase::Preparing) {
-                    self.preparation_generation = next_preparation_generation();
-                    self.phase = SparkSendPhase::Idle;
-                    self.cross_chain = None;
-                }
-                Task::none()
-            }
-            SparkSendMessage::UseMinimum => {
-                if let Some(cross_chain::AmountIssue::BelowMinimum { min_sats }) =
-                    self.cross_chain_amount_issue(cache)
-                {
-                    self.amount_input = format_amount_for_input(min_sats, cache.bitcoin_unit);
-                    self.phase = SparkSendPhase::Idle;
-                    self.abandon_payment_intent();
-                }
-                Task::none()
-            }
+            SparkSendMessage::ChooseNetwork(chain) => self.choose_network(chain),
+            SparkSendMessage::UseMinimum => self.use_cross_chain_minimum(cache),
             SparkSendMessage::AcknowledgeNetwork(acknowledged) => {
                 self.network_acknowledged = acknowledged;
                 Task::none()
@@ -1974,73 +2310,12 @@ impl State for SparkSend {
                 }
             }
             SparkSendMessage::ReQuoteRequested => self.quote_cross_chain(cache.bitcoin_unit),
-            SparkSendMessage::CrossChainRetryRequested => {
-                // A cross-chain retry re-sends the **same prepared quote**, not a
-                // fresh one. The bridge keeps a token-leg prepare re-sendable
-                // after a failure, so re-sending the identical handle reuses the
-                // provider's swap id and the BTC leg dedups at the protocol level
-                // — it can't pay twice. (The SDK never honoured `idempotency_key`
-                // for these sends, so swap-id reuse is the real guard, not the
-                // key the gui still threads through for the bitcoin rails.)
-                //
-                // Option-1 fallback: once the quote has expired we can't reuse
-                // it, and re-preparing would mint a *new* swap id with no dedup
-                // against an attempt that may already have moved funds. So stop
-                // offering a blind retry and route the user to verify state.
-                let SparkSendPhase::CrossChainFailed { message, policy } = &self.phase else {
-                    return Task::none();
-                };
-                let policy = *policy;
-                let message = message.clone();
-                // Defense in depth: the view only offers this button when the
-                // policy allows it. Never act on a stale or replayed message.
-                if !policy.may_retry() {
-                    return Task::none();
-                }
-                let reusable = self
-                    .cross_chain_prepare
-                    .as_ref()
-                    .and_then(|p| p.cross_chain.as_deref())
-                    .is_some_and(|q| {
-                        cross_chain::quote_countdown(q, chrono::Utc::now()).can_send()
-                    });
-                if !reusable {
-                    self.cross_chain_prepare = None;
-                    self.phase = SparkSendPhase::CrossChainFailed {
-                        message,
-                        policy: cross_chain::RetryPolicy::MustCheckStateFirst,
-                    };
-                    return Task::none();
-                }
-                let prepare = self
-                    .cross_chain_prepare
-                    .clone()
-                    .expect("reusable implies a retained prepare");
-                self.dispatch_send(prepare)
-            }
+            SparkSendMessage::CrossChainRetryRequested => self.retry_cross_chain(),
             SparkSendMessage::QuoteTick => {
                 self.refresh_quote_countdown();
                 Task::none()
             }
-            SparkSendMessage::ConfirmRequested => {
-                let SparkSendPhase::Prepared(prepare) = &self.phase else {
-                    return Task::none();
-                };
-                let prepare = prepare.clone();
-                if self.recipient_mismatch() || self.awaiting_network_ack() {
-                    return Task::none();
-                }
-                // A cross-chain quote that has run out must not be sent. The
-                // rate is no longer one the provider honours, so confirming
-                // would either fail or fill at a price the user never saw.
-                if !self.can_confirm(chrono::Utc::now()) {
-                    self.phase = SparkSendPhase::Error(
-                        "This quote has expired. Get a fresh quote before sending.".to_string(),
-                    );
-                    return Task::none();
-                }
-                self.dispatch_send(prepare)
-            }
+            SparkSendMessage::ConfirmRequested => self.confirm_requested(),
             SparkSendMessage::CrossChainSendFailed(err, policy) => {
                 // Definite: the bridge answered. The retained quote is what
                 // guards the retry here, not the key.
@@ -2088,159 +2363,13 @@ impl State for SparkSend {
             SparkSendMessage::SendOutcomeUnknown {
                 request_id,
                 message,
-            } => {
-                // Everything about the payment is kept: the key, the inputs,
-                // and now the request id, so a late answer can still be
-                // claimed. Nothing here says the payment failed.
-                self.accepted_send = None;
-                if let Some(pending) = self.pending_send.as_mut() {
-                    pending.request_id = Some(request_id);
-                } else {
-                    // Defensive: an unknown outcome with no recorded intent
-                    // can still be reconciled against the bridge's late answer.
-                    self.pending_send = Some(PendingSend {
-                        request_id: Some(request_id),
-                        dispatched_at: chrono::Utc::now().timestamp(),
-                        amount_sat: 0,
-                        token_amount: None,
-                        invoice: None,
-                        guard: RetryGuard::None,
-                    });
-                }
-                let guard = self
-                    .pending_send
-                    .as_ref()
-                    .map(|p| p.guard)
-                    .unwrap_or(RetryGuard::None);
-                self.phase = SparkSendPhase::OutcomeUnknown {
-                    message,
-                    outcome: None,
-                    checking: true,
-                    guard,
-                };
-                self.reconcile_unknown_send()
-            }
-            SparkSendMessage::ReconcileRequested => {
-                let SparkSendPhase::OutcomeUnknown {
-                    message,
-                    checking,
-                    guard,
-                    ..
-                } = &self.phase
-                else {
-                    return Task::none();
-                };
-                if *checking {
-                    return Task::none();
-                }
-                self.phase = SparkSendPhase::OutcomeUnknown {
-                    message: message.clone(),
-                    outcome: None,
-                    checking: true,
-                    guard: *guard,
-                };
-                self.reconcile_unknown_send()
-            }
+            } => self.record_unknown_outcome(request_id, message),
+            SparkSendMessage::ReconcileRequested => self.reconcile_requested(),
             SparkSendMessage::LateAnswerChecked { outcome, answer } => {
-                if !matches!(self.phase, SparkSendPhase::OutcomeUnknown { .. }) {
-                    return Task::none();
-                }
-                // The bridge did answer after all, accepting the payment: keep
-                // its answer, which turns this into an accepted send. It is
-                // then checked by its id, re-checked by itself while in
-                // flight, and shown as sent with its real amount and fee.
-                self.accepted_send = Some(answer);
-                self.pending_rechecks = 0;
-                self.update(
-                    None,
-                    cache,
-                    Message::View(crate::app::view::Message::SparkSend(
-                        SparkSendMessage::ReconcileFinished(outcome),
-                    )),
-                )
+                self.late_answer_checked(cache, outcome, answer)
             }
-            SparkSendMessage::ReconcileFinished(outcome) => {
-                let SparkSendPhase::OutcomeUnknown { message, guard, .. } = &self.phase else {
-                    return Task::none();
-                };
-                let message = message.clone();
-                let guard = *guard;
-                // A send the bridge accepted, now found settled: it is sent,
-                // with the amount and fee the bridge reported.
-                if outcome == ReconcileOutcome::Landed {
-                    if let Some(ok) = self.accepted_send.take() {
-                        return self.complete_send(SendPaymentOk {
-                            status: Some("Completed".to_string()),
-                            ..ok
-                        });
-                    }
-                }
-                // Accepted and still in flight: look again shortly rather
-                // than leave the user to keep pressing "Check again".
-                if matches!(outcome, ReconcileOutcome::Inconclusive(_))
-                    && self.accepted_send.is_some()
-                    && self.pending_rechecks < PENDING_RECHECK_LIMIT
-                {
-                    self.pending_rechecks += 1;
-                    self.phase = SparkSendPhase::OutcomeUnknown {
-                        message,
-                        outcome: None,
-                        checking: true,
-                        guard,
-                    };
-                    return self.reconcile_unknown_send_after(PENDING_RECHECK_DELAY);
-                }
-                match &outcome {
-                    // The bridge answered late and said it was rejected: that
-                    // is a definite failure, so the panel can offer the normal
-                    // start-over path.
-                    ReconcileOutcome::DefinitelyFailed(reason) => {
-                        self.pending_send = None;
-                        self.accepted_send = None;
-                        self.phase = SparkSendPhase::Error(reason.clone());
-                    }
-                    _ => {
-                        self.phase = SparkSendPhase::OutcomeUnknown {
-                            message,
-                            outcome: Some(outcome),
-                            checking: false,
-                            guard,
-                        };
-                    }
-                }
-                // Refresh the visible history either way — the user is being
-                // told to check it.
-                fetch_payments_task(self.backend.clone())
-            }
-            SparkSendMessage::ResendAfterUnknownRequested => {
-                // Only from a reconciliation that found no trace, and only on a
-                // rail whose retry is idempotency-protected. The key and the
-                // inputs are untouched, so re-preparing and confirming re-sends
-                // *this* payment rather than minting a second one.
-                let SparkSendPhase::OutcomeUnknown {
-                    outcome: Some(outcome),
-                    checking: false,
-                    guard,
-                    ..
-                } = &self.phase
-                else {
-                    return Task::none();
-                };
-                let guard = *guard;
-                if !outcome.may_resend(guard) {
-                    return Task::none();
-                }
-                debug_assert!(
-                    self.send_idempotency_key.is_some(),
-                    "a resend must reuse the original key"
-                );
-                self.pending_send = None;
-                self.accepted_send = None;
-                self.phase = SparkSendPhase::Idle;
-                Task::done(Message::View(crate::app::view::Message::SparkSend(
-                    SparkSendMessage::PrepareRequested,
-                )))
-            }
+            SparkSendMessage::ReconcileFinished(outcome) => self.reconcile_finished(outcome),
+            SparkSendMessage::ResendAfterUnknownRequested => self.resend_after_unknown(),
             SparkSendMessage::EditDetails => {
                 // Only a quote has details to go back to. The quote, its
                 // recipient lookup and its payment key go: Prepare asks again.
@@ -2276,25 +2405,7 @@ impl State for SparkSend {
                 self.cross_chain = None;
                 Task::none()
             }
-            SparkSendMessage::BalanceLoaded(balance) => {
-                if let Some((btc_sats, stable)) = balance {
-                    self.balance_sats =
-                        super::unified_spark_balance_sats(btc_sats, stable.as_ref(), cache);
-                    self.btc_balance_sats = btc_sats;
-                    self.usdb_balance = stable.clone();
-                    self.usdb_holding = stable.as_ref().filter(|sb| sb.balance > 0).map(|sb| {
-                        format!(
-                            "{} {}",
-                            crate::app::breez_spark::assets::format_token_display_u128(
-                                sb.balance,
-                                sb.decimals
-                            ),
-                            sb.ticker
-                        )
-                    });
-                }
-                Task::none()
-            }
+            SparkSendMessage::BalanceLoaded(balance) => self.balance_loaded(cache, balance),
             SparkSendMessage::PaymentsLoaded(payments) => {
                 self.recent_transactions = super::recent_transactions_from(&payments, cache);
                 Task::none()
@@ -2304,18 +2415,7 @@ impl State for SparkSend {
                 self.recent_transactions.clear();
                 Task::none()
             }
-            SparkSendMessage::SelectTransaction(idx) => {
-                if let Some(payment) = self.recent_transactions.get(idx).cloned() {
-                    Task::batch(vec![
-                        redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
-                        Task::done(Message::View(crate::app::view::Message::SparkTransactions(
-                            crate::app::view::SparkTransactionsMessage::Preselect(payment),
-                        ))),
-                    ])
-                } else {
-                    Task::none()
-                }
-            }
+            SparkSendMessage::SelectTransaction(idx) => self.select_transaction(idx),
             SparkSendMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
         }
     }
@@ -2712,6 +2812,53 @@ impl PrepareBackend for SparkBackend {
     }
 }
 
+async fn prepare_spark_usd<B: PrepareBackend>(
+    backend: &B,
+    input: String,
+    usd_amount: Option<u128>,
+    parsed: ParseInputOk,
+) -> Result<PreparedSend, String> {
+    match parsed.kind {
+        ParseInputKind::SparkAddress => {
+            let amount = usd_amount.ok_or_else(|| {
+                coincube_ui::locale::copy("Enter how many US Dollars to send.").to_string()
+            })?;
+            backend
+                .prepare_usdb_send(input, amount)
+                .await
+                .map(PreparedSend::from)
+                .map_err(|e| format_prepare_error("prepare_send", &e.to_string()))
+        }
+        ParseInputKind::SparkInvoice if parsed.usdb_invoice => backend
+            .prepare_send_from(input, None, WalletAsset::Usdb)
+            .await
+            .map(PreparedSend::from)
+            .map_err(|e| format_prepare_error("prepare_send", &e.to_string())),
+        _ => Err(coincube_ui::locale::copy(
+            "US Dollar can be sent to a Spark address or to a Spark invoice that asks for \
+             US Dollar. To send bitcoin, pick Bitcoin for what they receive.",
+        )
+        .to_string()),
+    }
+}
+
+async fn reject_cross_chain_destination<B: PrepareBackend>(
+    backend: &B,
+    input: &str,
+) -> Result<(), String> {
+    if let Ok(routes) = backend.get_cross_chain_routes(input.to_owned()).await {
+        if let Some(addr) = routes.address {
+            return Err(format!(
+                "This looks like {}, which can't receive bitcoin. Choose USDt or \
+                 USDC for what they receive to send there, or paste a Bitcoin \
+                 destination.",
+                cross_chain_family_label(&addr.family),
+            ));
+        }
+    }
+    Ok(())
+}
+
 async fn resolve_and_prepare<B: PrepareBackend>(
     backend: Arc<B>,
     input: String,
@@ -2753,44 +2900,14 @@ async fn resolve_and_prepare<B: PrepareBackend>(
     // it fail cryptically at prepare. A genuine `Other` (BOLT12) has no
     // cross-chain address and falls through to the normal prepare below.
     if matches!(parsed.kind, ParseInputKind::Other) {
-        if let Ok(routes) = backend.get_cross_chain_routes(input.clone()).await {
-            if let Some(addr) = routes.address {
-                return Err(format!(
-                    "This looks like {}, which can't receive bitcoin. Choose USDt or \
-                     USDC for what they receive to send there, or paste a Bitcoin \
-                     destination.",
-                    cross_chain_family_label(&addr.family),
-                ));
-            }
-        }
+        reject_cross_chain_destination(backend.as_ref(), &input).await?;
     }
 
     // US Dollar over Spark moves the US Dollar balance itself, with no
     // conversion: to a Spark address for the amount typed in US Dollars, or
     // to a Spark invoice that asks for US Dollar and names its own amount.
     if target == SparkSendTarget::SparkUsd {
-        return match parsed.kind {
-            ParseInputKind::SparkAddress => {
-                let amount = usd_amount.ok_or_else(|| {
-                    coincube_ui::locale::copy("Enter how many US Dollars to send.").to_string()
-                })?;
-                backend
-                    .prepare_usdb_send(input, amount)
-                    .await
-                    .map(PreparedSend::from)
-                    .map_err(|e| format_prepare_error("prepare_send", &e.to_string()))
-            }
-            ParseInputKind::SparkInvoice if parsed.usdb_invoice => backend
-                .prepare_send_from(input, None, WalletAsset::Usdb)
-                .await
-                .map(PreparedSend::from)
-                .map_err(|e| format_prepare_error("prepare_send", &e.to_string())),
-            _ => Err(coincube_ui::locale::copy(
-                "US Dollar can be sent to a Spark address or to a Spark invoice that asks for \
-                 US Dollar. To send bitcoin, pick Bitcoin for what they receive.",
-            )
-            .to_string()),
-        };
+        return prepare_spark_usd(backend.as_ref(), input, usd_amount, parsed).await;
     }
 
     match parsed.kind {
