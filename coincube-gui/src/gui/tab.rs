@@ -5642,18 +5642,8 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
     // PIN + master-signer-fingerprint when we're on the restore path.
     // Pulled out so the "new cube" branches share one code path.
     let decorate_new =
-        |mut cube: app::settings::CubeSettings| -> Result<app::settings::CubeSettings, String> {
-            if let Some(seed) = restore_seed {
-                // No PIN hash is recorded. The restored Cube's seed file was
-                // just written encrypted under `seed.pin`, and decrypting it is
-                // what verifies that PIN from now on (I1).
-                cube = cube.with_master_signer(seed.master_signer_fingerprint);
-                cube.backed_up |= seed.seed_backed_up;
-                if let Some(passkey) = &seed.passkey {
-                    cube = cube.with_passkey(passkey.clone());
-                }
-            }
-            Ok(cube)
+        |cube: app::settings::CubeSettings| -> Result<app::settings::CubeSettings, String> {
+            Ok(decorate_restored_cube(cube, restore_seed))
         };
 
     // Base CubeSettings for a *brand-new* Cube. On the Recovery-Kit restore
@@ -5692,37 +5682,10 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
             // are its source of truth. The restore flow only overwrites
             // Cube-level credentials when we're actually minting a new
             // Cube for the restored wallet.
-            if let Some(w_id) = vault.map(|v| &v.wallet_id) {
-                if let Some(existing_idx) = settings_data
-                    .cubes
-                    .iter()
-                    .position(|c| c.vault_wallet_id.as_ref() == Some(w_id))
-                {
-                    // On a Recovery-Kit restore we must reconcile identity *before*
-                    // returning this match: if the wallet is attached to a cube with
-                    // a **different** UUID than the one being restored, that's the
-                    // old-bug duplicate (a prior buggy recovery minted a new Cube).
-                    // Returning it here would leave the duplicate attached and the
-                    // original still recoverable — the very bug this flow fixes. So
-                    // drop the spurious duplicate entirely and fall through, letting
-                    // the restore reconciliation below re-attach the wallet to the
-                    // restored UUID (reused or minted). Identities agree (or no
-                    // restore) → normal return.
-                    match &restored_cube {
-                        Some(identity) if settings_data.cubes[existing_idx].id != identity.uuid => {
-                            info!(
-                                "Wallet {} was attached to duplicate cube '{}' ({}); removing it to \
-                                 reconcile with restored UUID {}",
-                                w_id,
-                                settings_data.cubes[existing_idx].name,
-                                settings_data.cubes[existing_idx].id,
-                                identity.uuid,
-                            );
-                            settings_data.cubes.remove(existing_idx);
-                        }
-                        _ => return Ok(settings_data.cubes[existing_idx].clone()),
-                    }
-                }
+            if let Some(cube) =
+                existing_cube_with_vault(&mut settings_data, vault, restored_cube.as_ref())
+            {
+                return Ok(cube);
             }
 
             // Recovery-Kit restore: the restored Cube must carry the deleted
@@ -5736,94 +5699,29 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
             // a local Cube already carries the original UUID (a re-run),
             // reuse it; otherwise mint one with that UUID.
             if let Some(RestoreCubeIdentity { uuid, .. }) = &restored_cube {
-                if let Some(idx) = settings_data.cubes.iter().position(|c| &c.id == uuid) {
-                    if settings_data.cubes[idx].bitcoin_import.is_some() {
-                        return Err(
-                            "The restored Cube is reserved for a Bitcoin wallet import.".into()
-                        );
-                    }
-                    if settings_data.cubes[idx].vault_wallet_id.is_some() {
-                        return Err(format!(
-                            "Cube '{}' has already been recovered on this device.",
-                            settings_data.cubes[idx].name
-                        ));
-                    }
-                    let mut cube = settings_data.cubes[idx].clone();
-                    attach_vault(&mut cube, vault);
-                    let cube = decorate_new(cube)?;
-                    settings_data.cubes[idx] = cube.clone();
-
-                    info!(
-                        "Reactivating recovered cube '{}' ({}) with wallet {:?} on {} network",
-                        cube.name, uuid, cube.vault_wallet_id, network
-                    );
-
-                    return save_cube_settings(network_dir, cube, network, settings_data, expected)
-                        .await;
-                }
-
-                let mut base_cube = new_cube_base();
-                attach_vault(&mut base_cube, vault);
-                let cube = decorate_new(base_cube)?;
-
-                info!(
-                    "Re-minting recovered cube '{}' ({}) for wallet {:?} on {} network",
-                    cube.name, uuid, cube.vault_wallet_id, network
-                );
-
-                settings_data.cubes.push(cube.clone());
+                let cube = reattach_restored_cube(
+                    &mut settings_data,
+                    uuid,
+                    vault,
+                    network,
+                    &decorate_new,
+                    &new_cube_base,
+                )?;
                 return save_cube_settings(network_dir, cube, network, settings_data, expected)
                     .await;
             }
 
             // Second, if we have an originating cube ID, validate and use it
             if let Some(target_cube_id) = originating_cube_id {
-                if let Some(target_cube) = settings_data
-                    .cubes
-                    .iter_mut()
-                    .find(|c| c.id == target_cube_id)
-                {
-                    if let Some(v) = vault {
-                        if target_cube.bitcoin_import.is_some() {
-                            return Err(format!(
-                                "Cube '{}' is reserved for an imported Bitcoin wallet. Resume or cancel that import before creating a Vault.",
-                                target_cube.name
-                            ));
-                        }
-                        if target_cube.vault_wallet_id.is_some() {
-                            return Err(format!(
-                                "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
-                                target_cube.name
-                            ));
-                        }
-                        target_cube.set_vault(v.clone());
-                    }
-                    // Apply restore-flow credentials (PIN hash + fingerprint) if
-                    // restoring to this cube — same rationale as the empty-cube
-                    // fallback: the hash must match the newly-encrypted mnemonic.
-                    let cube_clone = decorate_new(target_cube.clone())?;
-                    *target_cube = cube_clone.clone();
-                    let cube_name = target_cube.name.clone();
-
-                    info!(
-                        "Associating wallet {:?} with originating cube '{}' on {} network",
-                        cube_clone.vault_wallet_id, cube_name, network
-                    );
-
-                    return save_cube_settings(
-                        network_dir,
-                        cube_clone,
-                        network,
-                        settings_data,
-                        expected,
-                    )
+                let cube = attach_to_originating_cube(
+                    &mut settings_data,
+                    &target_cube_id,
+                    vault,
+                    network,
+                    &decorate_new,
+                )?;
+                return save_cube_settings(network_dir, cube, network, settings_data, expected)
                     .await;
-                } else {
-                    return Err(format!(
-                        "Cannot find originating cube with ID '{}'. Please restart the app and try again.",
-                        target_cube_id
-                    ));
-                }
             }
 
             // Third, find a cube without a vault and associate this wallet with it
@@ -5906,6 +5804,159 @@ pub(crate) async fn find_or_create_cube<C: Into<crate::chain::ChainId>>(
             )
             .await
         }
+    }
+}
+
+fn decorate_restored_cube(
+    mut cube: app::settings::CubeSettings,
+    restore_seed: Option<&RestoreCubeSeed>,
+) -> app::settings::CubeSettings {
+    if let Some(seed) = restore_seed {
+        // No PIN hash is recorded. The restored Cube's seed file was
+        // just written encrypted under `seed.pin`, and decrypting it is
+        // what verifies that PIN from now on (I1).
+        cube = cube.with_master_signer(seed.master_signer_fingerprint);
+        cube.backed_up |= seed.seed_backed_up;
+        if let Some(passkey) = &seed.passkey {
+            cube = cube.with_passkey(passkey.clone());
+        }
+    }
+    cube
+}
+
+fn existing_cube_with_vault(
+    settings_data: &mut app::settings::Settings,
+    vault: Option<&VaultIdentity>,
+    restored_cube: Option<&RestoreCubeIdentity>,
+) -> Option<app::settings::CubeSettings> {
+    if let Some(w_id) = vault.map(|v| &v.wallet_id) {
+        if let Some(existing_idx) = settings_data
+            .cubes
+            .iter()
+            .position(|c| c.vault_wallet_id.as_ref() == Some(w_id))
+        {
+            // On a Recovery-Kit restore we must reconcile identity *before*
+            // returning this match: if the wallet is attached to a cube with
+            // a **different** UUID than the one being restored, that's the
+            // old-bug duplicate (a prior buggy recovery minted a new Cube).
+            // Returning it here would leave the duplicate attached and the
+            // original still recoverable — the very bug this flow fixes. So
+            // drop the spurious duplicate entirely and fall through, letting
+            // the restore reconciliation below re-attach the wallet to the
+            // restored UUID (reused or minted). Identities agree (or no
+            // restore) → normal return.
+            match &restored_cube {
+                Some(identity) if settings_data.cubes[existing_idx].id != identity.uuid => {
+                    info!(
+                        "Wallet {} was attached to duplicate cube '{}' ({}); removing it to \
+                         reconcile with restored UUID {}",
+                        w_id,
+                        settings_data.cubes[existing_idx].name,
+                        settings_data.cubes[existing_idx].id,
+                        identity.uuid,
+                    );
+                    settings_data.cubes.remove(existing_idx);
+                }
+                _ => return Some(settings_data.cubes[existing_idx].clone()),
+            }
+        }
+    }
+    None
+}
+
+fn reattach_restored_cube(
+    settings_data: &mut app::settings::Settings,
+    uuid: &str,
+    vault: Option<&VaultIdentity>,
+    network: crate::chain::ChainId,
+    decorate_new: impl FnOnce(
+        app::settings::CubeSettings,
+    ) -> Result<app::settings::CubeSettings, String>,
+    new_cube_base: impl FnOnce() -> app::settings::CubeSettings,
+) -> Result<app::settings::CubeSettings, String> {
+    if let Some(idx) = settings_data.cubes.iter().position(|c| &c.id == uuid) {
+        if settings_data.cubes[idx].bitcoin_import.is_some() {
+            return Err("The restored Cube is reserved for a Bitcoin wallet import.".into());
+        }
+        if settings_data.cubes[idx].vault_wallet_id.is_some() {
+            return Err(format!(
+                "Cube '{}' has already been recovered on this device.",
+                settings_data.cubes[idx].name
+            ));
+        }
+        let mut cube = settings_data.cubes[idx].clone();
+        attach_vault(&mut cube, vault);
+        let cube = decorate_new(cube)?;
+        settings_data.cubes[idx] = cube.clone();
+
+        info!(
+            "Reactivating recovered cube '{}' ({}) with wallet {:?} on {} network",
+            cube.name, uuid, cube.vault_wallet_id, network
+        );
+
+        return Ok(cube);
+    }
+
+    let mut base_cube = new_cube_base();
+    attach_vault(&mut base_cube, vault);
+    let cube = decorate_new(base_cube)?;
+
+    info!(
+        "Re-minting recovered cube '{}' ({}) for wallet {:?} on {} network",
+        cube.name, uuid, cube.vault_wallet_id, network
+    );
+
+    settings_data.cubes.push(cube.clone());
+    Ok(cube)
+}
+
+fn attach_to_originating_cube(
+    settings_data: &mut app::settings::Settings,
+    target_cube_id: &str,
+    vault: Option<&VaultIdentity>,
+    network: crate::chain::ChainId,
+    decorate_new: impl FnOnce(
+        app::settings::CubeSettings,
+    ) -> Result<app::settings::CubeSettings, String>,
+) -> Result<app::settings::CubeSettings, String> {
+    if let Some(target_cube) = settings_data
+        .cubes
+        .iter_mut()
+        .find(|c| c.id == target_cube_id)
+    {
+        if let Some(v) = vault {
+            if target_cube.bitcoin_import.is_some() {
+                return Err(format!(
+                    "Cube '{}' is reserved for an imported Bitcoin wallet. Resume or cancel that import before creating a Vault.",
+                    target_cube.name
+                ));
+            }
+            if target_cube.vault_wallet_id.is_some() {
+                return Err(format!(
+                    "Cube '{}' already has a vault. Remove the existing vault before creating a new one.",
+                    target_cube.name
+                ));
+            }
+            target_cube.set_vault(v.clone());
+        }
+        // Apply restore-flow credentials (PIN hash + fingerprint) if
+        // restoring to this cube — same rationale as the empty-cube
+        // fallback: the hash must match the newly-encrypted mnemonic.
+        let cube_clone = decorate_new(target_cube.clone())?;
+        *target_cube = cube_clone.clone();
+        let cube_name = target_cube.name.clone();
+
+        info!(
+            "Associating wallet {:?} with originating cube '{}' on {} network",
+            cube_clone.vault_wallet_id, cube_name, network
+        );
+
+        Ok(cube_clone)
+    } else {
+        Err(format!(
+            "Cannot find originating cube with ID '{}'. Please restart the app and try again.",
+            target_cube_id
+        ))
     }
 }
 
