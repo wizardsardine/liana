@@ -2578,6 +2578,306 @@ impl Tab {
         Continue(Self::focus_home_unlock(&self.state))
     }
 
+    fn route_app_message(&mut self, msg: app::Message) -> TabDispatchResult {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        let task = match msg {
+            #[cfg(feature = "mcp-proposals")]
+            app::Message::View(app::view::Message::LocalMcp(ref review))
+                if matches!(
+                    review,
+                    app::local_mcp::Message::ReviewProposal
+                        | app::local_mcp::Message::ReviewPairedProposal(_)
+                ) =>
+            {
+                return self.review_app_mcp_proposal(review)
+            }
+            app::Message::View(app::view::Message::SetupVault) => {
+                return self.setup_vault_from_app()
+            }
+            app::Message::View(app::view::Message::StartClaimBlake2b) => {
+                self.start_app_claim_installer()
+            }
+            app::Message::View(app::view::Message::SetupVaultRestoreFromKit) => {
+                self.restore_vault_from_app()
+            }
+            app::Message::View(app::view::Message::ToggleTheme) => Task::done(Message::ToggleTheme),
+            app::Message::View(app::view::Message::OpenLauncher) => {
+                Task::done(Message::OpenLauncher)
+            }
+            app::Message::View(app::view::Message::OpenAppPreferences) => Task::done(
+                Message::OpenAppPreferences(PreferencesSource::App(self.app_generation)),
+            ),
+            app::Message::View(app::view::Message::LockCubeToLauncher) => {
+                Task::done(Message::LockCubeToLauncher)
+            }
+            app::Message::View(app::view::Message::DeleteUnfinishedCube) => {
+                self.delete_unfinished_app_cube()
+            }
+            app::Message::View(app::view::Message::DuressLockRemote) => {
+                self.lock_running_app_for_remote_duress()
+            }
+            app::Message::View(app::view::Message::OpenConnectSignIn) => {
+                self.open_connect_sign_in_from_app()
+            }
+            app::Message::View(app::view::Message::OpenConnectSwitchAccount) => {
+                // Unlike OpenConnectSignIn there is no session to
+                // restore: the user is already authenticated, just as
+                // the wrong account. Always hand off to Home so they
+                // can log out and sign back in.
+                Task::done(Message::OpenConnectSignIn)
+            }
+            app::Message::View(
+                app::view::Message::OpenPlanBilling | app::view::Message::OpenPlanBillingFrom(_),
+            ) => {
+                // Pure navigation: bubble to the pane so it focuses the
+                // Home tab on Connect → Plan & Billing (the "View plans"
+                // CTA on a paid-feature locked card outside Connect).
+                Task::done(Message::OpenPlanBilling)
+            }
+            m => app.update(m).map(Message::Run),
+        };
+        std::ops::ControlFlow::Continue(task)
+    }
+
+    #[cfg(feature = "mcp-proposals")]
+    fn review_app_mcp_proposal(&mut self, review: &app::local_mcp::Message) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        if !app.mcp_proposals_supported() {
+            return Break(Task::none());
+        }
+        if app.fork_feature_unconfirmed() {
+            return Break(Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(
+                    "Checking Bitcoin Blake2b availability. Try again in a moment.".into(),
+                ),
+            ))));
+        }
+        // Construct the normal builder only in response to the
+        // user's native review click, never from an MCP worker.
+        Continue(
+            match Installer::try_new_for_chain(
+                app.datadir().clone(),
+                app.cube_settings().network,
+                UserFlow::CreateWallet,
+                true,
+                Some(app.cube_settings().clone()),
+                app.cube_signer(),
+                app.spark_backend(),
+                false,
+                app.authenticated_coincube_client(),
+            ) {
+                Ok((install, _)) => {
+                    let client = match review {
+                        app::local_mcp::Message::ReviewPairedProposal(id) => Some(id.as_str()),
+                        _ => None,
+                    };
+                    let Some((settings, session)) = app.take_mcp_proposal(client) else {
+                        return Break(Task::none());
+                    };
+                    self.open_mcp_proposal_handoff(install, settings, session)
+                }
+                Err(error) => Task::done(Message::Run(app::Message::View(
+                    app::view::Message::ShowError(error.to_string()),
+                ))),
+            },
+        )
+    }
+
+    fn setup_vault_from_app(&mut self) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // The installer would drop a revocation that lands
+        // on it, so it waits for the Cube's first check.
+        if app.fork_feature_unconfirmed() {
+            return Break(Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(
+                    "Checking Bitcoin Blake2b availability. Try again in a moment.".into(),
+                ),
+            ))));
+        }
+        if app.cube_settings().bitcoin_import.is_some() {
+            return Break(Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(
+                    "This Cube is reserved for an imported Bitcoin wallet. Resume its import from the Cube overview."
+                        .into(),
+                ),
+            ))));
+        }
+        // Launch installer for vault setup from app - should return to app on Previous.
+        // The installer is opened on the Cube's own chain through the
+        // admission gate: `app.cache().network` is a `bitcoin::Network`
+        // and cannot name a fork, so deriving the chain from it would
+        // build a Bitcoin installer for a Bitcoin Blake2b Cube.
+        Continue(
+            match Self::installer_from_running_app(app, UserFlow::CreateWallet) {
+                Ok((install, command)) => {
+                    self.state = State::Installer(install);
+                    command.map(Message::Install)
+                }
+                Err(error) => Task::done(Message::Run(app::Message::View(
+                    app::view::Message::ShowError(error.to_string()),
+                ))),
+            },
+        )
+    }
+
+    fn start_app_claim_installer(&mut self) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // Tools › Split coins → Create copy. Re-checked here
+        // rather than trusted from the button: the account
+        // grant can lapse and a copy can appear meanwhile.
+        app.refresh_copy_exists();
+        let source = app.claim_source_cube();
+        let refusal = app::features::claim_blake2b(source)
+            .reason()
+            .map(str::to_string)
+            .or_else(|| {
+                source
+                    .already_claimed
+                    .then(|| "This Cube already has a Bitcoin Blake2b copy.".to_string())
+            });
+        match refusal {
+            Some(error) => Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(error),
+            ))),
+            // The pane retains this source App while a
+            // temporary installer builds its copy.
+            None => Task::done(Message::StartClaimInstaller),
+        }
+    }
+
+    fn restore_vault_from_app(&mut self) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // W15 — same installer launch path as SetupVault,
+        // but starts in the Recovery-Kit restore flow
+        // instead of the new-vault descriptor editor.
+        // Same chain derivation and admission gate as `SetupVault`;
+        // a Bitcoin Blake2b Cube is refused here because the fork
+        // admits only the Connect-backed creation flow.
+        match Self::installer_from_running_app(app, UserFlow::RestoreVaultFromRecoveryKit) {
+            Ok((install, command)) => {
+                self.state = State::Installer(install);
+                command.map(Message::Install)
+            }
+            Err(error) => Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(error.to_string()),
+            ))),
+        }
+    }
+
+    fn delete_unfinished_app_cube(&mut self) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // Deleting the Cube would leave its Spark funds
+        // without it. A balance still loading does not
+        // stop it; the Launcher still asks for the PIN.
+        if app.holds_loaded_wallet_funds() {
+            Task::done(Message::Run(app::Message::View(
+                app::view::Message::ShowError(UNFINISHED_CUBE_HOLDS_FUNDS.to_string()),
+            )))
+        } else {
+            Task::done(Message::LockCubeToDelete)
+        }
+    }
+
+    fn lock_running_app_for_remote_duress(&mut self) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // Phase 7b: remote duress activation. Lock the running
+        // app into the cryptic screen immediately — WITHOUT
+        // wiping (remote activation can be accidental; only a
+        // local duress PIN wipes). The App's gRPC handler already
+        // attempts to persist DuressLocalState.active, but a
+        // failed write there would let the relaunch reconcile
+        // (which keys off st.active) drop back to the normal Home
+        // flow with Cube data intact. So re-persist here as a
+        // durable backstop tied to the UI lock, before showing
+        // the cryptic screen.
+        let datadir = app.datadir().clone();
+        let network = app.cache().network;
+        let root = datadir.path();
+        // Skip the persist on a real read error (vs a missing
+        // file) rather than clobbering valid state with a default.
+        // The UI still locks below; the cryptic screen's own
+        // server poll re-syncs durability.
+        match crate::services::duress::DuressLocalState::load(root) {
+            Ok(mut st) if !st.active => {
+                st.active = true;
+                let mut saved = false;
+                for attempt in 1..=3 {
+                    match st.save(root) {
+                        Ok(()) => {
+                            saved = true;
+                            break;
+                        }
+                        Err(e) => error!(
+                            "duress: persist remote active state on UI lock \
+                             attempt {attempt}/3 failed: {e}"
+                        ),
+                    }
+                }
+                if !saved {
+                    error!(
+                        "duress: remote active state not persisted; a relaunch \
+                         may not stay locked"
+                    );
+                }
+            }
+            Ok(_) => {}
+            Err(e) => {
+                error!("duress: reading duress state failed; not overwriting: {e}")
+            }
+        }
+        let screen = crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
+            datadir,
+            Some(network),
+        );
+        self.state = State::DuressActive(screen);
+        Task::none()
+    }
+
+    fn open_connect_sign_in_from_app(&mut self) -> Task<Message> {
+        let State::App(app) = &mut self.state else {
+            unreachable!();
+        };
+        // Re-check this tab's ConnectAccountPanel against
+        // the keyring before deciding whether to bubble
+        // up. When the user already signed in on another
+        // tab the session is in the shared keyring entry
+        // and Init can refresh this tab's panel in place;
+        // jumping to the Home tab in that case would be
+        // an unnecessary context switch. We only bubble
+        // when the panel has no path to authenticating
+        // itself.
+        let needs_home_handoff = !app.can_restore_connect_session();
+        let init_task = app
+            .update(app::Message::View(app::view::Message::ConnectAccount(
+                app::view::ConnectAccountMessage::Init,
+            )))
+            .map(Message::Run);
+        if needs_home_handoff {
+            let bubble = Task::done(Message::OpenConnectSignIn);
+            Task::batch([init_task, bubble])
+        } else {
+            init_task
+        }
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
         use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
@@ -3686,257 +3986,10 @@ impl Tab {
 
                 _ => loader.update(msg).map(Message::Load),
             },
-            (State::App(app), Message::Run(msg)) => {
-                match msg {
-                    #[cfg(feature = "mcp-proposals")]
-                    app::Message::View(app::view::Message::LocalMcp(ref review))
-                        if matches!(
-                            review,
-                            app::local_mcp::Message::ReviewProposal
-                                | app::local_mcp::Message::ReviewPairedProposal(_)
-                        ) =>
-                    {
-                        if !app.mcp_proposals_supported() {
-                            return Task::none();
-                        }
-                        if app.fork_feature_unconfirmed() {
-                            return Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(
-                                    "Checking Bitcoin Blake2b availability. Try again in a moment."
-                                        .into(),
-                                ),
-                            )));
-                        }
-                        // Construct the normal builder only in response to the
-                        // user's native review click, never from an MCP worker.
-                        match Installer::try_new_for_chain(
-                            app.datadir().clone(),
-                            app.cube_settings().network,
-                            UserFlow::CreateWallet,
-                            true,
-                            Some(app.cube_settings().clone()),
-                            app.cube_signer(),
-                            app.spark_backend(),
-                            false,
-                            app.authenticated_coincube_client(),
-                        ) {
-                            Ok((install, _)) => {
-                                let client = match review {
-                                    app::local_mcp::Message::ReviewPairedProposal(id) => {
-                                        Some(id.as_str())
-                                    }
-                                    _ => None,
-                                };
-                                let Some((settings, session)) = app.take_mcp_proposal(client)
-                                else {
-                                    return Task::none();
-                                };
-                                self.open_mcp_proposal_handoff(install, settings, session)
-                            }
-                            Err(error) => Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(error.to_string()),
-                            ))),
-                        }
-                    }
-                    app::Message::View(app::view::Message::SetupVault) => {
-                        // The installer would drop a revocation that lands
-                        // on it, so it waits for the Cube's first check.
-                        if app.fork_feature_unconfirmed() {
-                            return Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(
-                                    "Checking Bitcoin Blake2b availability. Try again in a moment."
-                                        .into(),
-                                ),
-                            )));
-                        }
-                        if app.cube_settings().bitcoin_import.is_some() {
-                            return Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(
-                                    "This Cube is reserved for an imported Bitcoin wallet. Resume its import from the Cube overview."
-                                        .into(),
-                                ),
-                            )));
-                        }
-                        // Launch installer for vault setup from app - should return to app on Previous.
-                        // The installer is opened on the Cube's own chain through the
-                        // admission gate: `app.cache().network` is a `bitcoin::Network`
-                        // and cannot name a fork, so deriving the chain from it would
-                        // build a Bitcoin installer for a Bitcoin Blake2b Cube.
-                        match Self::installer_from_running_app(app, UserFlow::CreateWallet) {
-                            Ok((install, command)) => {
-                                self.state = State::Installer(install);
-                                command.map(Message::Install)
-                            }
-                            Err(error) => Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(error.to_string()),
-                            ))),
-                        }
-                    }
-                    app::Message::View(app::view::Message::StartClaimBlake2b) => {
-                        // Tools › Split coins → Create copy. Re-checked here
-                        // rather than trusted from the button: the account
-                        // grant can lapse and a copy can appear meanwhile.
-                        app.refresh_copy_exists();
-                        let source = app.claim_source_cube();
-                        let refusal = app::features::claim_blake2b(source)
-                            .reason()
-                            .map(str::to_string)
-                            .or_else(|| {
-                                source.already_claimed.then(|| {
-                                    "This Cube already has a Bitcoin Blake2b copy.".to_string()
-                                })
-                            });
-                        match refusal {
-                            Some(error) => Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(error),
-                            ))),
-                            // The pane retains this source App while a
-                            // temporary installer builds its copy.
-                            None => Task::done(Message::StartClaimInstaller),
-                        }
-                    }
-                    app::Message::View(app::view::Message::SetupVaultRestoreFromKit) => {
-                        // W15 — same installer launch path as SetupVault,
-                        // but starts in the Recovery-Kit restore flow
-                        // instead of the new-vault descriptor editor.
-                        // Same chain derivation and admission gate as `SetupVault`;
-                        // a Bitcoin Blake2b Cube is refused here because the fork
-                        // admits only the Connect-backed creation flow.
-                        match Self::installer_from_running_app(
-                            app,
-                            UserFlow::RestoreVaultFromRecoveryKit,
-                        ) {
-                            Ok((install, command)) => {
-                                self.state = State::Installer(install);
-                                command.map(Message::Install)
-                            }
-                            Err(error) => Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(error.to_string()),
-                            ))),
-                        }
-                    }
-                    app::Message::View(app::view::Message::ToggleTheme) => {
-                        Task::done(Message::ToggleTheme)
-                    }
-                    app::Message::View(app::view::Message::OpenLauncher) => {
-                        Task::done(Message::OpenLauncher)
-                    }
-                    app::Message::View(app::view::Message::OpenAppPreferences) => Task::done(
-                        Message::OpenAppPreferences(PreferencesSource::App(self.app_generation)),
-                    ),
-                    app::Message::View(app::view::Message::LockCubeToLauncher) => {
-                        Task::done(Message::LockCubeToLauncher)
-                    }
-                    app::Message::View(app::view::Message::DeleteUnfinishedCube) => {
-                        // Deleting the Cube would leave its Spark funds
-                        // without it. A balance still loading does not
-                        // stop it; the Launcher still asks for the PIN.
-                        if app.holds_loaded_wallet_funds() {
-                            Task::done(Message::Run(app::Message::View(
-                                app::view::Message::ShowError(
-                                    UNFINISHED_CUBE_HOLDS_FUNDS.to_string(),
-                                ),
-                            )))
-                        } else {
-                            Task::done(Message::LockCubeToDelete)
-                        }
-                    }
-                    app::Message::View(app::view::Message::DuressLockRemote) => {
-                        // Phase 7b: remote duress activation. Lock the running
-                        // app into the cryptic screen immediately — WITHOUT
-                        // wiping (remote activation can be accidental; only a
-                        // local duress PIN wipes). The App's gRPC handler already
-                        // attempts to persist DuressLocalState.active, but a
-                        // failed write there would let the relaunch reconcile
-                        // (which keys off st.active) drop back to the normal Home
-                        // flow with Cube data intact. So re-persist here as a
-                        // durable backstop tied to the UI lock, before showing
-                        // the cryptic screen.
-                        let datadir = app.datadir().clone();
-                        let network = app.cache().network;
-                        let root = datadir.path();
-                        // Skip the persist on a real read error (vs a missing
-                        // file) rather than clobbering valid state with a default.
-                        // The UI still locks below; the cryptic screen's own
-                        // server poll re-syncs durability.
-                        match crate::services::duress::DuressLocalState::load(root) {
-                            Ok(mut st) if !st.active => {
-                                st.active = true;
-                                let mut saved = false;
-                                for attempt in 1..=3 {
-                                    match st.save(root) {
-                                        Ok(()) => {
-                                            saved = true;
-                                            break;
-                                        }
-                                        Err(e) => error!(
-                                            "duress: persist remote active state on UI lock \
-                                             attempt {attempt}/3 failed: {e}"
-                                        ),
-                                    }
-                                }
-                                if !saved {
-                                    error!(
-                                        "duress: remote active state not persisted; a relaunch \
-                                         may not stay locked"
-                                    );
-                                }
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                error!("duress: reading duress state failed; not overwriting: {e}")
-                            }
-                        }
-                        let screen =
-                            crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
-                                datadir,
-                                Some(network),
-                            );
-                        self.state = State::DuressActive(screen);
-                        Task::none()
-                    }
-                    app::Message::View(app::view::Message::OpenConnectSignIn) => {
-                        // Re-check this tab's ConnectAccountPanel against
-                        // the keyring before deciding whether to bubble
-                        // up. When the user already signed in on another
-                        // tab the session is in the shared keyring entry
-                        // and Init can refresh this tab's panel in place;
-                        // jumping to the Home tab in that case would be
-                        // an unnecessary context switch. We only bubble
-                        // when the panel has no path to authenticating
-                        // itself.
-                        let needs_home_handoff = !app.can_restore_connect_session();
-                        let init_task = app
-                            .update(app::Message::View(app::view::Message::ConnectAccount(
-                                app::view::ConnectAccountMessage::Init,
-                            )))
-                            .map(Message::Run);
-                        if needs_home_handoff {
-                            let bubble = Task::done(Message::OpenConnectSignIn);
-                            Task::batch([init_task, bubble])
-                        } else {
-                            init_task
-                        }
-                    }
-                    app::Message::View(app::view::Message::OpenConnectSwitchAccount) => {
-                        // Unlike OpenConnectSignIn there is no session to
-                        // restore: the user is already authenticated, just as
-                        // the wrong account. Always hand off to Home so they
-                        // can log out and sign back in.
-                        Task::done(Message::OpenConnectSignIn)
-                    }
-                    app::Message::View(
-                        app::view::Message::OpenPlanBilling
-                        | app::view::Message::OpenPlanBillingFrom(_),
-                    ) => {
-                        // Pure navigation: bubble to the pane so it focuses the
-                        // Home tab on Connect → Plan & Billing (the "View plans"
-                        // CTA on a paid-feature locked card outside Connect).
-                        Task::done(Message::OpenPlanBilling)
-                    }
-                    m => app.update(m).map(Message::Run),
-                }
-            }
+            (State::App(_), Message::Run(msg)) => match self.route_app_message(msg) {
+                std::ops::ControlFlow::Continue(task) => task,
+                std::ops::ControlFlow::Break(task) => return task,
+            },
             (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match msg {
                 crate::pin_entry::Message::PinVerified => {
                     // After PIN verification, resolve the Cube signer and load
