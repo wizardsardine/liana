@@ -539,65 +539,9 @@ impl State for BitcoindSettingsState {
             }
         }
         match message {
-            Message::DaemonConfigLoaded(res) => match res {
-                Ok(()) => {
-                    self.config_updated = true;
-                    self.node_switch_processing = false;
-                    self.pending_node_setup = None;
-                    self.warning = None;
-                    self.full_config = daemon.config().cloned();
-                    if self.full_config.as_ref().is_some_and(|cfg| {
-                        matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
-                    }) {
-                        // The App cleared its switch intent after promotion;
-                        // retire the open panel's copy as well.
-                        self.recovery_requested = false;
-                    }
-                    if self.cancel_node_setup_in_flight {
-                        self.cancel_node_setup_in_flight = false;
-                        if let Some(cfg) = daemon.config() {
-                            let mut rollback_cfg = cfg.clone();
-                            rollback_cfg.pending_bitcoind = None;
-                            // Keep the invariant: no pending node ⇒ nothing to
-                            // auto-switch to. Leaving the flag set would strand a
-                            // stale "auto-switch enabled" state with no target.
-                            rollback_cfg.auto_switch_to_pending = Some(false);
-                            return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
-                        }
-                    }
-                    if let Some(settings) = &mut self.bitcoind_settings {
-                        settings.edited(true);
-                        return Task::perform(async {}, |_| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::EditBitcoindSettings,
-                            ))
-                        });
-                    }
-                    if let Some(settings) = &mut self.electrum_settings {
-                        settings.edited(true);
-                        return Task::perform(async {}, |_| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::EditBitcoindSettings,
-                            ))
-                        });
-                    }
-                }
-                Err(e) => {
-                    self.config_updated = false;
-                    self.node_switch_processing = false;
-                    self.pending_node_setup = None;
-                    self.cancel_node_setup_in_flight = false;
-                    let err_msg = crate::user_error::report(&e);
-                    self.warning = Some(e);
-                    if let Some(settings) = &mut self.bitcoind_settings {
-                        settings.edited(false);
-                    }
-                    if let Some(settings) = &mut self.electrum_settings {
-                        settings.edited(false);
-                    }
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            Message::DaemonConfigLoaded(res) => {
+                return self.daemon_config_loaded(daemon.as_ref(), res)
+            }
             Message::Info(res) => match res {
                 Err(e) => {
                     let err_msg = crate::user_error::report(&e);
@@ -656,677 +600,7 @@ impl State for BitcoindSettingsState {
                 return self.rescan_settings.update(daemon, cache, msg);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(msg))) => {
-                use view::NodeSettingsMessage;
-                match msg {
-                    NodeSettingsMessage::RecoveryAdvancedToggled => {
-                        self.recovery_advanced = !self.recovery_advanced;
-                        if !self.recovery_advanced {
-                            self.recovery_date_picker_open = false;
-                        }
-                    }
-                    NodeSettingsMessage::RecoverySourceSelected(from_date) => {
-                        self.recovery_advanced = from_date;
-                        if !from_date {
-                            self.recovery_date_picker_open = false;
-                        }
-                    }
-                    NodeSettingsMessage::NodeLogToggled => {
-                        self.node_log_open = !self.node_log_open;
-                    }
-                    NodeSettingsMessage::NodeAdvancedToggled => {
-                        self.node_advanced = !self.node_advanced;
-                    }
-                    NodeSettingsMessage::RecoveryDismiss => {
-                        self.recovery_requested = false;
-                        self.recovery_date_picker_open = false;
-                        self.warning = None;
-                    }
-                    NodeSettingsMessage::RecoveryStartEdited(value) => {
-                        self.recovery_date_picker_open = false;
-                        self.recovery_start.valid =
-                            crate::app::node_history::parse_start(&value).is_ok();
-                        self.recovery_start.value = value;
-                    }
-                    NodeSettingsMessage::RecoveryDateOpen => {
-                        self.recovery_date_picker_open = self.recovery_advanced;
-                    }
-                    NodeSettingsMessage::RecoveryDateCancel => {
-                        self.recovery_date_picker_open = false;
-                    }
-                    NodeSettingsMessage::RecoveryDateSelected(date) => {
-                        self.recovery_date_picker_open = false;
-                        let value = date.format("%Y-%m-%d").to_string();
-                        self.recovery_start.valid =
-                            crate::app::node_history::parse_start(&value).is_ok();
-                        self.recovery_start.value = value;
-                    }
-                    NodeSettingsMessage::RetentionDaysEdited(value) => {
-                        self.retention_days.valid = value
-                            .parse::<u32>()
-                            .is_ok_and(|days| (1..=3650).contains(&days));
-                        self.retention_days.value = value;
-                    }
-                    NodeSettingsMessage::RecoveryStart => {
-                        self.recovery_start.valid =
-                            crate::app::node_history::parse_start(&self.recovery_start.value)
-                                .is_ok();
-                        if self.recovery_start.valid {
-                            return Task::done(Message::NodeHistory(
-                                crate::app::node_history::Action::Recover(
-                                    self.recovery_start.value.clone(),
-                                ),
-                            ));
-                        }
-                    }
-                    NodeSettingsMessage::ImportConnectHistory => {
-                        return Task::done(Message::NodeHistory(
-                            crate::app::node_history::Action::Import,
-                        ))
-                    }
-                    NodeSettingsMessage::RecoveryResume => {
-                        return Task::done(Message::NodeHistory(
-                            crate::app::node_history::Action::Resume,
-                        ))
-                    }
-                    NodeSettingsMessage::RecoveryPause => {
-                        return Task::done(Message::NodeHistory(
-                            crate::app::node_history::Action::Pause,
-                        ))
-                    }
-                    NodeSettingsMessage::RecoveryCancel => {
-                        self.recovery_requested = false;
-                        return Task::done(Message::NodeHistory(
-                            crate::app::node_history::Action::Cancel,
-                        ));
-                    }
-                    NodeSettingsMessage::RetentionApply => {
-                        self.retention_days.valid = self
-                            .retention_days
-                            .value
-                            .parse::<u32>()
-                            .is_ok_and(|days| (1..=3650).contains(&days));
-                        if let Ok(days) = self.retention_days.value.parse::<u32>() {
-                            if self.retention_days.valid {
-                                return Task::done(Message::NodeHistory(
-                                    crate::app::node_history::Action::Retain(days),
-                                ));
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::RetryBackgroundNodeSetup => {
-                        // The App owns the background install and handles this
-                        // before it reaches the panel.
-                    }
-                    NodeSettingsMessage::SwitchToConnect => {
-                        // The App-level dispatcher always rewrites this into
-                        // either `SwitchToConnectFastPath(jwt)` (if a Connect
-                        // session is already live) or a navigation to the
-                        // Connect tab to sign in. We never land here directly.
-                    }
-                    NodeSettingsMessage::SwitchToConnectFastPath(jwt) => {
-                        return self.apply_connect_jwt(&daemon, cache, jwt.into_string());
-                    }
-                    NodeSettingsMessage::SetupLocalNode => {
-                        let default_addr = match cache.network {
-                            Network::Bitcoin => "127.0.0.1:8332",
-                            Network::Testnet => "127.0.0.1:18332",
-                            Network::Signet => "127.0.0.1:38332",
-                            Network::Testnet4 => "127.0.0.1:48332",
-                            _ => "127.0.0.1:18443",
-                        };
-                        self.pending_node_setup = Some(PendingNodeSetup {
-                            mode: None,
-                            addr: form::Value {
-                                valid: true,
-                                warning: None,
-                                value: default_addr.to_string(),
-                            },
-                            rpc_auth_vals: RpcAuthValues {
-                                cookie_path: form::Value {
-                                    valid: true,
-                                    warning: None,
-                                    value: String::new(),
-                                },
-                                user: form::Value::default(),
-                                password: form::Value::default(),
-                            },
-                            selected_auth_type: RpcAuthType::CookieFile,
-                            processing: false,
-                            // The managed node is shared by every Vault, so its
-                            // flavour is global: default the picker to whatever is
-                            // already configured, else Knots (matching the
-                            // installer). Switching it restarts the node for all
-                            // Vaults (handled by `maybe_start`).
-                            flavor: crate::node::bitcoind::configured_managed_flavor(
-                                &cache.datadir_path,
-                            )
-                            .unwrap_or(NodeFlavor::Knots),
-                            internal_stage: InternalSetupStage::Idle,
-                            internal_error: None,
-                            download_progress: 0.0,
-                        });
-                    }
-                    NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
-                        // Pick the managed flavour (Core or Knots) and begin the
-                        // download/install in one step. The choice is relay
-                        // policy only; both builds follow the same consensus
-                        // rules.
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            setup.flavor = flavor;
-                        }
-                        return self.start_internal_node_setup(cache);
-                    }
-                    NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
-                        if use_internal {
-                            // Retry path: re-run with the already-chosen flavour.
-                            return self.start_internal_node_setup(cache);
-                        } else if let Some(ref mut setup) = self.pending_node_setup {
-                            setup.mode = Some(false);
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeDownloadProgress(p) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            setup.download_progress = p;
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeDownloadComplete(result) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            match result {
-                                Ok(bytes) => {
-                                    let flavor = setup.flavor;
-                                    // Nothing downloaded for a mismatched
-                                    // provider is installed, and no manifest is
-                                    // fetched for it.
-                                    if let Err(e) = provider_serves_network(flavor, cache.network) {
-                                        setup.internal_stage = InternalSetupStage::Idle;
-                                        setup.internal_error = Some(e);
-                                        return Task::none();
-                                    }
-                                    setup.internal_stage = InternalSetupStage::Installing;
-                                    setup.download_progress = 100.0;
-                                    let coincube_datadir = cache.datadir_path.clone();
-                                    let network = cache.network;
-                                    let managed_owner = self.managed_owner_path();
-                                    return Task::perform(
-                                        async move {
-                                            // Fetch the release SHA256SUMS(+.asc)
-                                            // the archive is verified against
-                                            // (Knots); a no-op for Core.
-                                            let manifest = download::fetch_release_manifest(flavor)
-                                                .await
-                                                .map_err(|e| e.to_string())?;
-                                            ensure_tor_and_start_managed_for_owner(
-                                                coincube_datadir,
-                                                network,
-                                                flavor,
-                                                Some((bytes, manifest)),
-                                                false,
-                                                None,
-                                                managed_owner,
-                                            )
-                                            .await
-                                        },
-                                        |r| {
-                                            Message::View(view::Message::Settings(
-                                                view::SettingsMessage::NodeSettings(
-                                                    view::NodeSettingsMessage::SetupLocalNodeStartResult(
-                                                        r,
-                                                    ),
-                                                ),
-                                            ))
-                                        },
-                                    );
-                                }
-                                Err(e) => {
-                                    setup.internal_stage = InternalSetupStage::Downloading;
-                                    setup.internal_error = Some(e);
-                                }
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeStartResult(result) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            match result {
-                                Ok((bitcoind_cfg, bitcoind)) => {
-                                    if let Some(cfg) = daemon.config() {
-                                        *self
-                                            .managed_owner
-                                            .lock()
-                                            .unwrap_or_else(|e| e.into_inner()) =
-                                            bitcoind.owner_lock_path().map(PathBuf::from);
-                                        let mut new_cfg = cfg.clone();
-                                        new_cfg.pending_bitcoind = Some(bitcoind_cfg);
-                                        // This node supersedes a failed background
-                                        // install request.
-                                        new_cfg.pending_managed_node_install = None;
-                                        // Adopted a freshly set-up node — switch to
-                                        // it once synced.
-                                        new_cfg.auto_switch_to_pending = Some(true);
-                                        setup.internal_stage = InternalSetupStage::Done;
-                                        setup.processing = true;
-                                        return Task::batch([
-                                            Task::done(Message::SetInternalBitcoind(bitcoind)),
-                                            Task::done(Message::LoadDaemonConfig(Box::new(
-                                                new_cfg,
-                                            ))),
-                                        ]);
-                                    }
-                                }
-                                Err(e) => {
-                                    setup.internal_error = Some(e);
-                                }
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeCancel => {
-                        if matches!(&self.pending_node_setup, Some(s) if s.processing) {
-                            self.cancel_node_setup_in_flight = true;
-                        }
-                        self.pending_node_setup = None;
-                    }
-                    NodeSettingsMessage::SetupLocalNodeAddrChanged(addr) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            setup.addr.value = addr;
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(auth_type) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            setup.selected_auth_type = auth_type;
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeFieldEdited(field, value) => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            match field {
-                                "cookie_file_path" => setup.rpc_auth_vals.cookie_path.value = value,
-                                "user" => setup.rpc_auth_vals.user.value = value,
-                                "password" => setup.rpc_auth_vals.password.value = value,
-                                _ => {}
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::SetupLocalNodeConfirm => {
-                        if let Some(ref mut setup) = self.pending_node_setup {
-                            if setup.processing {
-                                return Task::none();
-                            }
-                            let new_addr = SocketAddr::from_str(&setup.addr.value);
-                            setup.addr.valid = new_addr.is_ok();
-                            let rpc_auth = match setup.selected_auth_type {
-                                RpcAuthType::CookieFile => {
-                                    if setup.rpc_auth_vals.cookie_path.value.is_empty() {
-                                        setup.rpc_auth_vals.cookie_path.valid = false;
-                                        None
-                                    } else {
-                                        let new_path = PathBuf::from_str(
-                                            &setup.rpc_auth_vals.cookie_path.value,
-                                        );
-                                        match new_path {
-                                            Ok(path) => {
-                                                setup.rpc_auth_vals.cookie_path.valid = true;
-                                                Some(BitcoindRpcAuth::CookieFile(path))
-                                            }
-                                            Err(_) => {
-                                                setup.rpc_auth_vals.cookie_path.valid = false;
-                                                None
-                                            }
-                                        }
-                                    }
-                                }
-                                RpcAuthType::UserPass => {
-                                    let user_ok = !setup.rpc_auth_vals.user.value.is_empty();
-                                    let pass_ok = !setup.rpc_auth_vals.password.value.is_empty();
-                                    setup.rpc_auth_vals.user.valid = user_ok;
-                                    setup.rpc_auth_vals.password.valid = pass_ok;
-                                    if user_ok && pass_ok {
-                                        Some(BitcoindRpcAuth::UserPass(
-                                            setup.rpc_auth_vals.user.value.clone(),
-                                            setup.rpc_auth_vals.password.value.clone(),
-                                        ))
-                                    } else {
-                                        None
-                                    }
-                                }
-                            };
-                            if let (Ok(addr), Some(rpc_auth)) = (new_addr, rpc_auth) {
-                                if let Some(cfg) = daemon.config() {
-                                    let mut new_cfg = cfg.clone();
-                                    new_cfg.pending_bitcoind =
-                                        Some(BitcoindConfig { rpc_auth, addr });
-                                    new_cfg.pending_managed_node_install = None;
-                                    // Adopted an existing/external node — switch to
-                                    // it once it's reachable and synced.
-                                    new_cfg.auto_switch_to_pending = Some(true);
-                                    setup.processing = true;
-                                    return Task::done(Message::LoadDaemonConfig(Box::new(
-                                        new_cfg,
-                                    )));
-                                }
-                            }
-                        }
-                    }
-                    NodeSettingsMessage::SwitchToBitcoind => {
-                        match cache.node_bitcoind_ibd {
-                            None => {
-                                self.warning = Some(Error::Unexpected(
-                                    "Bitcoin node sync status not yet known. \
-                                     Please wait a moment and try again."
-                                        .to_string(),
-                                ));
-                                return Task::none();
-                            }
-                            Some(true) => {
-                                self.warning =
-                                    Some(Error::Unexpected(coincube_ui::localized_format!(
-                                        "Bitcoin node is still syncing ({:.1}%). \
-                                         Please wait until sync is complete before switching.",
-                                        "El nodo de Bitcoin aún se está sincronizando ({:.1} %). \
-                                         Espera a que termine la sincronización antes de cambiar.",
-                                        crate::utils::syncing_percent(
-                                            cache.node_bitcoind_sync_progress.unwrap_or(0.0)
-                                        )
-                                    )));
-                                return Task::none();
-                            }
-                            Some(false) => {}
-                        }
-                        // Check whether the local wallet already tracks the history
-                        // or can recover it from the node's retained blocks.
-                        if let Err(reason) = local_node_serves_vault(cache) {
-                            let managed = self
-                                .full_config
-                                .as_ref()
-                                .and_then(crate::app::local_node_sync_config)
-                                .is_some_and(|cfg| {
-                                    crate::node::retention::is_managed_endpoint(
-                                        &cache.datadir_path,
-                                        cache.network,
-                                        cache.chain(),
-                                        cfg,
-                                    )
-                                });
-                            if managed && pruned_switch_refusal(cache).is_some() {
-                                self.recovery_requested = true;
-                                self.warning = None;
-                                return Task::none();
-                            }
-                            self.warning = Some(Error::Unexpected(reason));
-                            return Task::none();
-                        }
-                        // Switching stops the Connect backend, which throws a
-                        // running scan away: say so and let the user choose.
-                        if let Some(scan) = crate::app::running_vault_scan(daemon.backend(), cache)
-                        {
-                            self.pending_scan_discard = Some(scan);
-                            return Task::none();
-                        }
-                        return self.switch_to_pending_bitcoind(&daemon);
-                    }
-                    NodeSettingsMessage::ConfirmSwitchDiscardingScan => {
-                        if self.pending_scan_discard.take().is_some() {
-                            return self.switch_to_pending_bitcoind(&daemon);
-                        }
-                    }
-                    NodeSettingsMessage::CancelSwitchDiscardingScan => {
-                        self.pending_scan_discard = None;
-                    }
-                    // "Inbound connections": persist the preference sidecar.
-                    // The change takes effect the next time the managed node
-                    // starts (see `node::tor::prepare_inbound_tor`), so there's
-                    // nothing to restart here.
-                    NodeSettingsMessage::InboundTorToggled(on) => {
-                        self.inbound_tor_pref.enabled = on;
-                        self.persist_inbound_tor_pref(&cache.datadir_path);
-                    }
-                    NodeSettingsMessage::InboundTorOutboundToggled(on) => {
-                        self.inbound_tor_pref.outbound_via_tor = on;
-                        self.persist_inbound_tor_pref(&cache.datadir_path);
-                    }
-                    NodeSettingsMessage::InboundTorLimitUploadToggled(limit) => {
-                        self.inbound_tor_pref.max_upload_target_mb_day = if limit {
-                            Some(crate::node::bitcoind::MAX_UPLOAD_TARGET_MB_DAY_DEFAULT)
-                        } else {
-                            None
-                        };
-                        self.persist_inbound_tor_pref(&cache.datadir_path);
-                    }
-                    NodeSettingsMessage::ConfirmFlavorSwitch => {
-                        if let Some(flavor) = self.pending_flavor_switch.take() {
-                            // Reuse the managed-node setup flow: it downloads the
-                            // binary if needed, rewrites the conf, and restarts on
-                            // the new flavour (`maybe_start` stops the old one).
-                            self.pending_node_setup = Some(PendingNodeSetup {
-                                mode: Some(true),
-                                addr: form::Value::default(),
-                                rpc_auth_vals: RpcAuthValues::default(),
-                                selected_auth_type: RpcAuthType::CookieFile,
-                                processing: false,
-                                flavor,
-                                internal_stage: InternalSetupStage::Idle,
-                                internal_error: None,
-                                download_progress: 0.0,
-                            });
-                            return self.start_internal_node_setup(cache);
-                        }
-                    }
-                    NodeSettingsMessage::CancelFlavorSwitch => {
-                        self.pending_flavor_switch = None;
-                    }
-                    NodeSettingsMessage::CopyToClipboard(value) => {
-                        return clipboard::write(value);
-                    }
-                    NodeSettingsMessage::RestartNodeToApply => {
-                        // Restart the managed node now so freshly-toggled
-                        // inbound-over-Tor settings take effect, reusing the setup
-                        // progress panel + result handler. `force_restart` stops
-                        // the running node first (same flavour, so `maybe_start`
-                        // would otherwise reuse it).
-                        let Some(flavor) = self
-                            .bitcoind_settings
-                            .as_ref()
-                            .and_then(|s| s.managed_flavor)
-                        else {
-                            return Task::none();
-                        };
-                        // A ledger naming a provider of the wrong chain family
-                        // is refused before the node is stopped or Tor touched.
-                        if let Err(e) = provider_serves_network(flavor, cache.network) {
-                            self.warning = Some(Error::Unexpected(e));
-                            return Task::none();
-                        }
-                        self.pending_node_setup = Some(PendingNodeSetup {
-                            mode: Some(true),
-                            addr: form::Value::default(),
-                            rpc_auth_vals: RpcAuthValues::default(),
-                            selected_auth_type: RpcAuthType::CookieFile,
-                            processing: true,
-                            flavor,
-                            internal_stage: InternalSetupStage::Installing,
-                            internal_error: None,
-                            download_progress: 100.0,
-                        });
-                        let coincube_datadir = cache.datadir_path.clone();
-                        let network = cache.network;
-                        return Task::perform(
-                            ensure_tor_and_start_managed_for_owner(
-                                coincube_datadir,
-                                network,
-                                flavor,
-                                None,
-                                true,
-                                None,
-                                self.managed_owner_path(),
-                            ),
-                            |r| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::NodeSettings(
-                                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                    NodeSettingsMessage::CustomEsploraEdited(value) => {
-                        self.custom_esplora_url.value = value;
-                        self.custom_esplora_url.valid = true;
-                        self.custom_esplora_url.warning = None;
-                        // A previous verdict describes a different URL.
-                        self.custom_esplora_status = None;
-                    }
-                    NodeSettingsMessage::CustomEsploraApply => {
-                        let Some(url) = normalize_esplora_url(&self.custom_esplora_url.value)
-                        else {
-                            self.custom_esplora_url.valid = false;
-                            self.custom_esplora_url.warning =
-                                Some("Enter a full http:// or https:// URL");
-                            return Task::none();
-                        };
-                        self.custom_esplora_url.valid = true;
-                        self.custom_esplora_url.warning = None;
-                        self.custom_esplora_probing = true;
-                        self.custom_esplora_status = None;
-                        // Probe before switching: a typo'd URL would otherwise
-                        // park the daemon on an endpoint that never syncs, and
-                        // the failure would show up as a silent stall.
-                        return Task::perform(probe_esplora_tip(url), |r| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::NodeSettings(
-                                    view::NodeSettingsMessage::CustomEsploraProbeResult(r),
-                                ),
-                            ))
-                        });
-                    }
-                    NodeSettingsMessage::CustomEsploraProbeResult(result) => {
-                        self.custom_esplora_probing = false;
-                        let height = match result {
-                            Ok(h) => h,
-                            Err(e) => {
-                                self.custom_esplora_status = Some(Err(e));
-                                return Task::none();
-                            }
-                        };
-                        self.custom_esplora_status = Some(Ok(height));
-                        let Some(url) = normalize_esplora_url(&self.custom_esplora_url.value)
-                        else {
-                            return Task::none();
-                        };
-                        let Some(cfg) = daemon.config() else {
-                            warn!(
-                                "custom Esplora: daemon.config() is None (external coincubed?) \
-                                 — cannot switch"
-                            );
-                            self.custom_esplora_status = Some(Err(
-                                "This install runs an external daemon — set the Esplora URL in \
-                                 its own configuration."
-                                    .to_string(),
-                            ));
-                            return Task::none();
-                        };
-                        let mut new_cfg = cfg.clone();
-                        if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone()
-                        {
-                            new_cfg.pending_bitcoind = Some(current);
-                        }
-                        // Deliberate user choice — don't auto-revert to a
-                        // parked local node on the next sync probe.
-                        new_cfg.auto_switch_to_pending = Some(false);
-                        // No fallbacks and no token. That is the whole point:
-                        // a fallback chain would quietly send the very address
-                        // queries the user is trying to keep private back to
-                        // COINCUBE or a public provider the moment their own
-                        // node hiccups. If their endpoint is down, sync stalls
-                        // visibly instead.
-                        new_cfg.bitcoin_backend =
-                            Some(BitcoinBackend::Esplora(coincubed::config::EsploraConfig {
-                                addr: url.clone(),
-                                token: None,
-                                fallback_addr: None,
-                                fallback_token: None,
-                                secondary_fallback_addr: None,
-                                secondary_fallback_token: None,
-                            }));
-                        new_cfg.bitcoin_config.poll_interval_secs = std::time::Duration::from_secs(
-                            coincubed::config::ESPLORA_POLL_INTERVAL_SECS,
-                        );
-                        new_cfg.fallback_esplora = None;
-                        info!("Switching chain queries to custom Esplora {url} (tip {height})");
-                        self.node_switch_processing = true;
-                        self.warning = None;
-                        return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));
-                    }
-                    NodeSettingsMessage::NodeResourcePruneEdited(value) => {
-                        crate::node::bitcoind::set_prune_form_value(&mut self.node_prune_mb, value);
-                    }
-                    NodeSettingsMessage::NodeResourceMaxMempoolEdited(value) => {
-                        crate::node::bitcoind::set_max_mempool_form_value(
-                            &mut self.node_max_mempool_mb,
-                            value,
-                        );
-                    }
-                    NodeSettingsMessage::NodeResourceSmallComputer => {
-                        self.apply_node_resource_preset(NodeResources::small_computer());
-                    }
-                    NodeSettingsMessage::NodeResourceRegularComputer => {
-                        self.apply_node_resource_preset(NodeResources::regular_computer());
-                    }
-                    NodeSettingsMessage::NodeResourceApply => {
-                        // Validate the fields; bail (leaving them flagged) on bad
-                        // input so nothing below bitcoind's floors reaches disk.
-                        let Some(resources) = crate::node::bitcoind::resources_from_forms(
-                            &mut self.node_prune_mb,
-                            &mut self.node_max_mempool_mb,
-                        ) else {
-                            return Task::none();
-                        };
-                        // Only the internal managed node carries resource settings.
-                        let Some(flavor) = self
-                            .bitcoind_settings
-                            .as_ref()
-                            .and_then(|s| s.managed_flavor)
-                        else {
-                            return Task::none();
-                        };
-                        // Same refusal as the restart: nothing is rewritten,
-                        // stopped or started for a mismatched provider.
-                        if let Err(e) = provider_serves_network(flavor, cache.network) {
-                            self.warning = Some(Error::Unexpected(e));
-                            return Task::none();
-                        }
-                        // Reuse the setup progress panel + result handler; the
-                        // force-restart applies the rewritten conf (same flavour,
-                        // so `maybe_start` would otherwise reuse the running node).
-                        self.pending_node_setup = Some(PendingNodeSetup {
-                            mode: Some(true),
-                            addr: form::Value::default(),
-                            rpc_auth_vals: RpcAuthValues::default(),
-                            selected_auth_type: RpcAuthType::CookieFile,
-                            processing: true,
-                            flavor,
-                            internal_stage: InternalSetupStage::Installing,
-                            internal_error: None,
-                            download_progress: 100.0,
-                        });
-                        let coincube_datadir = cache.datadir_path.clone();
-                        let network = cache.network;
-                        return Task::perform(
-                            ensure_tor_and_start_managed_for_owner(
-                                coincube_datadir,
-                                network,
-                                flavor,
-                                None,
-                                true,
-                                Some(resources),
-                                self.managed_owner_path(),
-                            ),
-                            |r| {
-                                Message::View(view::Message::Settings(
-                                    view::SettingsMessage::NodeSettings(
-                                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                }
+                return self.update_node_settings(daemon, cache, msg);
             }
             _ => {}
         }
@@ -1426,6 +700,791 @@ struct NodeBackendStatus {
 }
 
 impl BitcoindSettingsState {
+    fn daemon_config_loaded(
+        &mut self,
+        daemon: &dyn Daemon,
+        result: Result<(), Error>,
+    ) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                self.config_updated = true;
+                self.node_switch_processing = false;
+                self.pending_node_setup = None;
+                self.warning = None;
+                self.full_config = daemon.config().cloned();
+                if self.full_config.as_ref().is_some_and(|cfg| {
+                    matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
+                }) {
+                    // The App cleared its switch intent after promotion;
+                    // retire the open panel's copy as well.
+                    self.recovery_requested = false;
+                }
+                if self.cancel_node_setup_in_flight {
+                    self.cancel_node_setup_in_flight = false;
+                    if let Some(cfg) = daemon.config() {
+                        let mut rollback_cfg = cfg.clone();
+                        rollback_cfg.pending_bitcoind = None;
+                        // Keep the invariant: no pending node ⇒ nothing to
+                        // auto-switch to. Leaving the flag set would strand a
+                        // stale "auto-switch enabled" state with no target.
+                        rollback_cfg.auto_switch_to_pending = Some(false);
+                        return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
+                    }
+                }
+                if let Some(settings) = &mut self.bitcoind_settings {
+                    settings.edited(true);
+                    return Task::perform(async {}, |_| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::EditBitcoindSettings,
+                        ))
+                    });
+                }
+                if let Some(settings) = &mut self.electrum_settings {
+                    settings.edited(true);
+                    return Task::perform(async {}, |_| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::EditBitcoindSettings,
+                        ))
+                    });
+                }
+            }
+            Err(e) => {
+                self.config_updated = false;
+                self.node_switch_processing = false;
+                self.pending_node_setup = None;
+                self.cancel_node_setup_in_flight = false;
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                if let Some(settings) = &mut self.bitcoind_settings {
+                    settings.edited(false);
+                }
+                if let Some(settings) = &mut self.electrum_settings {
+                    settings.edited(false);
+                }
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        }
+        Task::none()
+    }
+
+    fn update_node_settings(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: view::NodeSettingsMessage,
+    ) -> Task<Message> {
+        use view::NodeSettingsMessage;
+        match message {
+            NodeSettingsMessage::RecoveryAdvancedToggled => {
+                self.recovery_advanced = !self.recovery_advanced;
+                if !self.recovery_advanced {
+                    self.recovery_date_picker_open = false;
+                }
+            }
+            NodeSettingsMessage::RecoverySourceSelected(from_date) => {
+                self.recovery_advanced = from_date;
+                if !from_date {
+                    self.recovery_date_picker_open = false;
+                }
+            }
+            NodeSettingsMessage::NodeLogToggled => {
+                self.node_log_open = !self.node_log_open;
+            }
+            NodeSettingsMessage::NodeAdvancedToggled => {
+                self.node_advanced = !self.node_advanced;
+            }
+            NodeSettingsMessage::RecoveryDismiss => {
+                self.recovery_requested = false;
+                self.recovery_date_picker_open = false;
+                self.warning = None;
+            }
+            NodeSettingsMessage::RecoveryStartEdited(value) => {
+                self.recovery_date_picker_open = false;
+                self.recovery_start.valid = crate::app::node_history::parse_start(&value).is_ok();
+                self.recovery_start.value = value;
+            }
+            NodeSettingsMessage::RecoveryDateOpen => {
+                self.recovery_date_picker_open = self.recovery_advanced;
+            }
+            NodeSettingsMessage::RecoveryDateCancel => {
+                self.recovery_date_picker_open = false;
+            }
+            NodeSettingsMessage::RecoveryDateSelected(date) => {
+                self.recovery_date_picker_open = false;
+                let value = date.format("%Y-%m-%d").to_string();
+                self.recovery_start.valid = crate::app::node_history::parse_start(&value).is_ok();
+                self.recovery_start.value = value;
+            }
+            NodeSettingsMessage::RetentionDaysEdited(value) => {
+                self.retention_days.valid = value
+                    .parse::<u32>()
+                    .is_ok_and(|days| (1..=3650).contains(&days));
+                self.retention_days.value = value;
+            }
+            NodeSettingsMessage::RecoveryStart => {
+                self.recovery_start.valid =
+                    crate::app::node_history::parse_start(&self.recovery_start.value).is_ok();
+                if self.recovery_start.valid {
+                    return Task::done(Message::NodeHistory(
+                        crate::app::node_history::Action::Recover(
+                            self.recovery_start.value.clone(),
+                        ),
+                    ));
+                }
+            }
+            NodeSettingsMessage::ImportConnectHistory => {
+                return Task::done(Message::NodeHistory(
+                    crate::app::node_history::Action::Import,
+                ))
+            }
+            NodeSettingsMessage::RecoveryResume => {
+                return Task::done(Message::NodeHistory(
+                    crate::app::node_history::Action::Resume,
+                ))
+            }
+            NodeSettingsMessage::RecoveryPause => {
+                return Task::done(Message::NodeHistory(
+                    crate::app::node_history::Action::Pause,
+                ))
+            }
+            NodeSettingsMessage::RecoveryCancel => {
+                self.recovery_requested = false;
+                return Task::done(Message::NodeHistory(
+                    crate::app::node_history::Action::Cancel,
+                ));
+            }
+            NodeSettingsMessage::RetentionApply => {
+                return self.apply_node_retention();
+            }
+            NodeSettingsMessage::RetryBackgroundNodeSetup => {
+                // The App owns the background install and handles this
+                // before it reaches the panel.
+            }
+            NodeSettingsMessage::SwitchToConnect => {
+                // The App-level dispatcher always rewrites this into
+                // either `SwitchToConnectFastPath(jwt)` (if a Connect
+                // session is already live) or a navigation to the
+                // Connect tab to sign in. We never land here directly.
+            }
+            NodeSettingsMessage::SwitchToConnectFastPath(jwt) => {
+                return self.apply_connect_jwt(&daemon, cache, jwt.into_string());
+            }
+            NodeSettingsMessage::SetupLocalNode => {
+                self.open_local_node_setup(cache);
+            }
+            NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
+                // Pick the managed flavour (Core or Knots) and begin the
+                // download/install in one step. The choice is relay
+                // policy only; both builds follow the same consensus
+                // rules.
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.flavor = flavor;
+                }
+                return self.start_internal_node_setup(cache);
+            }
+            NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
+                if use_internal {
+                    // Retry path: re-run with the already-chosen flavour.
+                    return self.start_internal_node_setup(cache);
+                } else if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.mode = Some(false);
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeDownloadProgress(p) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.download_progress = p;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeDownloadComplete(result) => {
+                return self.complete_local_node_download(cache, result);
+            }
+            NodeSettingsMessage::SetupLocalNodeStartResult(result) => {
+                return self.apply_local_node_start_result(daemon, result);
+            }
+            NodeSettingsMessage::SetupLocalNodeCancel => {
+                if matches!(&self.pending_node_setup, Some(s) if s.processing) {
+                    self.cancel_node_setup_in_flight = true;
+                }
+                self.pending_node_setup = None;
+            }
+            NodeSettingsMessage::SetupLocalNodeAddrChanged(addr) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.addr.value = addr;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(auth_type) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.selected_auth_type = auth_type;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeFieldEdited(field, value) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    match field {
+                        "cookie_file_path" => setup.rpc_auth_vals.cookie_path.value = value,
+                        "user" => setup.rpc_auth_vals.user.value = value,
+                        "password" => setup.rpc_auth_vals.password.value = value,
+                        _ => {}
+                    }
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeConfirm => {
+                return self.confirm_local_node_setup(daemon);
+            }
+            NodeSettingsMessage::SwitchToBitcoind => {
+                return self.request_switch_to_bitcoind(daemon, cache);
+            }
+            NodeSettingsMessage::ConfirmSwitchDiscardingScan => {
+                if self.pending_scan_discard.take().is_some() {
+                    return self.switch_to_pending_bitcoind(&daemon);
+                }
+            }
+            NodeSettingsMessage::CancelSwitchDiscardingScan => {
+                self.pending_scan_discard = None;
+            }
+            // "Inbound connections": persist the preference sidecar.
+            // The change takes effect the next time the managed node
+            // starts (see `node::tor::prepare_inbound_tor`), so there's
+            // nothing to restart here.
+            NodeSettingsMessage::InboundTorToggled(on) => {
+                self.inbound_tor_pref.enabled = on;
+                self.persist_inbound_tor_pref(&cache.datadir_path);
+            }
+            NodeSettingsMessage::InboundTorOutboundToggled(on) => {
+                self.inbound_tor_pref.outbound_via_tor = on;
+                self.persist_inbound_tor_pref(&cache.datadir_path);
+            }
+            NodeSettingsMessage::InboundTorLimitUploadToggled(limit) => {
+                self.inbound_tor_pref.max_upload_target_mb_day = if limit {
+                    Some(crate::node::bitcoind::MAX_UPLOAD_TARGET_MB_DAY_DEFAULT)
+                } else {
+                    None
+                };
+                self.persist_inbound_tor_pref(&cache.datadir_path);
+            }
+            NodeSettingsMessage::ConfirmFlavorSwitch => {
+                return self.confirm_node_flavor_switch(cache);
+            }
+            NodeSettingsMessage::CancelFlavorSwitch => {
+                self.pending_flavor_switch = None;
+            }
+            NodeSettingsMessage::CopyToClipboard(value) => {
+                return clipboard::write(value);
+            }
+            NodeSettingsMessage::RestartNodeToApply => {
+                return self.restart_node_to_apply(cache);
+            }
+            NodeSettingsMessage::CustomEsploraEdited(value) => {
+                self.custom_esplora_url.value = value;
+                self.custom_esplora_url.valid = true;
+                self.custom_esplora_url.warning = None;
+                // A previous verdict describes a different URL.
+                self.custom_esplora_status = None;
+            }
+            NodeSettingsMessage::CustomEsploraApply => {
+                return self.probe_custom_esplora();
+            }
+            NodeSettingsMessage::CustomEsploraProbeResult(result) => {
+                return self.apply_custom_esplora_probe_result(daemon, result);
+            }
+            NodeSettingsMessage::NodeResourcePruneEdited(value) => {
+                crate::node::bitcoind::set_prune_form_value(&mut self.node_prune_mb, value);
+            }
+            NodeSettingsMessage::NodeResourceMaxMempoolEdited(value) => {
+                crate::node::bitcoind::set_max_mempool_form_value(
+                    &mut self.node_max_mempool_mb,
+                    value,
+                );
+            }
+            NodeSettingsMessage::NodeResourceSmallComputer => {
+                self.apply_node_resource_preset(NodeResources::small_computer());
+            }
+            NodeSettingsMessage::NodeResourceRegularComputer => {
+                self.apply_node_resource_preset(NodeResources::regular_computer());
+            }
+            NodeSettingsMessage::NodeResourceApply => {
+                return self.apply_node_resources(cache);
+            }
+        }
+        Task::none()
+    }
+
+    fn open_local_node_setup(&mut self, cache: &Cache) {
+        let default_addr = match cache.network {
+            Network::Bitcoin => "127.0.0.1:8332",
+            Network::Testnet => "127.0.0.1:18332",
+            Network::Signet => "127.0.0.1:38332",
+            Network::Testnet4 => "127.0.0.1:48332",
+            _ => "127.0.0.1:18443",
+        };
+        self.pending_node_setup = Some(PendingNodeSetup {
+            mode: None,
+            addr: form::Value {
+                valid: true,
+                warning: None,
+                value: default_addr.to_string(),
+            },
+            rpc_auth_vals: RpcAuthValues {
+                cookie_path: form::Value {
+                    valid: true,
+                    warning: None,
+                    value: String::new(),
+                },
+                user: form::Value::default(),
+                password: form::Value::default(),
+            },
+            selected_auth_type: RpcAuthType::CookieFile,
+            processing: false,
+            // The managed node is shared by every Vault, so its
+            // flavour is global: default the picker to whatever is
+            // already configured, else Knots (matching the
+            // installer). Switching it restarts the node for all
+            // Vaults (handled by `maybe_start`).
+            flavor: crate::node::bitcoind::configured_managed_flavor(&cache.datadir_path)
+                .unwrap_or(NodeFlavor::Knots),
+            internal_stage: InternalSetupStage::Idle,
+            internal_error: None,
+            download_progress: 0.0,
+        });
+    }
+
+    fn complete_local_node_download(
+        &mut self,
+        cache: &Cache,
+        result: Result<Vec<u8>, String>,
+    ) -> Task<Message> {
+        if let Some(ref mut setup) = self.pending_node_setup {
+            match result {
+                Ok(bytes) => {
+                    let flavor = setup.flavor;
+                    // Nothing downloaded for a mismatched
+                    // provider is installed, and no manifest is
+                    // fetched for it.
+                    if let Err(e) = provider_serves_network(flavor, cache.network) {
+                        setup.internal_stage = InternalSetupStage::Idle;
+                        setup.internal_error = Some(e);
+                        return Task::none();
+                    }
+                    setup.internal_stage = InternalSetupStage::Installing;
+                    setup.download_progress = 100.0;
+                    let coincube_datadir = cache.datadir_path.clone();
+                    let network = cache.network;
+                    let managed_owner = self.managed_owner_path();
+                    return Task::perform(
+                        async move {
+                            // Fetch the release SHA256SUMS(+.asc)
+                            // the archive is verified against
+                            // (Knots); a no-op for Core.
+                            let manifest = download::fetch_release_manifest(flavor)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            ensure_tor_and_start_managed_for_owner(
+                                coincube_datadir,
+                                network,
+                                flavor,
+                                Some((bytes, manifest)),
+                                false,
+                                None,
+                                managed_owner,
+                            )
+                            .await
+                        },
+                        |r| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::NodeSettings(
+                                    view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                                ),
+                            ))
+                        },
+                    );
+                }
+                Err(e) => {
+                    setup.internal_stage = InternalSetupStage::Downloading;
+                    setup.internal_error = Some(e);
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn apply_local_node_start_result(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        result: Result<(BitcoindConfig, Bitcoind), String>,
+    ) -> Task<Message> {
+        if let Some(ref mut setup) = self.pending_node_setup {
+            match result {
+                Ok((bitcoind_cfg, bitcoind)) => {
+                    if let Some(cfg) = daemon.config() {
+                        *self.managed_owner.lock().unwrap_or_else(|e| e.into_inner()) =
+                            bitcoind.owner_lock_path().map(PathBuf::from);
+                        let mut new_cfg = cfg.clone();
+                        new_cfg.pending_bitcoind = Some(bitcoind_cfg);
+                        // This node supersedes a failed background
+                        // install request.
+                        new_cfg.pending_managed_node_install = None;
+                        // Adopted a freshly set-up node — switch to
+                        // it once synced.
+                        new_cfg.auto_switch_to_pending = Some(true);
+                        setup.internal_stage = InternalSetupStage::Done;
+                        setup.processing = true;
+                        return Task::batch([
+                            Task::done(Message::SetInternalBitcoind(bitcoind)),
+                            Task::done(Message::LoadDaemonConfig(Box::new(new_cfg))),
+                        ]);
+                    }
+                }
+                Err(e) => {
+                    setup.internal_error = Some(e);
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn confirm_local_node_setup(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if let Some(ref mut setup) = self.pending_node_setup {
+            if setup.processing {
+                return Task::none();
+            }
+            let new_addr = SocketAddr::from_str(&setup.addr.value);
+            setup.addr.valid = new_addr.is_ok();
+            let rpc_auth = match setup.selected_auth_type {
+                RpcAuthType::CookieFile => {
+                    if setup.rpc_auth_vals.cookie_path.value.is_empty() {
+                        setup.rpc_auth_vals.cookie_path.valid = false;
+                        None
+                    } else {
+                        let new_path = PathBuf::from_str(&setup.rpc_auth_vals.cookie_path.value);
+                        match new_path {
+                            Ok(path) => {
+                                setup.rpc_auth_vals.cookie_path.valid = true;
+                                Some(BitcoindRpcAuth::CookieFile(path))
+                            }
+                            Err(_) => {
+                                setup.rpc_auth_vals.cookie_path.valid = false;
+                                None
+                            }
+                        }
+                    }
+                }
+                RpcAuthType::UserPass => {
+                    let user_ok = !setup.rpc_auth_vals.user.value.is_empty();
+                    let pass_ok = !setup.rpc_auth_vals.password.value.is_empty();
+                    setup.rpc_auth_vals.user.valid = user_ok;
+                    setup.rpc_auth_vals.password.valid = pass_ok;
+                    if user_ok && pass_ok {
+                        Some(BitcoindRpcAuth::UserPass(
+                            setup.rpc_auth_vals.user.value.clone(),
+                            setup.rpc_auth_vals.password.value.clone(),
+                        ))
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let (Ok(addr), Some(rpc_auth)) = (new_addr, rpc_auth) {
+                if let Some(cfg) = daemon.config() {
+                    let mut new_cfg = cfg.clone();
+                    new_cfg.pending_bitcoind = Some(BitcoindConfig { rpc_auth, addr });
+                    new_cfg.pending_managed_node_install = None;
+                    // Adopted an existing/external node — switch to
+                    // it once it's reachable and synced.
+                    new_cfg.auto_switch_to_pending = Some(true);
+                    setup.processing = true;
+                    return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn request_switch_to_bitcoind(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        match cache.node_bitcoind_ibd {
+            None => {
+                self.warning = Some(Error::Unexpected(
+                    "Bitcoin node sync status not yet known. \
+                     Please wait a moment and try again."
+                        .to_string(),
+                ));
+                return Task::none();
+            }
+            Some(true) => {
+                self.warning = Some(Error::Unexpected(coincube_ui::localized_format!(
+                    "Bitcoin node is still syncing ({:.1}%). \
+                         Please wait until sync is complete before switching.",
+                    "El nodo de Bitcoin aún se está sincronizando ({:.1} %). \
+                         Espera a que termine la sincronización antes de cambiar.",
+                    crate::utils::syncing_percent(cache.node_bitcoind_sync_progress.unwrap_or(0.0))
+                )));
+                return Task::none();
+            }
+            Some(false) => {}
+        }
+        // Check whether the local wallet already tracks the history
+        // or can recover it from the node's retained blocks.
+        if let Err(reason) = local_node_serves_vault(cache) {
+            let managed = self
+                .full_config
+                .as_ref()
+                .and_then(crate::app::local_node_sync_config)
+                .is_some_and(|cfg| {
+                    crate::node::retention::is_managed_endpoint(
+                        &cache.datadir_path,
+                        cache.network,
+                        cache.chain(),
+                        cfg,
+                    )
+                });
+            if managed && pruned_switch_refusal(cache).is_some() {
+                self.recovery_requested = true;
+                self.warning = None;
+                return Task::none();
+            }
+            self.warning = Some(Error::Unexpected(reason));
+            return Task::none();
+        }
+        // Switching stops the Connect backend, which throws a
+        // running scan away: say so and let the user choose.
+        if let Some(scan) = crate::app::running_vault_scan(daemon.backend(), cache) {
+            self.pending_scan_discard = Some(scan);
+            return Task::none();
+        }
+        self.switch_to_pending_bitcoind(&daemon)
+    }
+
+    fn confirm_node_flavor_switch(&mut self, cache: &Cache) -> Task<Message> {
+        if let Some(flavor) = self.pending_flavor_switch.take() {
+            // Reuse the managed-node setup flow: it downloads the
+            // binary if needed, rewrites the conf, and restarts on
+            // the new flavour (`maybe_start` stops the old one).
+            self.pending_node_setup = Some(PendingNodeSetup {
+                mode: Some(true),
+                addr: form::Value::default(),
+                rpc_auth_vals: RpcAuthValues::default(),
+                selected_auth_type: RpcAuthType::CookieFile,
+                processing: false,
+                flavor,
+                internal_stage: InternalSetupStage::Idle,
+                internal_error: None,
+                download_progress: 0.0,
+            });
+            return self.start_internal_node_setup(cache);
+        }
+        Task::none()
+    }
+
+    fn restart_node_to_apply(&mut self, cache: &Cache) -> Task<Message> {
+        // Restart the managed node now so freshly-toggled
+        // inbound-over-Tor settings take effect, reusing the setup
+        // progress panel + result handler. `force_restart` stops
+        // the running node first (same flavour, so `maybe_start`
+        // would otherwise reuse it).
+        let Some(flavor) = self
+            .bitcoind_settings
+            .as_ref()
+            .and_then(|s| s.managed_flavor)
+        else {
+            return Task::none();
+        };
+        // A ledger naming a provider of the wrong chain family
+        // is refused before the node is stopped or Tor touched.
+        if let Err(e) = provider_serves_network(flavor, cache.network) {
+            self.warning = Some(Error::Unexpected(e));
+            return Task::none();
+        }
+        self.pending_node_setup = Some(PendingNodeSetup {
+            mode: Some(true),
+            addr: form::Value::default(),
+            rpc_auth_vals: RpcAuthValues::default(),
+            selected_auth_type: RpcAuthType::CookieFile,
+            processing: true,
+            flavor,
+            internal_stage: InternalSetupStage::Installing,
+            internal_error: None,
+            download_progress: 100.0,
+        });
+        let coincube_datadir = cache.datadir_path.clone();
+        let network = cache.network;
+        Task::perform(
+            ensure_tor_and_start_managed_for_owner(
+                coincube_datadir,
+                network,
+                flavor,
+                None,
+                true,
+                None,
+                self.managed_owner_path(),
+            ),
+            |r| {
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::NodeSettings(
+                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn probe_custom_esplora(&mut self) -> Task<Message> {
+        let Some(url) = normalize_esplora_url(&self.custom_esplora_url.value) else {
+            self.custom_esplora_url.valid = false;
+            self.custom_esplora_url.warning = Some("Enter a full http:// or https:// URL");
+            return Task::none();
+        };
+        self.custom_esplora_url.valid = true;
+        self.custom_esplora_url.warning = None;
+        self.custom_esplora_probing = true;
+        self.custom_esplora_status = None;
+        // Probe before switching: a typo'd URL would otherwise
+        // park the daemon on an endpoint that never syncs, and
+        // the failure would show up as a silent stall.
+        Task::perform(probe_esplora_tip(url), |r| {
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::NodeSettings(
+                    view::NodeSettingsMessage::CustomEsploraProbeResult(r),
+                ),
+            ))
+        })
+    }
+
+    fn apply_custom_esplora_probe_result(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        result: Result<u32, String>,
+    ) -> Task<Message> {
+        self.custom_esplora_probing = false;
+        let height = match result {
+            Ok(h) => h,
+            Err(e) => {
+                self.custom_esplora_status = Some(Err(e));
+                return Task::none();
+            }
+        };
+        self.custom_esplora_status = Some(Ok(height));
+        let Some(url) = normalize_esplora_url(&self.custom_esplora_url.value) else {
+            return Task::none();
+        };
+        let Some(cfg) = daemon.config() else {
+            warn!(
+                "custom Esplora: daemon.config() is None (external coincubed?) \
+                 — cannot switch"
+            );
+            self.custom_esplora_status = Some(Err(
+                "This install runs an external daemon — set the Esplora URL in \
+                 its own configuration."
+                    .to_string(),
+            ));
+            return Task::none();
+        };
+        let mut new_cfg = cfg.clone();
+        if let Some(BitcoinBackend::Bitcoind(current)) = cfg.bitcoin_backend.clone() {
+            new_cfg.pending_bitcoind = Some(current);
+        }
+        // Deliberate user choice — don't auto-revert to a
+        // parked local node on the next sync probe.
+        new_cfg.auto_switch_to_pending = Some(false);
+        // No fallbacks and no token. That is the whole point:
+        // a fallback chain would quietly send the very address
+        // queries the user is trying to keep private back to
+        // COINCUBE or a public provider the moment their own
+        // node hiccups. If their endpoint is down, sync stalls
+        // visibly instead.
+        new_cfg.bitcoin_backend = Some(BitcoinBackend::Esplora(coincubed::config::EsploraConfig {
+            addr: url.clone(),
+            token: None,
+            fallback_addr: None,
+            fallback_token: None,
+            secondary_fallback_addr: None,
+            secondary_fallback_token: None,
+        }));
+        new_cfg.bitcoin_config.poll_interval_secs =
+            std::time::Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
+        new_cfg.fallback_esplora = None;
+        info!("Switching chain queries to custom Esplora {url} (tip {height})");
+        self.node_switch_processing = true;
+        self.warning = None;
+        Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)))
+    }
+
+    fn apply_node_resources(&mut self, cache: &Cache) -> Task<Message> {
+        // Validate the fields; bail (leaving them flagged) on bad
+        // input so nothing below bitcoind's floors reaches disk.
+        let Some(resources) = crate::node::bitcoind::resources_from_forms(
+            &mut self.node_prune_mb,
+            &mut self.node_max_mempool_mb,
+        ) else {
+            return Task::none();
+        };
+        // Only the internal managed node carries resource settings.
+        let Some(flavor) = self
+            .bitcoind_settings
+            .as_ref()
+            .and_then(|s| s.managed_flavor)
+        else {
+            return Task::none();
+        };
+        // Same refusal as the restart: nothing is rewritten,
+        // stopped or started for a mismatched provider.
+        if let Err(e) = provider_serves_network(flavor, cache.network) {
+            self.warning = Some(Error::Unexpected(e));
+            return Task::none();
+        }
+        // Reuse the setup progress panel + result handler; the
+        // force-restart applies the rewritten conf (same flavour,
+        // so `maybe_start` would otherwise reuse the running node).
+        self.pending_node_setup = Some(PendingNodeSetup {
+            mode: Some(true),
+            addr: form::Value::default(),
+            rpc_auth_vals: RpcAuthValues::default(),
+            selected_auth_type: RpcAuthType::CookieFile,
+            processing: true,
+            flavor,
+            internal_stage: InternalSetupStage::Installing,
+            internal_error: None,
+            download_progress: 100.0,
+        });
+        let coincube_datadir = cache.datadir_path.clone();
+        let network = cache.network;
+        Task::perform(
+            ensure_tor_and_start_managed_for_owner(
+                coincube_datadir,
+                network,
+                flavor,
+                None,
+                true,
+                Some(resources),
+                self.managed_owner_path(),
+            ),
+            |r| {
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::NodeSettings(
+                        view::NodeSettingsMessage::SetupLocalNodeStartResult(r),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn apply_node_retention(&mut self) -> Task<Message> {
+        self.retention_days.valid = self
+            .retention_days
+            .value
+            .parse::<u32>()
+            .is_ok_and(|days| (1..=3650).contains(&days));
+        if let Ok(days) = self.retention_days.value.parse::<u32>() {
+            if self.retention_days.valid {
+                return Task::done(Message::NodeHistory(
+                    crate::app::node_history::Action::Retain(days),
+                ));
+            }
+        }
+        Task::none()
+    }
+
     fn blake2b_node_view<'a>(
         &'a self,
         menu: &'a Menu,
