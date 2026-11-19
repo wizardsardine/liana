@@ -5666,101 +5666,9 @@ impl ConnectAccountPanel {
                     *passphrase = text;
                 }
             }
-            DuressMessage::SubmitClear => {
-                let ConnectFlowStep::DuressRecovery {
-                    passphrase,
-                    submitting,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *submitting {
-                    return iced::Task::none();
-                }
-                let passphrase = zeroize::Zeroizing::new(passphrase.clone());
-                *submitting = true;
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.clear_duress(&passphrase).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::ClearResult(
-                                res.map_err(|e| e.to_string()),
-                                gen,
-                            )),
-                        ))
-                    },
-                );
-            }
+            DuressMessage::SubmitClear => return self.submit_duress_recovery(),
             DuressMessage::ClearResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                let mut cleared_ok = false;
-                if let ConnectFlowStep::DuressRecovery {
-                    submitting,
-                    cleared,
-                    ..
-                } = &mut self.step
-                {
-                    *submitting = false;
-                    match res {
-                        Ok(()) => {
-                            *cleared = true;
-                            cleared_ok = true;
-                        }
-                        Err(e) => {
-                            // The all-clear screen has its own Submit; a
-                            // second button on the card would race it.
-                            self.error = Some(PanelError::settled(UserError::logged(
-                                "Couldn't confirm the all-clear",
-                                "Check your internet connection and try again.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                e,
-                            )))
-                        }
-                    }
-                }
-                if cleared_ok {
-                    // The server confirmed the all-clear. The post-sign-in mirror
-                    // may have set DuressLocalState.active = true on this device,
-                    // so reset it durably — otherwise the next launch reconcile
-                    // routes back into the cryptic screen for an account that's
-                    // already been cleared. Mirrors the gRPC DuressCleared and
-                    // cryptic-screen poll resets.
-                    return iced::Task::perform(
-                        async move {
-                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                let root = dir.path();
-                                match crate::services::duress::DuressLocalState::load(root) {
-                                    Ok(mut st) if st.active => {
-                                        st.active = false;
-                                        st.unlock_at = None;
-                                        if let Err(e) = st.save(root) {
-                                            log::warn!(
-                                                "[CONNECT] failed to clear local duress \
-                                                 active state: {e}"
-                                            );
-                                        }
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => log::warn!(
-                                        "[CONNECT] reading duress state failed; \
-                                         not overwriting: {e}"
-                                    ),
-                                }
-                            }
-                        },
-                        |_| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::DuressDeviceRegistered,
-                            ))
-                        },
-                    );
-                }
+                return self.apply_duress_recovery_result(res, gen)
             }
             DuressMessage::ForgotAllClear => {
                 return iced::Task::done(Message::View(view::Message::OpenUrl(
@@ -5785,56 +5693,7 @@ impl ConnectAccountPanel {
 
     fn update_duress_enrollment_form(&mut self, message: DuressMessage) -> iced::Task<Message> {
         match message {
-            DuressMessage::StartEnrollment => {
-                // An abandoned submission still owns the server response and
-                // its local arming payload; do not replace it with a new wizard.
-                if self.duress_enroll_abandoned {
-                    return iced::Task::none();
-                }
-                // Duress is a paid (Pro/Estate) feature behind a launch
-                // kill-switch. The nav hides the surface and the CTA for anyone
-                // who fails the show-rule (entitlement AND the launch gate);
-                // re-check the full gate here as a defensive backstop so a stale
-                // view can never open the wizard while duress is dark. Fails
-                // closed for an un-enrolled account with the flag off.
-                if !self.show_duress() {
-                    return iced::Task::none();
-                }
-                // The hard vault gate (PLAN-duress-vault-gate). The CTA is
-                // rendered disabled while blocked, but re-check here as a
-                // belt-and-suspenders backstop: a stale view (kit status that
-                // landed after the last paint) could still fire this. With the
-                // Tier-2 bypass and the Sovereign path removed, this gate is the
-                // single hard requirement for enrollment.
-                //
-                // Fail closed when the checklist hasn't loaded (`None`): an
-                // unverified fleet must not open enrollment (master I7 / Resolved
-                // decision 4) — `duress_tier1_gate_blocked` returns true for
-                // `None`. Reload so the checklist (and any retry affordance)
-                // becomes current instead of silently proceeding.
-                if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
-                    // No-op: gate blocked (or fleet not yet verified). A fresh
-                    // reload keeps the checklist current.
-                    return self.reload_duress_cubes();
-                }
-                if let Err(error) = crate::app::check_import_duress_compatibility() {
-                    self.error = Some(PanelError::settled(UserError::new(
-                        "Duress Mode is unavailable",
-                        error,
-                        crate::user_error::CC_CONFIG,
-                        false,
-                    )));
-                    return iced::Task::none();
-                }
-                self.open_enroll_wizard();
-                // Kick a fresh checklist fetch as the user commits to enrolling.
-                // The cached list the gate just read could be briefly stale (a
-                // routine reload keeps the prior list in place while its refetch
-                // is in flight); firing one now guarantees the `SubmitEnrollment`
-                // re-check runs against current completeness by the time the
-                // wizard is finished.
-                return self.reload_duress_cubes();
-            }
+            DuressMessage::StartEnrollment => return self.start_duress_enrollment(),
             DuressMessage::ReloadCubes => {
                 return self.reload_duress_cubes();
             }
@@ -5849,289 +5708,66 @@ impl ConnectAccountPanel {
                     self.clear_duress_enroll();
                 }
             }
-            DuressMessage::DuressPinChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
-                }
-            }
-            DuressMessage::DuressPinConfirmChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin_confirm =
-                        v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
-                }
-            }
-            DuressMessage::AllClearChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.all_clear = v;
-                }
-            }
-            DuressMessage::CrkPasswordChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.crk_password = v;
-                }
-            }
-            DuressMessage::DelaySelected(d) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.delay = d;
-                }
-            }
-            DuressMessage::MemorizedToggled(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.memorized = v;
-                }
-            }
-            DuressMessage::EnrollBack => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.error = None;
-                    e.step = prev_enroll_step(e.step);
-                }
-            }
-            DuressMessage::EnrollNext => {
-                if let Some(e) = &mut self.duress_enroll {
-                    if let Err(msg) = validate_enroll_step(e) {
-                        e.error = Some(msg);
-                    } else {
-                        e.error = None;
-                        e.step = next_enroll_step(e.step);
-                    }
-                }
-            }
+            message @ (DuressMessage::DuressPinChanged(_)
+            | DuressMessage::DuressPinConfirmChanged(_)
+            | DuressMessage::AllClearChanged(_)
+            | DuressMessage::CrkPasswordChanged(_)
+            | DuressMessage::DelaySelected(_)
+            | DuressMessage::MemorizedToggled(_)
+            | DuressMessage::EnrollBack
+            | DuressMessage::EnrollNext) => self.edit_duress_enrollment(message),
             _ => {}
         }
         iced::Task::none()
     }
 
-    fn update_duress_enrollment_requests(&mut self, message: DuressMessage) -> iced::Task<Message> {
-        use crate::services::duress::enroll;
+    fn edit_duress_enrollment(&mut self, message: DuressMessage) {
+        let Some(e) = self.duress_enroll.as_mut() else {
+            return;
+        };
         match message {
-            DuressMessage::SubmitEnrollment => {
-                // Vault gate backstop (PLAN-duress-vault-gate). The gate is
-                // enforced at StartEnrollment, but Cube state can change while
-                // the wizard is open — a mid-session Vault creation calls
-                // `invalidate_duress_cubes` and expects the gate to stay closed
-                // until the new Vault's kit is complete. Re-check at the actual
-                // commit (the single hard-gated path), mirroring the
-                // PIN-collision pre-flight below: surface the block on the wizard
-                // and refresh the checklist, without firing the enroll. Fails
-                // closed on an invalidated/unloaded checklist (`None`), which is
-                // exactly the mid-wizard-Vault case.
-                if self.duress_enroll.is_some()
-                    && duress_tier1_gate_blocked(self.duress_cubes.as_deref())
-                {
-                    if let Some(e) = &mut self.duress_enroll {
-                        e.error = Some(
-                            "A Vault Cube still needs its Recovery Kit finished — its Master \
-                             Seed Phrase and Vault Wallet Descriptor — before you can enable \
-                             Duress Mode. Finish it, then try again."
-                                .to_string(),
-                        );
-                    }
-                    // Refresh so the intro checklist is current if the user
-                    // cancels back to it.
-                    return self.reload_duress_cubes();
-                }
-                let Some(e) = &mut self.duress_enroll else {
-                    return iced::Task::none();
-                };
-                // Reject re-entrant submits: a second enroll while one is in
-                // flight would fire a duplicate server call and replace the
-                // stashed pending_code out from under the first. The button is
-                // disabled while submitting; this is the backstop.
-                if e.submitting {
-                    return iced::Task::none();
-                }
+            DuressMessage::DuressPinChanged(v) => {
+                e.duress_pin = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
+            }
+            DuressMessage::DuressPinConfirmChanged(v) => {
+                e.duress_pin_confirm = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
+            }
+            DuressMessage::AllClearChanged(v) => {
+                e.all_clear = v;
+            }
+            DuressMessage::CrkPasswordChanged(v) => {
+                e.crk_password = v;
+            }
+            DuressMessage::DelaySelected(d) => {
+                e.delay = d;
+            }
+            DuressMessage::MemorizedToggled(v) => {
+                e.memorized = v;
+            }
+            DuressMessage::EnrollBack => {
+                e.error = None;
+                e.step = prev_enroll_step(e.step);
+            }
+            DuressMessage::EnrollNext => {
                 if let Err(msg) = validate_enroll_step(e) {
                     e.error = Some(msg);
-                    return iced::Task::none();
+                } else {
+                    e.error = None;
+                    e.step = next_enroll_step(e.step);
                 }
-                // The blocking preflight also rejects pending/imported wallets
-                // before server enrollment. Keep this filesystem check there so
-                // the wizard receives the error without blocking the UI thread.
-                // Pre-flight: reject a duress PIN that collides with any Cube's
-                // real unlock PIN BEFORE anything irreversible. Connect tiers
-                // enroll on the server first, so catching the collision only in
-                // the later local persist would leave the account
-                // server-enrolled with no Cube armed. (Persist re-checks as the
-                // authoritative guard.)
-                //
-                // The check is a trial decryption of every Cube's seed file now
-                // that there is no stored PIN hash to compare against — ~831 ms
-                // per Cube — so it runs on the blocking pool and comes back as
-                // `EnrollPreflightDone`. `submitting` is set here so the button
-                // stays disabled for the whole round trip.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        e.error = Some(
-                            UserError::logged(
-                                "Couldn't open your Cube data",
-                                "COINCUBE Desktop can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
-                                crate::user_error::CC_CONFIG,
-                                true,
-                                err,
-                            )
-                            .toast(),
-                        );
-                        return iced::Task::none();
-                    }
-                };
-                e.submitting = true;
-                e.error = None;
-                let gen = self.session_generation;
-                let duress_pin = zeroize::Zeroizing::new(e.duress_pin.clone());
-                return iced::Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
-                        })
-                        .await
-                        .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::EnrollPreflightDone(
-                                res, gen,
-                            )),
-                        ))
-                    },
-                );
             }
+            _ => {}
+        }
+    }
+
+    fn update_duress_enrollment_requests(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::SubmitEnrollment => return self.submit_duress_enrollment(),
             DuressMessage::EnrollPreflightDone(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                if self.duress_enroll.is_none() {
-                    return iced::Task::none();
-                }
-                if let Err(msg) = res {
-                    self.fail_duress_enrollment(msg);
-                    return iced::Task::none();
-                }
-                let e = self.duress_enroll.as_mut().unwrap();
-                let gen = self.session_generation;
-
-                // Generate this device's duress code ONCE: its hash goes to the
-                // server, the same plaintext is persisted (encrypted) locally.
-                // Held in `Zeroizing` so the local plaintext is scrubbed on drop
-                // — on normal completion and on every early-return below.
-                let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
-
-                // Enroll on the server FIRST. The duress PIN + code are persisted
-                // locally only after a successful EnrollResult, so a server
-                // failure can't leave a half-armed duress PIN on disk. Stash the
-                // code for that success handler. Zeroize any code stashed by a
-                // prior submit (retry) before replacing it, so the superseded
-                // plaintext doesn't linger.
-                if let Some(mut old) = e.pending_code.replace((*code).clone()) {
-                    zeroize::Zeroize::zeroize(&mut old);
-                }
-                let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
-                // Single path always collects the account-level duress
-                // recovery-kit password (Approach C).
-                let crk_hash = enroll::hash_duress_secret(&e.crk_password);
-                let code_hash = enroll::hash_duress_secret(&code);
-                let delay_minutes = e.delay.minutes();
-
-                let (all_clear_hash, code_hash) = match (all_clear_hash, code_hash) {
-                    (Ok(a), Ok(c)) => (a, c),
-                    _ => {
-                        self.fail_duress_enrollment("Failed to hash credentials.".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                let crk_hash = match crk_hash {
-                    Ok(h) => Some(h),
-                    Err(_) => {
-                        self.fail_duress_enrollment("Failed to hash credentials.".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                // A stable device fingerprint is required so the server can
-                // recognise this desktop. If it can't be resolved, fail the
-                // enrollment rather than send an unstable one.
-                let fingerprint = match device_fingerprint() {
-                    Ok(fp) => fp,
-                    Err(msg) => {
-                        self.fail_duress_enrollment(msg);
-                        return iced::Task::none();
-                    }
-                };
-                let client = self.client.clone();
-                let req = crate::services::coincube::EnrollDuressRequest {
-                    all_clear_hash,
-                    duress_crk_password_hash: crk_hash,
-                    unlock_delay_minutes: delay_minutes,
-                    device_fingerprint: fingerprint,
-                    duress_code_hash: code_hash,
-                };
-                return iced::Task::perform(
-                    async move { client.enroll_duress(req).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::EnrollResult(
-                                res.map_err(|e| e.to_string()),
-                                gen,
-                            )),
-                        ))
-                    },
-                );
+                return self.apply_duress_preflight(res, gen)
             }
             DuressMessage::EnrollResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(()) => {
-                        // Server enrolled — NOW persist locally (PIN hash +
-                        // encrypted code) from the wizard state, then close it.
-                        // Doing this only on success means a server failure
-                        // never leaves a half-armed duress PIN on disk.
-                        let account_id = self.user.as_ref().map(|u| u.id.to_string());
-                        // Clone the forwarded secrets into the Zeroizing payload,
-                        // then scrub the wizard via the shared helper — this path
-                        // must not drop the leftover fields (all_clear, CRK
-                        // password) unzeroized.
-                        let payload = self.duress_enroll.as_ref().map(|e| {
-                            crate::app::message::DuressEnrollmentPayload {
-                                duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
-                                duress_code: zeroize::Zeroizing::new(
-                                    e.pending_code.clone().unwrap_or_default(),
-                                ),
-                                account_id,
-                                gen,
-                            }
-                        });
-                        if let Some(payload) = payload {
-                            self.clear_duress_enroll();
-                            // The server accepted enrollment, but the duress PIN
-                            // still has to be armed locally on every Cube. Defer
-                            // marking the cached state "enrolled" to the persist
-                            // success path (`EnrollmentPersisted`) — otherwise a
-                            // local failure (PIN collision, no Cubes, disk error)
-                            // would leave a false "enabled" view while no Cube is
-                            // actually armed.
-                            return iced::Task::done(Message::CompleteDuressEnrollment(payload));
-                        }
-                        // No wizard to build a payload from: it was torn down
-                        // mid-flight (same session — a cross-session teardown
-                        // bumps `session_generation` and is caught by the guard
-                        // above). All same-session teardowns now preserve a
-                        // submitting wizard (Cancel is blocked while submitting;
-                        // the active-duress routing skips a submitting wizard),
-                        // so this should be unreachable — log loudly if it ever
-                        // fires, since it means the account is server-enrolled
-                        // with no local arming.
-                        log::error!(
-                            "[CONNECT] duress EnrollResult(Ok) with no wizard to persist — \
-                             account may be server-enrolled but not armed locally"
-                        );
-                    }
-                    Err(msg) => {
-                        // A hidden wizard has no retry surface. Scrub its
-                        // secrets as soon as the server has rejected it.
-                        self.fail_duress_enrollment(msg);
-                    }
-                }
+                return self.apply_duress_enrollment_result(res, gen)
             }
             _ => {}
         }
@@ -6152,69 +5788,7 @@ impl ConnectAccountPanel {
                     self.duress_cubes = cubes;
                 }
             }
-            DuressMessage::StateLoaded(st, gen) => {
-                if gen == self.session_generation {
-                    if let Some(new) = st {
-                        // Don't let a stale fetch downgrade a locally-confirmed
-                        // enrollment. `reload_duress_state` is fired on opening
-                        // the tab; a slow one issued *before* the user finished
-                        // enrolling could return pre-enrollment data after
-                        // `EnrollmentPersisted` and clobber the enabled view back
-                        // to the setup flow. Enrolled is monotonic within a
-                        // session (there is no un-enroll path), so a fetch that
-                        // flips it true→false can only be stale — drop it.
-                        let downgrades_enrollment = self
-                            .duress_state
-                            .as_ref()
-                            .is_some_and(|cur| cur.enrolled && !new.enrolled);
-                        if !downgrades_enrollment {
-                            let active = new.active;
-                            let unlock_at = new.unlock_at;
-                            self.duress_state = Some(new);
-                            // If the server reports the account is in ACTIVE
-                            // duress, route this (signed-in, trusted) device to
-                            // the all-clear recovery screen — same as the
-                            // post-sign-in `DuressStateChecked` gate. Covers
-                            // duress activated by another device after this
-                            // session passed the sign-in gate. Skip if already
-                            // in recovery so an in-flight all-clear entry isn't
-                            // wiped. Like the gate, this does NOT persist
-                            // `DuressLocalState.active` (that flag is owned by
-                            // the paths that actually lock this device).
-                            if active
-                                && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. })
-                            {
-                                // Tear down any open enrollment wizard before
-                                // routing to recovery: recovery supersedes it,
-                                // and `duress_ux` prioritizes a `Some`
-                                // `duress_enroll` over the intro/enabled view —
-                                // so a leftover wizard would re-appear (possibly
-                                // mid-submit) when the user returns to the tab
-                                // after clearing. Also scrubs the wizard's
-                                // in-memory secrets (PINs / passphrases).
-                                //
-                                // EXCEPT while a server enroll is in flight
-                                // (`submitting`): its `EnrollResult` reads the
-                                // wizard to run local persist, then clears it.
-                                // Dropping it here would orphan that enroll
-                                // (server enrolled, no local arm). Leave it; the
-                                // in-flight result tears it down.
-                                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
-                                    self.clear_duress_enroll();
-                                }
-                                self.step = ConnectFlowStep::DuressRecovery {
-                                    unlock_at,
-                                    passphrase: String::new(),
-                                    submitting: false,
-                                    cleared: false,
-                                };
-                            }
-                        }
-                    }
-                    // `None` = the fetch failed; keep the prior state rather than
-                    // blanking it.
-                }
-            }
+            DuressMessage::StateLoaded(st, gen) => return self.apply_duress_device_state(st, gen),
             DuressMessage::EnrollmentPersisted => {
                 // Local persistence succeeded (duress PIN armed on every Cube on
                 // THIS device), so it's now safe to reflect the enabled state.
@@ -6224,7 +5798,6 @@ impl ConnectAccountPanel {
                 self.mark_duress_enrolled();
             }
 
-            // ── Disable (Issue 2 — turn duress off) ──
             _ => {}
         }
         iced::Task::none()
@@ -6232,52 +5805,7 @@ impl ConnectAccountPanel {
 
     fn update_duress_disable_dialog(&mut self, message: DuressMessage) -> iced::Task<Message> {
         match message {
-            DuressMessage::DisableStart => {
-                // Open the step-up re-auth dialog. The trigger is only surfaced
-                // when enrolled & inactive (see `duress_ux`).
-                self.duress_disable = Some(DuressDisableState::default());
-                // Which factor to demand depends on what is on this disk, so
-                // ask before drawing the form. Filesystem work, hence the
-                // blocking pool.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
-                            d.error = Some(
-                                UserError::logged(
-                                    "Couldn't open your Cube data",
-                                    "COINCUBE Desktop can't read its data folder, so it can't verify it's you. Restart the app and try again.",
-                                    crate::user_error::CC_CONFIG,
-                                    true,
-                                    err,
-                                )
-                                .toast(),
-                            );
-                        }
-                        return iced::Task::none();
-                    }
-                };
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::duress_step_up_method_blocking(dir.path())
-                        })
-                        .await
-                        .unwrap_or_else(|err| {
-                            Err(format!("Couldn't check how to verify it's you: {err}"))
-                        })
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::DisableMethodProbed(
-                                res, gen,
-                            )),
-                        ))
-                    },
-                );
-            }
+            DuressMessage::DisableStart => return self.open_duress_disable_dialog(),
             DuressMessage::DisableMethodProbed(res, gen) => {
                 if gen != self.session_generation {
                     return iced::Task::none();
@@ -6311,55 +5839,618 @@ impl ConnectAccountPanel {
                     d.zeroize_secrets();
                 }
             }
-            DuressMessage::DisableSubmit => {
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
-                };
-                // Re-entrancy guard: the confirm button is disabled while
-                // submitting, but two presses can queue in one frame.
-                if d.submitting {
-                    return iced::Task::none();
+            DuressMessage::DisableSubmit => return self.submit_duress_disable_pin(),
+            DuressMessage::DisablePasskeySubmit => return self.submit_duress_disable_passkey(),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_disable_results(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::DisableStepUpDone(res, gen) => {
+                return self.apply_duress_disable_step_up(res, gen)
+            }
+            DuressMessage::DisableResult(res, gen) => {
+                return self.apply_duress_disable_result(res, gen)
+            }
+            DuressMessage::DisarmComplete(res, gen) => return self.apply_duress_disarm(res, gen),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn submit_duress_recovery(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::DuressRecovery {
+            passphrase,
+            submitting,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *submitting {
+            return iced::Task::none();
+        }
+        let passphrase = zeroize::Zeroizing::new(passphrase.clone());
+        *submitting = true;
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move { client.clear_duress(&passphrase).await },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::ClearResult(
+                        res.map_err(|e| e.to_string()),
+                        gen,
+                    )),
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_recovery_result(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let mut cleared_ok = false;
+        if let ConnectFlowStep::DuressRecovery {
+            submitting,
+            cleared,
+            ..
+        } = &mut self.step
+        {
+            *submitting = false;
+            match res {
+                Ok(()) => {
+                    *cleared = true;
+                    cleared_ok = true;
                 }
-                // Only the PIN branch may run the PIN check. On a passkey device
-                // it would fail with "use a device where you unlock a Cube with
-                // its PIN" — advice that is wrong here, since this device can
-                // authorize with its passkey.
-                if !matches!(d.method, Some(crate::app::DuressStepUpMethod::Pin)) {
-                    return iced::Task::none();
+                Err(e) => {
+                    // The all-clear screen has its own Submit; a
+                    // second button on the card would race it.
+                    self.error = Some(PanelError::settled(UserError::logged(
+                        "Couldn't confirm the all-clear",
+                        "Check your internet connection and try again.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        e,
+                    )))
                 }
-                // Step-up: the entered PIN must match a Cube's REAL unlock PIN
-                // (never the duress PIN). Verify BEFORE any server call — a wrong
-                // PIN makes no call at all.
-                //
-                // Verification is a trial decryption of the seed file, so it
-                // runs on the blocking pool and resumes at `DisableStepUpDone`.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        d.error = Some(
-                            UserError::logged(
-                                "Couldn't open your Cube data",
-                                "COINCUBE Desktop can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
-                                crate::user_error::CC_CONFIG,
-                                true,
-                                err,
-                            )
-                            .toast(),
-                        );
-                        return iced::Task::none();
+            }
+        }
+        if cleared_ok {
+            // The server confirmed the all-clear. The post-sign-in mirror
+            // may have set DuressLocalState.active = true on this device,
+            // so reset it durably — otherwise the next launch reconcile
+            // routes back into the cryptic screen for an account that's
+            // already been cleared. Mirrors the gRPC DuressCleared and
+            // cryptic-screen poll resets.
+            return iced::Task::perform(
+                async move {
+                    if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                        let root = dir.path();
+                        match crate::services::duress::DuressLocalState::load(root) {
+                            Ok(mut st) if st.active => {
+                                st.active = false;
+                                st.unlock_at = None;
+                                if let Err(e) = st.save(root) {
+                                    log::warn!(
+                                        "[CONNECT] failed to clear local duress \
+                                         active state: {e}"
+                                    );
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => log::warn!(
+                                "[CONNECT] reading duress state failed; \
+                                 not overwriting: {e}"
+                            ),
+                        }
                     }
-                };
-                d.submitting = true;
-                d.error = None;
-                let gen = self.session_generation;
-                let pin = zeroize::Zeroizing::new(d.pin.clone());
+                },
+                |_| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::DuressDeviceRegistered,
+                    ))
+                },
+            );
+        }
+        iced::Task::none()
+    }
+
+    fn start_duress_enrollment(&mut self) -> iced::Task<Message> {
+        // An abandoned submission still owns the server response and
+        // its local arming payload; do not replace it with a new wizard.
+        if self.duress_enroll_abandoned {
+            return iced::Task::none();
+        }
+        // Duress is a paid (Pro/Estate) feature behind a launch
+        // kill-switch. The nav hides the surface and the CTA for anyone
+        // who fails the show-rule (entitlement AND the launch gate);
+        // re-check the full gate here as a defensive backstop so a stale
+        // view can never open the wizard while duress is dark. Fails
+        // closed for an un-enrolled account with the flag off.
+        if !self.show_duress() {
+            return iced::Task::none();
+        }
+        // The hard vault gate (PLAN-duress-vault-gate). The CTA is
+        // rendered disabled while blocked, but re-check here as a
+        // belt-and-suspenders backstop: a stale view (kit status that
+        // landed after the last paint) could still fire this. With the
+        // Tier-2 bypass and the Sovereign path removed, this gate is the
+        // single hard requirement for enrollment.
+        //
+        // Fail closed when the checklist hasn't loaded (`None`): an
+        // unverified fleet must not open enrollment (master I7 / Resolved
+        // decision 4) — `duress_tier1_gate_blocked` returns true for
+        // `None`. Reload so the checklist (and any retry affordance)
+        // becomes current instead of silently proceeding.
+        if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+            // No-op: gate blocked (or fleet not yet verified). A fresh
+            // reload keeps the checklist current.
+            return self.reload_duress_cubes();
+        }
+        if let Err(error) = crate::app::check_import_duress_compatibility() {
+            self.error = Some(PanelError::settled(UserError::new(
+                "Duress Mode is unavailable",
+                error,
+                crate::user_error::CC_CONFIG,
+                false,
+            )));
+            return iced::Task::none();
+        }
+        self.open_enroll_wizard();
+        // Kick a fresh checklist fetch as the user commits to enrolling.
+        // The cached list the gate just read could be briefly stale (a
+        // routine reload keeps the prior list in place while its refetch
+        // is in flight); firing one now guarantees the `SubmitEnrollment`
+        // re-check runs against current completeness by the time the
+        // wizard is finished.
+        self.reload_duress_cubes()
+    }
+
+    fn submit_duress_enrollment(&mut self) -> iced::Task<Message> {
+        // Vault gate backstop (PLAN-duress-vault-gate). The gate is
+        // enforced at StartEnrollment, but Cube state can change while
+        // the wizard is open — a mid-session Vault creation calls
+        // `invalidate_duress_cubes` and expects the gate to stay closed
+        // until the new Vault's kit is complete. Re-check at the actual
+        // commit (the single hard-gated path), mirroring the
+        // PIN-collision pre-flight below: surface the block on the wizard
+        // and refresh the checklist, without firing the enroll. Fails
+        // closed on an invalidated/unloaded checklist (`None`), which is
+        // exactly the mid-wizard-Vault case.
+        if self.duress_enroll.is_some() && duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+            if let Some(e) = &mut self.duress_enroll {
+                e.error = Some(
+                    "A Vault Cube still needs its Recovery Kit finished — its Master \
+                     Seed Phrase and Vault Wallet Descriptor — before you can enable \
+                     Duress Mode. Finish it, then try again."
+                        .to_string(),
+                );
+            }
+            // Refresh so the intro checklist is current if the user
+            // cancels back to it.
+            return self.reload_duress_cubes();
+        }
+        let Some(e) = &mut self.duress_enroll else {
+            return iced::Task::none();
+        };
+        // Reject re-entrant submits: a second enroll while one is in
+        // flight would fire a duplicate server call and replace the
+        // stashed pending_code out from under the first. The button is
+        // disabled while submitting; this is the backstop.
+        if e.submitting {
+            return iced::Task::none();
+        }
+        if let Err(msg) = validate_enroll_step(e) {
+            e.error = Some(msg);
+            return iced::Task::none();
+        }
+        // The blocking preflight also rejects pending/imported wallets
+        // before server enrollment. Keep this filesystem check there so
+        // the wizard receives the error without blocking the UI thread.
+        // Pre-flight: reject a duress PIN that collides with any Cube's
+        // real unlock PIN BEFORE anything irreversible. Connect tiers
+        // enroll on the server first, so catching the collision only in
+        // the later local persist would leave the account
+        // server-enrolled with no Cube armed. (Persist re-checks as the
+        // authoritative guard.)
+        //
+        // The check is a trial decryption of every Cube's seed file now
+        // that there is no stored PIN hash to compare against — ~831 ms
+        // per Cube — so it runs on the blocking pool and comes back as
+        // `EnrollPreflightDone`. `submitting` is set here so the button
+        // stays disabled for the whole round trip.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                e.error = Some(
+                    UserError::logged(
+                        "Couldn't open your Cube data",
+                        "COINCUBE Desktop can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
+                        crate::user_error::CC_CONFIG,
+                        true,
+                        err,
+                    )
+                    .toast(),
+                );
+                return iced::Task::none();
+            }
+        };
+        e.submitting = true;
+        e.error = None;
+        let gen = self.session_generation;
+        let duress_pin = zeroize::Zeroizing::new(e.duress_pin.clone());
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::EnrollPreflightDone(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_preflight(&mut self, res: Result<(), String>, gen: u64) -> iced::Task<Message> {
+        use crate::services::duress::enroll;
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        if self.duress_enroll.is_none() {
+            return iced::Task::none();
+        }
+        if let Err(msg) = res {
+            self.fail_duress_enrollment(msg);
+            return iced::Task::none();
+        }
+        let e = self.duress_enroll.as_mut().unwrap();
+        let gen = self.session_generation;
+
+        // Generate this device's duress code ONCE: its hash goes to the
+        // server, the same plaintext is persisted (encrypted) locally.
+        // Held in `Zeroizing` so the local plaintext is scrubbed on drop
+        // — on normal completion and on every early-return below.
+        let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
+
+        // Enroll on the server FIRST. The duress PIN + code are persisted
+        // locally only after a successful EnrollResult, so a server
+        // failure can't leave a half-armed duress PIN on disk. Stash the
+        // code for that success handler. Zeroize any code stashed by a
+        // prior submit (retry) before replacing it, so the superseded
+        // plaintext doesn't linger.
+        if let Some(mut old) = e.pending_code.replace((*code).clone()) {
+            zeroize::Zeroize::zeroize(&mut old);
+        }
+        let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
+        // Single path always collects the account-level duress
+        // recovery-kit password (Approach C).
+        let crk_hash = enroll::hash_duress_secret(&e.crk_password);
+        let code_hash = enroll::hash_duress_secret(&code);
+        let delay_minutes = e.delay.minutes();
+
+        let (all_clear_hash, code_hash) = match (all_clear_hash, code_hash) {
+            (Ok(a), Ok(c)) => (a, c),
+            _ => {
+                self.fail_duress_enrollment("Failed to hash credentials.".to_string());
+                return iced::Task::none();
+            }
+        };
+        let crk_hash = match crk_hash {
+            Ok(h) => Some(h),
+            Err(_) => {
+                self.fail_duress_enrollment("Failed to hash credentials.".to_string());
+                return iced::Task::none();
+            }
+        };
+        // A stable device fingerprint is required so the server can
+        // recognise this desktop. If it can't be resolved, fail the
+        // enrollment rather than send an unstable one.
+        let fingerprint = match device_fingerprint() {
+            Ok(fp) => fp,
+            Err(msg) => {
+                self.fail_duress_enrollment(msg);
+                return iced::Task::none();
+            }
+        };
+        let client = self.client.clone();
+        let req = crate::services::coincube::EnrollDuressRequest {
+            all_clear_hash,
+            duress_crk_password_hash: crk_hash,
+            unlock_delay_minutes: delay_minutes,
+            device_fingerprint: fingerprint,
+            duress_code_hash: code_hash,
+        };
+        iced::Task::perform(async move { client.enroll_duress(req).await }, move |res| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::EnrollResult(
+                    res.map_err(|e| e.to_string()),
+                    gen,
+                )),
+            ))
+        })
+    }
+
+    fn apply_duress_enrollment_result(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                // Server enrolled — NOW persist locally (PIN hash +
+                // encrypted code) from the wizard state, then close it.
+                // Doing this only on success means a server failure
+                // never leaves a half-armed duress PIN on disk.
+                let account_id = self.user.as_ref().map(|u| u.id.to_string());
+                // Clone the forwarded secrets into the Zeroizing payload,
+                // then scrub the wizard via the shared helper — this path
+                // must not drop the leftover fields (all_clear, CRK
+                // password) unzeroized.
+                let payload = self.duress_enroll.as_ref().map(|e| {
+                    crate::app::message::DuressEnrollmentPayload {
+                        duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
+                        duress_code: zeroize::Zeroizing::new(
+                            e.pending_code.clone().unwrap_or_default(),
+                        ),
+                        account_id,
+                        gen,
+                    }
+                });
+                if let Some(payload) = payload {
+                    self.clear_duress_enroll();
+                    // The server accepted enrollment, but the duress PIN
+                    // still has to be armed locally on every Cube. Defer
+                    // marking the cached state "enrolled" to the persist
+                    // success path (`EnrollmentPersisted`) — otherwise a
+                    // local failure (PIN collision, no Cubes, disk error)
+                    // would leave a false "enabled" view while no Cube is
+                    // actually armed.
+                    return iced::Task::done(Message::CompleteDuressEnrollment(payload));
+                }
+                // No wizard to build a payload from: it was torn down
+                // mid-flight (same session — a cross-session teardown
+                // bumps `session_generation` and is caught by the guard
+                // above). All same-session teardowns now preserve a
+                // submitting wizard (Cancel is blocked while submitting;
+                // the active-duress routing skips a submitting wizard),
+                // so this should be unreachable — log loudly if it ever
+                // fires, since it means the account is server-enrolled
+                // with no local arming.
+                log::error!(
+                    "[CONNECT] duress EnrollResult(Ok) with no wizard to persist — \
+                     account may be server-enrolled but not armed locally"
+                );
+            }
+            Err(msg) => {
+                // A hidden wizard has no retry surface. Scrub its
+                // secrets as soon as the server has rejected it.
+                self.fail_duress_enrollment(msg);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_duress_device_state(
+        &mut self,
+        st: Option<crate::services::coincube::DuressState>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            if let Some(new) = st {
+                // Don't let a stale fetch downgrade a locally-confirmed
+                // enrollment. `reload_duress_state` is fired on opening
+                // the tab; a slow one issued *before* the user finished
+                // enrolling could return pre-enrollment data after
+                // `EnrollmentPersisted` and clobber the enabled view back
+                // to the setup flow. Enrolled is monotonic within a
+                // session (there is no un-enroll path), so a fetch that
+                // flips it true→false can only be stale — drop it.
+                let downgrades_enrollment = self
+                    .duress_state
+                    .as_ref()
+                    .is_some_and(|cur| cur.enrolled && !new.enrolled);
+                if !downgrades_enrollment {
+                    let active = new.active;
+                    let unlock_at = new.unlock_at;
+                    self.duress_state = Some(new);
+                    // If the server reports the account is in ACTIVE
+                    // duress, route this (signed-in, trusted) device to
+                    // the all-clear recovery screen — same as the
+                    // post-sign-in `DuressStateChecked` gate. Covers
+                    // duress activated by another device after this
+                    // session passed the sign-in gate. Skip if already
+                    // in recovery so an in-flight all-clear entry isn't
+                    // wiped. Like the gate, this does NOT persist
+                    // `DuressLocalState.active` (that flag is owned by
+                    // the paths that actually lock this device).
+                    self.enter_recovery_for_active_duress(active, unlock_at);
+                }
+            }
+            // `None` = the fetch failed; keep the prior state rather than
+            // blanking it.
+        }
+        iced::Task::none()
+    }
+
+    fn enter_recovery_for_active_duress(
+        &mut self,
+        active: bool,
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        if active && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. }) {
+            // Tear down any open enrollment wizard before
+            // routing to recovery: recovery supersedes it,
+            // and `duress_ux` prioritizes a `Some`
+            // `duress_enroll` over the intro/enabled view —
+            // so a leftover wizard would re-appear (possibly
+            // mid-submit) when the user returns to the tab
+            // after clearing. Also scrubs the wizard's
+            // in-memory secrets (PINs / passphrases).
+            //
+            // EXCEPT while a server enroll is in flight
+            // (`submitting`): its `EnrollResult` reads the
+            // wizard to run local persist, then clears it.
+            // Dropping it here would orphan that enroll
+            // (server enrolled, no local arm). Leave it; the
+            // in-flight result tears it down.
+            if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+                self.clear_duress_enroll();
+            }
+            self.step = ConnectFlowStep::DuressRecovery {
+                unlock_at,
+                passphrase: String::new(),
+                submitting: false,
+                cleared: false,
+            };
+        }
+    }
+
+    fn open_duress_disable_dialog(&mut self) -> iced::Task<Message> {
+        // Open the step-up re-auth dialog. The trigger is only surfaced
+        // when enrolled & inactive (see `duress_ux`).
+        self.duress_disable = Some(DuressDisableState::default());
+        // Which factor to demand depends on what is on this disk, so
+        // ask before drawing the form. Filesystem work, hence the
+        // blocking pool.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
+                    d.error = Some(
+                        UserError::logged(
+                            "Couldn't open your Cube data",
+                            "COINCUBE Desktop can't read its data folder, so it can't verify it's you. Restart the app and try again.",
+                            crate::user_error::CC_CONFIG,
+                            true,
+                            err,
+                        )
+                        .toast(),
+                    );
+                }
+                return iced::Task::none();
+            }
+        };
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::duress_step_up_method_blocking(dir.path())
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't check how to verify it's you: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::DisableMethodProbed(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn submit_duress_disable_pin(&mut self) -> iced::Task<Message> {
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        // Re-entrancy guard: the confirm button is disabled while
+        // submitting, but two presses can queue in one frame.
+        if d.submitting {
+            return iced::Task::none();
+        }
+        // Only the PIN branch may run the PIN check. On a passkey device
+        // it would fail with "use a device where you unlock a Cube with
+        // its PIN" — advice that is wrong here, since this device can
+        // authorize with its passkey.
+        if !matches!(d.method, Some(crate::app::DuressStepUpMethod::Pin)) {
+            return iced::Task::none();
+        }
+        // Step-up: the entered PIN must match a Cube's REAL unlock PIN
+        // (never the duress PIN). Verify BEFORE any server call — a wrong
+        // PIN makes no call at all.
+        //
+        // Verification is a trial decryption of the seed file, so it
+        // runs on the blocking pool and resumes at `DisableStepUpDone`.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                d.error = Some(
+                    UserError::logged(
+                        "Couldn't open your Cube data",
+                        "COINCUBE Desktop can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
+                        crate::user_error::CC_CONFIG,
+                        true,
+                        err,
+                    )
+                    .toast(),
+                );
+                return iced::Task::none();
+            }
+        };
+        d.submitting = true;
+        d.error = None;
+        let gen = self.session_generation;
+        let pin = zeroize::Zeroizing::new(d.pin.clone());
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::verify_regular_cube_pin_blocking(dir.path(), &pin)
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't verify your PIN: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::DisableStepUpDone(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn submit_duress_disable_passkey(&mut self) -> iced::Task<Message> {
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        if d.submitting {
+            return iced::Task::none();
+        }
+        // Only the passkey branch may raise a prompt. A stale press on
+        // any other method must not, or a PIN device would get a system
+        // sheet no credential can answer.
+        let Some(crate::app::DuressStepUpMethod::Passkey(cube)) = d.method.clone() else {
+            return iced::Task::none();
+        };
+        d.submitting = true;
+        d.error = None;
+        let gen = self.session_generation;
+        // Started on the UI thread — `NativePasskeyCeremony` is
+        // main-thread-only. `reauth::begin` parks it and hands back a
+        // plain future, so no polling subscription is needed here.
+        match crate::services::passkey::reauth::begin(&cube) {
+            Ok(fut) => {
                 return iced::Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::verify_regular_cube_pin_blocking(dir.path(), &pin)
-                        })
-                        .await
-                        .unwrap_or_else(|err| Err(format!("Couldn't verify your PIN: {err}")))
+                        // The words are dropped (and zeroized) right
+                        // here. What authorizes the disable is that the
+                        // assertion succeeded AND derived this Cube's
+                        // own fingerprint — `reauth::begin` enforces the
+                        // latter. The seed itself is not wanted, and
+                        // must not ride in a message iced will clone.
+                        fut.await.map(drop).map_err(|e| e.user_message())
                     },
                     move |res| {
                         Message::View(view::Message::ConnectAccount(
@@ -6370,209 +6461,163 @@ impl ConnectAccountPanel {
                     },
                 );
             }
-            DuressMessage::DisablePasskeySubmit => {
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
-                };
-                if d.submitting {
-                    return iced::Task::none();
-                }
-                // Only the passkey branch may raise a prompt. A stale press on
-                // any other method must not, or a PIN device would get a system
-                // sheet no credential can answer.
-                let Some(crate::app::DuressStepUpMethod::Passkey(cube)) = d.method.clone() else {
-                    return iced::Task::none();
-                };
-                d.submitting = true;
-                d.error = None;
-                let gen = self.session_generation;
-                // Started on the UI thread — `NativePasskeyCeremony` is
-                // main-thread-only. `reauth::begin` parks it and hands back a
-                // plain future, so no polling subscription is needed here.
-                match crate::services::passkey::reauth::begin(&cube) {
-                    Ok(fut) => {
-                        return iced::Task::perform(
-                            async move {
-                                // The words are dropped (and zeroized) right
-                                // here. What authorizes the disable is that the
-                                // assertion succeeded AND derived this Cube's
-                                // own fingerprint — `reauth::begin` enforces the
-                                // latter. The seed itself is not wanted, and
-                                // must not ride in a message iced will clone.
-                                fut.await.map(drop).map_err(|e| e.user_message())
-                            },
-                            move |res| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Duress(
-                                        DuressMessage::DisableStepUpDone(res, gen),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        d.submitting = false;
-                        d.error = Some(e.user_message());
-                        return iced::Task::none();
-                    }
-                }
+            Err(e) => {
+                d.submitting = false;
+                d.error = Some(e.user_message());
+                return iced::Task::none();
             }
-            _ => {}
         }
         iced::Task::none()
     }
 
-    fn update_duress_disable_results(&mut self, message: DuressMessage) -> iced::Task<Message> {
-        match message {
-            DuressMessage::DisableStepUpDone(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
+    fn apply_duress_disable_step_up(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        if let Err(msg) = res {
+            d.submitting = false;
+            d.error = Some(msg);
+            return iced::Task::none();
+        }
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(async move { client.disable_duress().await }, move |res| {
+            let mapped = res.map_err(|e| match &e {
+                crate::services::coincube::CoincubeError::Unsuccessful(info)
+                    if info.status_code == 423 =>
+                {
+                    view::DuressDisableError::Active
                 }
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
+                _ => view::DuressDisableError::Failed(e.to_string()),
+            });
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::DisableResult(mapped, gen)),
+            ))
+        })
+    }
+
+    fn apply_duress_disable_result(
+        &mut self,
+        res: Result<(), view::DuressDisableError>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                // Server disabled — now disarm THIS device locally (clear
+                // Cube PIN hashes + local state + queue), via the active
+                // datadir (same one the enroll pre-flight uses).
+                let dir = match crate::dir::CoincubeDirectory::active() {
+                    Ok(d) => d,
+                    Err(err) => {
+                        if let Some(d) = &mut self.duress_disable {
+                            d.submitting = false;
+                            d.error = Some(
+                                UserError::logged(
+                                    "Duress is off on your account, but not on this device",
+                                    "COINCUBE Desktop couldn't read its data folder to finish. Reopen Settings to retry.",
+                                    crate::user_error::CC_CONFIG,
+                                    true,
+                                    err,
+                                )
+                                .toast(),
+                            );
+                        }
+                        return iced::Task::none();
+                    }
                 };
-                if let Err(msg) = res {
-                    d.submitting = false;
-                    d.error = Some(msg);
-                    return iced::Task::none();
-                }
-                let gen = self.session_generation;
-                let client = self.client.clone();
                 return iced::Task::perform(
-                    async move { client.disable_duress().await },
+                    async move {
+                        crate::app::clear_duress_enrollment(dir)
+                            .await
+                            .map(|()| true)
+                    },
                     move |res| {
-                        let mapped = res.map_err(|e| match &e {
-                            crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                if info.status_code == 423 =>
-                            {
-                                view::DuressDisableError::Active
-                            }
-                            _ => view::DuressDisableError::Failed(e.to_string()),
-                        });
                         Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::DisableResult(
-                                mapped, gen,
-                            )),
+                            ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(res, gen)),
                         ))
                     },
                 );
             }
-            DuressMessage::DisableResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
+            Err(view::DuressDisableError::Active) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some("Duress is currently active and can't be disabled.".to_string());
                 }
-                match res {
-                    Ok(()) => {
-                        // Server disabled — now disarm THIS device locally (clear
-                        // Cube PIN hashes + local state + queue), via the active
-                        // datadir (same one the enroll pre-flight uses).
-                        let dir = match crate::dir::CoincubeDirectory::active() {
-                            Ok(d) => d,
-                            Err(err) => {
-                                if let Some(d) = &mut self.duress_disable {
-                                    d.submitting = false;
-                                    d.error = Some(
-                                        UserError::logged(
-                                            "Duress is off on your account, but not on this device",
-                                            "COINCUBE Desktop couldn't read its data folder to finish. Reopen Settings to retry.",
-                                            crate::user_error::CC_CONFIG,
-                                            true,
-                                            err,
-                                        )
-                                        .toast(),
-                                    );
-                                }
-                                return iced::Task::none();
-                            }
-                        };
-                        return iced::Task::perform(
-                            async move {
-                                crate::app::clear_duress_enrollment(dir)
-                                    .await
-                                    .map(|()| true)
-                            },
-                            move |res| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
-                                        res, gen,
-                                    )),
-                                ))
-                            },
-                        );
-                    }
-                    Err(view::DuressDisableError::Active) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(
-                                "Duress is currently active and can't be disabled.".to_string(),
-                            );
-                        }
-                        // Re-sync state: if duress really is active, the
-                        // `StateLoaded` handler routes this device to recovery.
-                        return self.reload_duress_state();
-                    }
-                    Err(view::DuressDisableError::Failed(msg)) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(msg);
-                        }
-                    }
+                // Re-sync state: if duress really is active, the
+                // `StateLoaded` handler routes this device to recovery.
+                return self.reload_duress_state();
+            }
+            Err(view::DuressDisableError::Failed(msg)) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some(msg);
                 }
             }
-            DuressMessage::DisarmComplete(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
+        }
+        iced::Task::none()
+    }
+
+    fn apply_duress_disarm(&mut self, res: Result<bool, String>, gen: u64) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let had_dialog = self.duress_disable.is_some();
+        match res {
+            Ok(changed) => {
+                if changed {
+                    // This device is no longer armed; reflect the
+                    // disabled state in the panel immediately.
+                    self.duress_locally_armed = false;
+                    if let Some(s) = &mut self.duress_state {
+                        s.enrolled = false;
+                        s.active = false;
+                        s.this_device_registered = false;
+                    }
                 }
-                let had_dialog = self.duress_disable.is_some();
-                match res {
-                    Ok(changed) => {
-                        if changed {
-                            // This device is no longer armed; reflect the
-                            // disabled state in the panel immediately.
-                            self.duress_locally_armed = false;
-                            if let Some(s) = &mut self.duress_state {
-                                s.enrolled = false;
-                                s.active = false;
-                                s.this_device_registered = false;
-                            }
-                        }
-                        if let Some(mut d) = self.duress_disable.take() {
-                            d.zeroize_secrets();
-                        }
-                        // Confirmation toast only for the explicit, user-driven
-                        // disable (a dialog was open). The cross-device event and
-                        // launch reconcile disarm silently.
-                        if changed && had_dialog {
-                            return iced::Task::done(Message::View(view::Message::ShowSuccess(
-                                "Duress mode disabled.".to_string(),
-                            )));
-                        }
-                    }
-                    Err(e) => {
-                        // Built once, logged once, rendered in whichever of the
-                        // two places is on screen. The dialog branch used to
-                        // interpolate `{e}` — the common path, and the one that
-                        // actually reached a user.
-                        let user = UserError::logged(
-                            "Couldn't turn off duress mode",
-                            "Try again. If it keeps failing, contact support and quote the reference below.",
-                            crate::user_error::CC_API_BADRESP,
-                            true,
-                            &e,
-                        );
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(user.toast());
-                        } else {
-                            // Settled on the panel card: the dialog is gone, so
-                            // there is no control left for the user to re-press
-                            // and nothing for a card button to re-run.
-                            self.error = Some(PanelError::settled(user));
-                        }
-                    }
+                if let Some(mut d) = self.duress_disable.take() {
+                    d.zeroize_secrets();
+                }
+                // Confirmation toast only for the explicit, user-driven
+                // disable (a dialog was open). The cross-device event and
+                // launch reconcile disarm silently.
+                if changed && had_dialog {
+                    return iced::Task::done(Message::View(view::Message::ShowSuccess(
+                        "Duress mode disabled.".to_string(),
+                    )));
                 }
             }
-            _ => {}
+            Err(e) => {
+                // Built once, logged once, rendered in whichever of the
+                // two places is on screen. The dialog branch used to
+                // interpolate `{e}` — the common path, and the one that
+                // actually reached a user.
+                let user = UserError::logged(
+                    "Couldn't turn off duress mode",
+                    "Try again. If it keeps failing, contact support and quote the reference below.",
+                    crate::user_error::CC_API_BADRESP,
+                    true,
+                    &e,
+                );
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some(user.toast());
+                } else {
+                    // Settled on the panel card: the dialog is gone, so
+                    // there is no control left for the user to re-press
+                    // and nothing for a card button to re-run.
+                    self.error = Some(PanelError::settled(user));
+                }
+            }
         }
         iced::Task::none()
     }
