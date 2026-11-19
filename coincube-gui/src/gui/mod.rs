@@ -3758,6 +3758,119 @@ impl GUI {
         }
     }
 
+    fn cube_lock_requires_launcher(&self, pane_id: pane_grid::Pane, tab_id: usize) -> bool {
+        self.panes.get(pane_id).is_some_and(|pane| {
+            let owner = pane
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .and_then(|tab| match &tab.state {
+                    tab::State::App(app) => Some(app.cache().app_generation),
+                    _ => None,
+                });
+            matches!(
+                pane.tabs.get(pane.focused_tab).map(|tab| &tab.state),
+                Some(tab::State::Home(_))
+            ) || owner
+                .is_some_and(|owner| pane.tabs.iter().any(|tab| tab.copy_owner() == Some(owner)))
+        })
+    }
+
+    fn handle_cube_lock(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+        message: tab::Message,
+    ) -> Task<Message> {
+        let delete = matches!(message, tab::Message::LockCubeToDelete);
+        let to_launcher = delete
+            || matches!(message, tab::Message::LockCubeToLauncher)
+            || self.cube_lock_requires_launcher(pane_id, tab_id);
+        let identity = self
+            .panes
+            .get(pane_id)
+            .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
+            .and_then(|tab| match &tab.state {
+                tab::State::App(app) => Some((
+                    app.cache().app_generation,
+                    app.datadir().clone(),
+                    app.cube_settings().network,
+                    app.cube_settings().id.clone(),
+                )),
+                _ => None,
+            });
+        let Some((owner, root, chain, cube_id)) = identity else {
+            return Task::none();
+        };
+        // Locking must not wait on daemon shutdowns: each poller first
+        // finishes its in-flight network request. Those daemons stop on
+        // their own threads; only the watch-only daemon outlives this
+        // update, while the signer and wallet clients go with the tabs.
+        let mut empty_panes = Vec::new();
+        for (&other_id, pane) in self.panes.iter_mut() {
+            pane.close_tabs_matching_in_background(|sibling| {
+                !(other_id == pane_id && sibling.id == tab_id)
+                    && (sibling.copy_owner() == Some(owner)
+                        || sibling.matches_cube_identity(&root, chain, &cube_id)
+                        || matches!(
+                            sibling.state,
+                            tab::State::App(_)
+                                | tab::State::Loader(_)
+                                | tab::State::Installer(_)
+                                | tab::State::PinEntry(_)
+                                | tab::State::PasskeyUnlock(_)
+                        ))
+            });
+            if pane.tabs.is_empty() {
+                empty_panes.push(other_id);
+            }
+        }
+        for empty in empty_panes {
+            self.panes.close(empty);
+            if self.focus == Some(empty) {
+                self.focus = Some(pane_id);
+            }
+        }
+        let Some(pane) = self.panes.get_mut(pane_id) else {
+            return Task::none();
+        };
+        let Some(index) = pane
+            .tabs
+            .iter()
+            .position(|tab| tab.id == tab_id)
+            .filter(|&index| matches!(pane.tabs[index].state, tab::State::App(_)))
+        else {
+            return Task::none();
+        };
+        if !to_launcher {
+            crate::app::session::close();
+            self.focus = Some(pane_id);
+            return pane
+                .update(pane::Message::tab(tab_id, message), &self.config)
+                .map(move |message| Message::Pane(pane_id, message));
+        }
+        pane.close_tab_in_background(index);
+        crate::app::session::close(); // zeroizes signer/PIN
+        self.focus = Some(pane_id);
+        let task = if delete {
+            pane.focus_launcher_to_delete(cube_id, chain, &self.config)
+        } else {
+            pane.focus_launcher(&self.config)
+        };
+        Self::make_launcher_primary(pane);
+        task.map(move |message| Message::Pane(pane_id, message))
+    }
+
+    fn make_launcher_primary(pane: &mut pane::Pane) {
+        // Lock makes the Launcher the primary tab even if
+        // a legacy layout retained an unrelated Cube.
+        if pane.focused_tab > 0 {
+            let launcher = pane.tabs.remove(pane.focused_tab);
+            pane.tabs.insert(0, launcher);
+            pane.focused_tab = 0;
+        }
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3893,99 +4006,7 @@ impl GUI {
                         | tab::Message::LockCubeToDelete
                 ) =>
             {
-                let delete = matches!(inner.as_ref(), tab::Message::LockCubeToDelete);
-                let to_launcher = delete
-                    || matches!(inner.as_ref(), tab::Message::LockCubeToLauncher)
-                    || self.panes.get(pane_id).is_some_and(|pane| {
-                        let owner =
-                            pane.tabs.iter().find(|tab| tab.id == tab_id).and_then(
-                                |tab| match &tab.state {
-                                    tab::State::App(app) => Some(app.cache().app_generation),
-                                    _ => None,
-                                },
-                            );
-                        matches!(
-                            pane.tabs.get(pane.focused_tab).map(|tab| &tab.state),
-                            Some(tab::State::Home(_))
-                        ) || owner.is_some_and(|owner| {
-                            pane.tabs.iter().any(|tab| tab.copy_owner() == Some(owner))
-                        })
-                    });
-                let identity = self
-                    .panes
-                    .get(pane_id)
-                    .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == tab_id))
-                    .and_then(|tab| match &tab.state {
-                        tab::State::App(app) => Some((
-                            app.cache().app_generation,
-                            app.datadir().clone(),
-                            app.cube_settings().network,
-                            app.cube_settings().id.clone(),
-                        )),
-                        _ => None,
-                    });
-                let Some((owner, root, chain, cube_id)) = identity else {
-                    return Task::none();
-                };
-                // Locking must not wait on daemon shutdowns: each poller first
-                // finishes its in-flight network request. Those daemons stop on
-                // their own threads; only the watch-only daemon outlives this
-                // update, while the signer and wallet clients go with the tabs.
-                let mut empty_panes = Vec::new();
-                for (&other_id, pane) in self.panes.iter_mut() {
-                    pane.close_tabs_matching_in_background(|sibling| {
-                        !(other_id == pane_id && sibling.id == tab_id)
-                            && (sibling.copy_owner() == Some(owner)
-                                || sibling.matches_cube_identity(&root, chain, &cube_id)
-                                || matches!(
-                                    sibling.state,
-                                    tab::State::App(_)
-                                        | tab::State::Loader(_)
-                                        | tab::State::Installer(_)
-                                        | tab::State::PinEntry(_)
-                                        | tab::State::PasskeyUnlock(_)
-                                ))
-                    });
-                    if pane.tabs.is_empty() {
-                        empty_panes.push(other_id);
-                    }
-                }
-                for empty in empty_panes {
-                    self.panes.close(empty);
-                    if self.focus == Some(empty) {
-                        self.focus = Some(pane_id);
-                    }
-                }
-                if let Some(pane) = self.panes.get_mut(pane_id) {
-                    if let Some(index) = pane.tabs.iter().position(|tab| tab.id == tab_id) {
-                        if matches!(pane.tabs[index].state, tab::State::App(_)) {
-                            if !to_launcher {
-                                crate::app::session::close();
-                                self.focus = Some(pane_id);
-                                return pane
-                                    .update(pane::Message::tab(tab_id, *inner), &self.config)
-                                    .map(move |message| Message::Pane(pane_id, message));
-                            }
-                            pane.close_tab_in_background(index);
-                            crate::app::session::close(); // zeroizes signer/PIN
-                            self.focus = Some(pane_id);
-                            let task = if delete {
-                                pane.focus_launcher_to_delete(cube_id, chain, &self.config)
-                            } else {
-                                pane.focus_launcher(&self.config)
-                            };
-                            // Lock makes the Launcher the primary tab even if
-                            // a legacy layout retained an unrelated Cube.
-                            if pane.focused_tab > 0 {
-                                let launcher = pane.tabs.remove(pane.focused_tab);
-                                pane.tabs.insert(0, launcher);
-                                pane.focused_tab = 0;
-                            }
-                            return task.map(move |message| Message::Pane(pane_id, message));
-                        }
-                    }
-                }
-                Task::none()
+                self.handle_cube_lock(pane_id, tab_id, *inner)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(inner.as_ref(), tab::Message::DuressActivated { .. })
