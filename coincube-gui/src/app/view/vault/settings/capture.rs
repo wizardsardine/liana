@@ -840,36 +840,44 @@ async fn assert_vault_settings_capture(
             1.0,
             theme.colors.general.background,
         );
-        let name = format!("r11a-{scenario}-{theme_name}-{width}x{height}.png");
-        image::save_buffer(
-            Path::new(directory).join(&name),
-            &pixels,
-            width,
-            height,
-            image::ColorType::Rgba8,
-        )
-        .unwrap();
-        let hash = hex::encode(Sha256::digest(&pixels));
-        let image_hash = hex::encode(Sha256::digest(
-            fs::read(Path::new(directory).join(&name)).unwrap(),
-        ));
-        let record = serde_json::json!({
-            "fixture": "r11a-actual-iced",
-            "source_sha": sha.expect("capture source SHA"),
-            "scenario": scenario,
-            "theme": theme_name,
-            "width": width,
-            "height": height,
-            "file": name,
-            "pixel_sha256": hash,
-            "image_sha256": image_hash,
-        });
-        let mut manifest = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(Path::new(directory).join("manifest.jsonl"))
+        let directory = directory.to_owned();
+        let scenario = scenario.to_owned();
+        let theme_name = theme_name.to_owned();
+        let sha = sha.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            let name = format!("r11a-{scenario}-{theme_name}-{width}x{height}.png");
+            image::save_buffer(
+                Path::new(&directory).join(&name),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
             .unwrap();
-        writeln!(manifest, "{record}").unwrap();
+            let hash = hex::encode(Sha256::digest(&pixels));
+            let image_hash = hex::encode(Sha256::digest(
+                fs::read(Path::new(&directory).join(&name)).unwrap(),
+            ));
+            let record = serde_json::json!({
+                "fixture": "r11a-actual-iced",
+                "source_sha": sha.expect("capture source SHA"),
+                "scenario": scenario,
+                "theme": theme_name,
+                "width": width,
+                "height": height,
+                "file": name,
+                "pixel_sha256": hash,
+                "image_sha256": image_hash,
+            });
+            let mut manifest = OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(Path::new(&directory).join("manifest.jsonl"))
+                .unwrap();
+            writeln!(manifest, "{record}").unwrap();
+        })
+        .await
+        .expect("write Vault Settings capture files");
     }
     if scenario == "wallet_imported" {
         assert!(fixture.cache.has_imported_bitcoin);
