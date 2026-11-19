@@ -20,7 +20,11 @@ use crate::app::wallet::Wallet;
 use crate::daemon::Daemon;
 use crate::dir::CoincubeDirectory;
 use crate::pin_input::PinInput;
-use crate::services::fiat::currency::Currency;
+use crate::services::fiat::{
+    api::{ListCurrenciesResult, PriceApiError},
+    currency::Currency,
+    PriceSource,
+};
 use crate::services::unlock;
 
 /// State for the master seed backup flow.
@@ -1092,44 +1096,7 @@ impl GeneralSettingsState {
         use view::BackupWalletMessage;
 
         match msg {
-            BackupWalletMessage::Start => {
-                self.backup_pin_attempt = None;
-                // Passkey Cubes derive their mnemonic from the WebAuthn PRF
-                // output — there is no encrypted mnemonic on disk and no PIN.
-                // Re-derive it through an assertion, which is the passkey
-                // path's exact analogue of the PIN re-prompt below: the open
-                // Cube's signer is already in `app::session`, so neither
-                // prompt is fetching something we lack. Both are asking for
-                // consent to put the master seed on screen.
-                if let Some(cube) = self.lookup_cube(cache) {
-                    if cube.is_passkey_cube() {
-                        self.backup_mnemonic = None;
-                        return match crate::services::passkey::reauth::begin(&cube) {
-                            Ok(fut) => {
-                                self.backup_state = BackupSeedState::PasskeyReauth;
-                                Task::perform(fut, |res| {
-                                    Message::View(view::Message::Settings(
-                                        view::SettingsMessage::BackupMasterSeed(
-                                            view::BackupWalletMessage::PinVerified(
-                                                res.map_err(|e| e.user_message()),
-                                            ),
-                                        ),
-                                    ))
-                                })
-                            }
-                            Err(e) => {
-                                self.backup_state = BackupSeedState::Error(e.user_message());
-                                Task::none()
-                            }
-                        };
-                    }
-                }
-                // Always re-prompt for PIN before showing anything sensitive.
-                self.backup_pin = PinInput::new();
-                self.backup_mnemonic = None;
-                self.backup_state = BackupSeedState::PinEntry { error: None };
-                Task::none()
-            }
+            BackupWalletMessage::Start => self.start_seed_backup(cache),
             BackupWalletMessage::PinInput(pin_msg) => {
                 // Clear previous error on new input.
                 if let BackupSeedState::PinEntry { error } = &mut self.backup_state {
@@ -1141,114 +1108,7 @@ impl GeneralSettingsState {
                     ))
                 })
             }
-            BackupWalletMessage::VerifyPin => {
-                if self.backup_pin_attempt.is_some() {
-                    return Task::none();
-                }
-                if !matches!(self.backup_state, BackupSeedState::PinEntry { .. }) {
-                    return Task::none();
-                }
-                if !self.backup_pin.is_complete() {
-                    self.backup_state = BackupSeedState::PinEntry {
-                        error: Some("Please enter all 4 PIN digits".to_string()),
-                    };
-                    return Task::none();
-                }
-                let pin = self.backup_pin.value();
-                let Some(cube) = self.lookup_cube(cache) else {
-                    self.backup_state = BackupSeedState::PinEntry {
-                        error: Some("Cube not found in settings".to_string()),
-                    };
-                    return Task::none();
-                };
-                let Some(fingerprint) = cube.master_signer_fingerprint else {
-                    self.backup_state = BackupSeedState::PinEntry {
-                        error: Some("This Cube has no master signer.".to_string()),
-                    };
-                    return Task::none();
-                };
-
-                let datadir = cache.datadir_path.path().to_path_buf();
-                let network = cache.chain();
-                let cube_id = cube.id.clone();
-
-                // This is the *second* door to the same secret, and it is the
-                // one that hands over the permanent one. Reaching it needs an
-                // unlocked Cube, so it is not the laptop-thief case the unlock
-                // throttle was built for — but someone at an unattended,
-                // already-open Cube who wants the seed phrase rather than the
-                // session's balance would otherwise get unlimited guesses here.
-                // Share the unlock counter: it is the same PIN and the same
-                // Cube, so guesses should accumulate across both surfaces.
-                let throttle_root = datadir.clone();
-                let attempt = crate::app::cache::AppGeneration::next();
-                self.backup_pin_attempt = Some(attempt);
-                let app_generation = cache.app_generation;
-                // Run Argon2id PIN verification + mnemonic decryption off
-                // the UI thread to avoid blocking the event loop.
-                Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            // `load_mnemonic_words` is the PIN check: the PIN
-                            // the unlock authenticated when a session can
-                            // answer, the seed file's GCM tag when it cannot.
-                            // The `verify_pin` call that used to gate this was
-                            // the cheap Argon2 oracle (m=19 MiB vs the seed
-                            // file's 256 MiB) and is gone; see
-                            // PLAN-cube-unlock-hardening I1.
-                            unlock::throttle::classify_seed_export_cube(
-                                &throttle_root,
-                                &cube,
-                                app_generation,
-                                &pin,
-                                || {
-                                    load_mnemonic_words(
-                                        &datadir,
-                                        network,
-                                        fingerprint,
-                                        &pin,
-                                        &cube_id,
-                                    )
-                                },
-                            )
-                        })
-                        .await
-                        .map_err(|e| format!("PIN verification task failed: {}", e))?
-                    },
-                    move |res| {
-                        let outcome = match res {
-                            Ok(unlock::throttle::SeedExportCubeAttempt::Words(words)) => {
-                                BackupWalletMessage::PinVerifiedAttempt(attempt, Ok(words))
-                            }
-                            Ok(unlock::throttle::SeedExportCubeAttempt::Duress(proof)) => {
-                                return Message::View(view::Message::DuressActivateLocal(proof));
-                            }
-                            Ok(unlock::throttle::SeedExportCubeAttempt::Wrong(penalty)) => {
-                                BackupWalletMessage::PinVerifiedAttempt(
-                                    attempt,
-                                    Err(if penalty.is_zero() {
-                                        "Incorrect PIN. Please try again.".into()
-                                    } else {
-                                        unlock::throttle::lockout_message(penalty)
-                                    }),
-                                )
-                            }
-                            Ok(unlock::throttle::SeedExportCubeAttempt::Locked(remaining)) => {
-                                BackupWalletMessage::PinVerifiedAttempt(
-                                    attempt,
-                                    Err(unlock::throttle::lockout_message(remaining)),
-                                )
-                            }
-                            Err(error) => {
-                                BackupWalletMessage::PinVerifiedAttempt(attempt, Err(error))
-                            }
-                        };
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::BackupMasterSeed(outcome),
-                        ))
-                    },
-                )
-            }
+            BackupWalletMessage::VerifyPin => self.verify_seed_backup_pin(cache),
             BackupWalletMessage::PinVerifiedAttempt(attempt, result) => {
                 if self.backup_pin_attempt != Some(attempt)
                     || !matches!(self.backup_state, BackupSeedState::PinEntry { .. })
@@ -1257,81 +1117,14 @@ impl GeneralSettingsState {
                 }
                 self.handle_backup_message(cache, BackupWalletMessage::PinVerified(result))
             }
-            BackupWalletMessage::PinVerified(result) => {
-                // Shared by both unlock shapes: a verified PIN and a completed
-                // assertion both arrive here holding the same words.
-                //
-                // Only the two states that *asked* for a verification may
-                // consume one — same guard `VerifyPin` applies above. A stale
-                // result is not hypothetical: `PreviousStep` cancels a live
-                // ceremony, which wakes the waiting task with `Cancelled`, and
-                // the authenticator can answer in the same instant the user
-                // backs out. Acting on either would reopen a wizard the user
-                // just left, and on the `Ok` path that means re-entering the
-                // flow that puts the master seed on screen, unprompted. The
-                // `Err` path was no better: with the state already back at
-                // `None`, `from_passkey` read `false` and a cancelled Touch ID
-                // prompt landed a passkey Cube on a PIN keypad it has no PIN
-                // for.
-                let from_passkey = match &self.backup_state {
-                    BackupSeedState::PasskeyReauth => true,
-                    BackupSeedState::PinEntry { .. } => false,
-                    _ => return Task::none(),
-                };
-                self.backup_pin_attempt = None;
-                if from_passkey {
-                    // The ceremony is over; drop the parked controller.
-                    crate::services::passkey::reauth::cancel();
-                }
-                match result {
-                    Ok(words) => {
-                        self.backup_pin.clear();
-                        self.backup_mnemonic = Some(words);
-                        self.backup_state = BackupSeedState::Intro(false);
-                    }
-                    Err(e) => {
-                        self.backup_pin.clear();
-                        self.backup_state = if from_passkey {
-                            // No keypad to return to — the prompt was the
-                            // system's. `e` is already I12-compliant copy from
-                            // `PasskeyError::user_message`.
-                            BackupSeedState::Error(e)
-                        } else {
-                            BackupSeedState::PinEntry { error: Some(e) }
-                        };
-                    }
-                }
-                Task::none()
-            }
+            BackupWalletMessage::PinVerified(result) => self.apply_seed_backup_pin_result(result),
             BackupWalletMessage::ToggleBackupIntroCheck => {
                 if let BackupSeedState::Intro(checked) = self.backup_state {
                     self.backup_state = BackupSeedState::Intro(!checked);
                 }
                 Task::none()
             }
-            BackupWalletMessage::NextStep => {
-                self.backup_state = match &self.backup_state {
-                    BackupSeedState::Intro(true) => BackupSeedState::RecoveryPhrase,
-                    BackupSeedState::RecoveryPhrase => {
-                        let mnemonic_len =
-                            self.backup_mnemonic.as_ref().map(|m| m.len()).unwrap_or(0);
-                        match generate_random_word_indices(mnemonic_len) {
-                            Some(word_indices) => BackupSeedState::Verification {
-                                word_indices,
-                                word_inputs: [String::new(), String::new(), String::new()],
-                                error: None,
-                                saving: false,
-                            },
-                            None => {
-                                tracing::error!("Mnemonic unavailable or has fewer than 3 words");
-                                self.backup_state.clone()
-                            }
-                        }
-                    }
-                    _ => self.backup_state.clone(),
-                };
-                Task::none()
-            }
+            BackupWalletMessage::NextStep => self.advance_seed_backup(),
             BackupWalletMessage::PreviousStep => {
                 self.backup_pin_attempt = None;
                 self.backup_state = match &self.backup_state {
@@ -1364,109 +1157,9 @@ impl GeneralSettingsState {
                 Task::none()
             }
             BackupWalletMessage::WordInput { index, input } => {
-                if let BackupSeedState::Verification {
-                    word_indices,
-                    word_inputs,
-                    error,
-                    saving,
-                } = &self.backup_state
-                {
-                    // Ignore edits while the async save is in flight.
-                    if *saving {
-                        return Task::none();
-                    }
-                    let mut new_inputs = word_inputs.clone();
-                    if let Some(pos) = word_indices.iter().position(|&i| i == index as usize) {
-                        new_inputs[pos] = input;
-                    }
-                    self.backup_state = BackupSeedState::Verification {
-                        word_indices: *word_indices,
-                        word_inputs: new_inputs,
-                        error: error.clone(),
-                        saving: false,
-                    };
-                }
-                Task::none()
+                self.edit_seed_backup_word(index, input)
             }
-            BackupWalletMessage::VerifyPhrase => {
-                let BackupSeedState::Verification {
-                    word_indices,
-                    word_inputs,
-                    saving,
-                    ..
-                } = &self.backup_state
-                else {
-                    return Task::none();
-                };
-                // Ignore duplicate clicks while the async save is in flight.
-                if *saving {
-                    return Task::none();
-                }
-                let Some(mnemonic) = &self.backup_mnemonic else {
-                    return Task::none();
-                };
-
-                let all_correct = word_indices.iter().enumerate().all(|(i, &word_idx)| {
-                    if word_idx == 0 || word_idx > mnemonic.len() {
-                        return false;
-                    }
-                    word_inputs[i].trim() == mnemonic[word_idx - 1]
-                });
-
-                if all_correct {
-                    // Verification passed — mark the state as saving so the
-                    // Verify button is disabled, then persist
-                    // `backed_up = true` to settings.json. The async result is
-                    // handled by `BackupSaveResult` below: success transitions
-                    // to Completed via `BackupMasterSeedUpdated`, failure
-                    // restores the verification screen with an error message.
-                    let word_indices = *word_indices;
-                    let word_inputs = word_inputs.clone();
-                    self.backup_state = BackupSeedState::Verification {
-                        word_indices,
-                        word_inputs,
-                        error: None,
-                        saving: true,
-                    };
-                    let cube_id = self.cube_id.clone();
-                    let network = cache.chain();
-                    let datadir = cache.datadir_path.clone();
-                    Task::perform(
-                        async move {
-                            let network_dir = datadir.network_directory(network);
-                            update_settings_file(&network_dir, |mut s| {
-                                if let Some(cube) = s
-                                    .cubes
-                                    .iter_mut()
-                                    .find(|c| c.id == cube_id && c.network == network)
-                                {
-                                    cube.backed_up = true;
-                                }
-                                Some(s)
-                            })
-                            .await
-                            .map_err(|e| format!("Failed to update settings: {}", e))
-                        },
-                        |res: Result<(), String>| {
-                            Message::View(view::Message::Settings(
-                                view::SettingsMessage::BackupMasterSeed(
-                                    view::BackupWalletMessage::BackupSaveResult(res),
-                                ),
-                            ))
-                        },
-                    )
-                } else {
-                    self.backup_state = BackupSeedState::Verification {
-                        word_indices: *word_indices,
-                        word_inputs: word_inputs.clone(),
-                        error: Some(
-                            "The words you entered don't match. Please try again.".to_string(),
-                        ),
-                        saving: false,
-                    };
-                    Task::none()
-                }
-            }
+            BackupWalletMessage::VerifyPhrase => self.verify_seed_backup_phrase(cache),
             BackupWalletMessage::BackupSaveResult(res) => {
                 // The async settings.json write completed. On success, fan out
                 // `BackupMasterSeedUpdated` so the App-level interceptor can
@@ -1510,6 +1203,323 @@ impl GeneralSettingsState {
                 self.backup_state = BackupSeedState::None;
                 Task::none()
             }
+        }
+    }
+
+    fn start_seed_backup(&mut self, cache: &Cache) -> Task<Message> {
+        self.backup_pin_attempt = None;
+        // Passkey Cubes derive their mnemonic from the WebAuthn PRF
+        // output — there is no encrypted mnemonic on disk and no PIN.
+        // Re-derive it through an assertion, which is the passkey
+        // path's exact analogue of the PIN re-prompt below: the open
+        // Cube's signer is already in `app::session`, so neither
+        // prompt is fetching something we lack. Both are asking for
+        // consent to put the master seed on screen.
+        if let Some(cube) = self.lookup_cube(cache) {
+            if cube.is_passkey_cube() {
+                self.backup_mnemonic = None;
+                return match crate::services::passkey::reauth::begin(&cube) {
+                    Ok(fut) => {
+                        self.backup_state = BackupSeedState::PasskeyReauth;
+                        Task::perform(fut, |res| {
+                            Message::View(view::Message::Settings(
+                                view::SettingsMessage::BackupMasterSeed(
+                                    view::BackupWalletMessage::PinVerified(
+                                        res.map_err(|e| e.user_message()),
+                                    ),
+                                ),
+                            ))
+                        })
+                    }
+                    Err(e) => {
+                        self.backup_state = BackupSeedState::Error(e.user_message());
+                        Task::none()
+                    }
+                };
+            }
+        }
+        // Always re-prompt for PIN before showing anything sensitive.
+        self.backup_pin = PinInput::new();
+        self.backup_mnemonic = None;
+        self.backup_state = BackupSeedState::PinEntry { error: None };
+        Task::none()
+    }
+
+    fn verify_seed_backup_pin(&mut self, cache: &Cache) -> Task<Message> {
+        use view::BackupWalletMessage;
+
+        if self.backup_pin_attempt.is_some() {
+            return Task::none();
+        }
+        if !matches!(self.backup_state, BackupSeedState::PinEntry { .. }) {
+            return Task::none();
+        }
+        if !self.backup_pin.is_complete() {
+            self.backup_state = BackupSeedState::PinEntry {
+                error: Some("Please enter all 4 PIN digits".to_string()),
+            };
+            return Task::none();
+        }
+        let pin = self.backup_pin.value();
+        let Some(cube) = self.lookup_cube(cache) else {
+            self.backup_state = BackupSeedState::PinEntry {
+                error: Some("Cube not found in settings".to_string()),
+            };
+            return Task::none();
+        };
+        let Some(fingerprint) = cube.master_signer_fingerprint else {
+            self.backup_state = BackupSeedState::PinEntry {
+                error: Some("This Cube has no master signer.".to_string()),
+            };
+            return Task::none();
+        };
+
+        let datadir = cache.datadir_path.path().to_path_buf();
+        let network = cache.chain();
+        let cube_id = cube.id.clone();
+
+        // This is the *second* door to the same secret, and it is the
+        // one that hands over the permanent one. Reaching it needs an
+        // unlocked Cube, so it is not the laptop-thief case the unlock
+        // throttle was built for — but someone at an unattended,
+        // already-open Cube who wants the seed phrase rather than the
+        // session's balance would otherwise get unlimited guesses here.
+        // Share the unlock counter: it is the same PIN and the same
+        // Cube, so guesses should accumulate across both surfaces.
+        let throttle_root = datadir.clone();
+        let attempt = crate::app::cache::AppGeneration::next();
+        self.backup_pin_attempt = Some(attempt);
+        let app_generation = cache.app_generation;
+        // Run Argon2id PIN verification + mnemonic decryption off
+        // the UI thread to avoid blocking the event loop.
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    // `load_mnemonic_words` is the PIN check: the PIN
+                    // the unlock authenticated when a session can
+                    // answer, the seed file's GCM tag when it cannot.
+                    // The `verify_pin` call that used to gate this was
+                    // the cheap Argon2 oracle (m=19 MiB vs the seed
+                    // file's 256 MiB) and is gone; see
+                    // PLAN-cube-unlock-hardening I1.
+                    unlock::throttle::classify_seed_export_cube(
+                        &throttle_root,
+                        &cube,
+                        app_generation,
+                        &pin,
+                        || load_mnemonic_words(&datadir, network, fingerprint, &pin, &cube_id),
+                    )
+                })
+                .await
+                .map_err(|e| format!("PIN verification task failed: {}", e))?
+            },
+            move |res| {
+                let outcome = match res {
+                    Ok(unlock::throttle::SeedExportCubeAttempt::Words(words)) => {
+                        BackupWalletMessage::PinVerifiedAttempt(attempt, Ok(words))
+                    }
+                    Ok(unlock::throttle::SeedExportCubeAttempt::Duress(proof)) => {
+                        return Message::View(view::Message::DuressActivateLocal(proof));
+                    }
+                    Ok(unlock::throttle::SeedExportCubeAttempt::Wrong(penalty)) => {
+                        BackupWalletMessage::PinVerifiedAttempt(
+                            attempt,
+                            Err(if penalty.is_zero() {
+                                "Incorrect PIN. Please try again.".into()
+                            } else {
+                                unlock::throttle::lockout_message(penalty)
+                            }),
+                        )
+                    }
+                    Ok(unlock::throttle::SeedExportCubeAttempt::Locked(remaining)) => {
+                        BackupWalletMessage::PinVerifiedAttempt(
+                            attempt,
+                            Err(unlock::throttle::lockout_message(remaining)),
+                        )
+                    }
+                    Err(error) => BackupWalletMessage::PinVerifiedAttempt(attempt, Err(error)),
+                };
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::BackupMasterSeed(outcome),
+                ))
+            },
+        )
+    }
+
+    fn apply_seed_backup_pin_result(
+        &mut self,
+        result: Result<Zeroizing<Vec<String>>, String>,
+    ) -> Task<Message> {
+        // Shared by both unlock shapes: a verified PIN and a completed
+        // assertion both arrive here holding the same words.
+        //
+        // Only the two states that *asked* for a verification may
+        // consume one — same guard `VerifyPin` applies above. A stale
+        // result is not hypothetical: `PreviousStep` cancels a live
+        // ceremony, which wakes the waiting task with `Cancelled`, and
+        // the authenticator can answer in the same instant the user
+        // backs out. Acting on either would reopen a wizard the user
+        // just left, and on the `Ok` path that means re-entering the
+        // flow that puts the master seed on screen, unprompted. The
+        // `Err` path was no better: with the state already back at
+        // `None`, `from_passkey` read `false` and a cancelled Touch ID
+        // prompt landed a passkey Cube on a PIN keypad it has no PIN
+        // for.
+        let from_passkey = match &self.backup_state {
+            BackupSeedState::PasskeyReauth => true,
+            BackupSeedState::PinEntry { .. } => false,
+            _ => return Task::none(),
+        };
+        self.backup_pin_attempt = None;
+        if from_passkey {
+            // The ceremony is over; drop the parked controller.
+            crate::services::passkey::reauth::cancel();
+        }
+        match result {
+            Ok(words) => {
+                self.backup_pin.clear();
+                self.backup_mnemonic = Some(words);
+                self.backup_state = BackupSeedState::Intro(false);
+            }
+            Err(e) => {
+                self.backup_pin.clear();
+                self.backup_state = if from_passkey {
+                    // No keypad to return to — the prompt was the
+                    // system's. `e` is already I12-compliant copy from
+                    // `PasskeyError::user_message`.
+                    BackupSeedState::Error(e)
+                } else {
+                    BackupSeedState::PinEntry { error: Some(e) }
+                };
+            }
+        }
+        Task::none()
+    }
+
+    fn advance_seed_backup(&mut self) -> Task<Message> {
+        self.backup_state = match &self.backup_state {
+            BackupSeedState::Intro(true) => BackupSeedState::RecoveryPhrase,
+            BackupSeedState::RecoveryPhrase => {
+                let mnemonic_len = self.backup_mnemonic.as_ref().map(|m| m.len()).unwrap_or(0);
+                match generate_random_word_indices(mnemonic_len) {
+                    Some(word_indices) => BackupSeedState::Verification {
+                        word_indices,
+                        word_inputs: [String::new(), String::new(), String::new()],
+                        error: None,
+                        saving: false,
+                    },
+                    None => {
+                        tracing::error!("Mnemonic unavailable or has fewer than 3 words");
+                        self.backup_state.clone()
+                    }
+                }
+            }
+            _ => self.backup_state.clone(),
+        };
+        Task::none()
+    }
+
+    fn edit_seed_backup_word(&mut self, index: u8, input: String) -> Task<Message> {
+        if let BackupSeedState::Verification {
+            word_indices,
+            word_inputs,
+            error,
+            saving,
+        } = &self.backup_state
+        {
+            // Ignore edits while the async save is in flight.
+            if *saving {
+                return Task::none();
+            }
+            let mut new_inputs = word_inputs.clone();
+            if let Some(pos) = word_indices.iter().position(|&i| i == index as usize) {
+                new_inputs[pos] = input;
+            }
+            self.backup_state = BackupSeedState::Verification {
+                word_indices: *word_indices,
+                word_inputs: new_inputs,
+                error: error.clone(),
+                saving: false,
+            };
+        }
+        Task::none()
+    }
+
+    fn verify_seed_backup_phrase(&mut self, cache: &Cache) -> Task<Message> {
+        let BackupSeedState::Verification {
+            word_indices,
+            word_inputs,
+            saving,
+            ..
+        } = &self.backup_state
+        else {
+            return Task::none();
+        };
+        // Ignore duplicate clicks while the async save is in flight.
+        if *saving {
+            return Task::none();
+        }
+        let Some(mnemonic) = &self.backup_mnemonic else {
+            return Task::none();
+        };
+
+        let all_correct = word_indices.iter().enumerate().all(|(i, &word_idx)| {
+            if word_idx == 0 || word_idx > mnemonic.len() {
+                return false;
+            }
+            word_inputs[i].trim() == mnemonic[word_idx - 1]
+        });
+
+        if all_correct {
+            // Verification passed — mark the state as saving so the
+            // Verify button is disabled, then persist
+            // `backed_up = true` to settings.json. The async result is
+            // handled by `BackupSaveResult` below: success transitions
+            // to Completed via `BackupMasterSeedUpdated`, failure
+            // restores the verification screen with an error message.
+            let word_indices = *word_indices;
+            let word_inputs = word_inputs.clone();
+            self.backup_state = BackupSeedState::Verification {
+                word_indices,
+                word_inputs,
+                error: None,
+                saving: true,
+            };
+            let cube_id = self.cube_id.clone();
+            let network = cache.chain();
+            let datadir = cache.datadir_path.clone();
+            Task::perform(
+                async move {
+                    let network_dir = datadir.network_directory(network);
+                    update_settings_file(&network_dir, |mut s| {
+                        if let Some(cube) = s
+                            .cubes
+                            .iter_mut()
+                            .find(|c| c.id == cube_id && c.network == network)
+                        {
+                            cube.backed_up = true;
+                        }
+                        Some(s)
+                    })
+                    .await
+                    .map_err(|e| format!("Failed to update settings: {}", e))
+                },
+                |res: Result<(), String>| {
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::BackupMasterSeed(
+                            view::BackupWalletMessage::BackupSaveResult(res),
+                        ),
+                    ))
+                },
+            )
+        } else {
+            self.backup_state = BackupSeedState::Verification {
+                word_indices: *word_indices,
+                word_inputs: word_inputs.clone(),
+                error: Some("The words you entered don't match. Please try again.".to_string()),
+                saving: false,
+            };
+            Task::none()
         }
     }
 }
@@ -1662,6 +1672,161 @@ impl GeneralSettingsState {
             self.confirm_checks_off,
         )
     }
+
+    fn apply_saved_preferences(&mut self, cache: &Cache) -> Task<Message> {
+        self.saved = true;
+        tracing::info!("GeneralSettingsState: SettingsSaved received");
+        self.error = None;
+        // Reload unit setting from disk to sync toggle state with what was saved
+        let network_dir = cache.datadir_path.network_directory(cache.chain());
+        tracing::info!(
+            "GeneralSettingsState: Loading settings from {:?}",
+            network_dir.path()
+        );
+        if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+            tracing::info!(
+                "GeneralSettingsState: Loaded settings, searching for cube_id: {}",
+                self.cube_id
+            );
+            tracing::info!(
+                "GeneralSettingsState: Available cubes: {:?}",
+                settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
+            );
+            if let Some(cube) = settings
+                .cubes
+                .iter()
+                .find(|c| c.id == self.cube_id && c.network == cache.chain())
+            {
+                tracing::info!(
+                    "GeneralSettingsState: Found cube, reloading unit_setting: {:?}",
+                    cube.unit_setting.display_unit
+                );
+                self.new_unit_setting = cube.unit_setting.clone();
+                tracing::info!(
+                    "GeneralSettingsState: new_unit_setting now set to: {:?}",
+                    self.new_unit_setting.display_unit
+                );
+            } else {
+                tracing::warn!(
+                    "GeneralSettingsState: Cube not found with id: {}",
+                    self.cube_id
+                );
+            }
+        } else {
+            tracing::error!("GeneralSettingsState: Failed to load settings from disk");
+        }
+        Task::none()
+    }
+
+    fn apply_preference_save_failure(&mut self, cache: &Cache, e: Error) -> Task<Message> {
+        self.saved = false;
+        let err_msg = crate::user_error::report(&e);
+        self.error = Some(e);
+        // Show error in global toast
+        let toast_task = Task::done(Message::View(view::Message::ShowError(err_msg)));
+        // Reload settings from disk to revert toggle state to persisted value
+        let network_dir = cache.datadir_path.network_directory(cache.chain());
+        if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+            if let Some(cube) = settings
+                .cubes
+                .iter()
+                .find(|c| c.id == self.cube_id && c.network == cache.chain())
+            {
+                tracing::info!(
+                    "Reverting unit_setting to persisted value after save failure: {:?}",
+                    cube.unit_setting.display_unit
+                );
+                self.new_unit_setting = cube.unit_setting.clone();
+                self.new_price_setting = cube.fiat_price.clone().unwrap_or_default();
+            } else {
+                tracing::warn!(
+                    "Could not revert settings: Cube not found with id: {}",
+                    self.cube_id
+                );
+            }
+        } else {
+            tracing::error!("Could not revert settings: Failed to load settings from disk");
+        }
+        toast_task
+    }
+
+    fn validate_currency_setting(&mut self) -> Task<Message> {
+        self.error = None;
+        if !self.currencies.contains(&self.new_price_setting.currency) {
+            if self.currencies.contains(&Currency::default()) {
+                self.new_price_setting.currency = Currency::default();
+            } else if let Some(curr) = self.currencies.first() {
+                self.new_price_setting.currency = *curr;
+            } else {
+                let err = Error::Unexpected("No available currencies in the list.".to_string());
+                let err_msg = crate::user_error::report(&err);
+                self.error = Some(err);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        }
+        Task::perform(async move {}, |_| FiatMessage::SaveChanges.into())
+    }
+
+    fn apply_currency_list(
+        &mut self,
+        source: PriceSource,
+        res: Result<ListCurrenciesResult, PriceApiError>,
+    ) -> Task<Message> {
+        if self.new_price_setting.source != source {
+            return Task::none();
+        }
+        match res {
+            Ok(list) => {
+                self.error = None;
+                self.currencies = list.currencies;
+                Task::perform(async move {}, |_| {
+                    FiatMessage::ValidateCurrencySetting.into()
+                })
+            }
+            Err(e) => {
+                let err: Error = e.into();
+                let err_msg = crate::user_error::report(&err);
+                self.error = Some(err);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
+
+    fn handle_fiat_preference(&mut self, cache: &Cache, msg: view::FiatMessage) -> Task<Message> {
+        match msg {
+            view::FiatMessage::Enable(is_enabled) => {
+                self.new_price_setting.is_enabled = is_enabled;
+                if self.new_price_setting.is_enabled {
+                    let source = self.new_price_setting.source;
+                    return Task::perform(async move { source }, |source| {
+                        FiatMessage::ListCurrencies(source).into()
+                    });
+                } else {
+                    return Task::perform(async move {}, |_| FiatMessage::SaveChanges.into());
+                }
+            }
+            view::FiatMessage::SourceEdited(source) => {
+                self.new_price_setting.source = if cache.fiat_chain.is_blake2b() {
+                    crate::services::fiat::PriceSource::Coincube
+                } else {
+                    source
+                };
+                if self.new_price_setting.is_enabled {
+                    let source = self.new_price_setting.source;
+                    return Task::perform(async move { source }, |source| {
+                        FiatMessage::ListCurrencies(source).into()
+                    });
+                }
+            }
+            view::FiatMessage::CurrencyEdited(currency) => {
+                self.new_price_setting.currency = currency;
+                return Task::perform(async move {}, |_| {
+                    FiatMessage::ValidateCurrencySetting.into()
+                });
+            }
+        }
+        Task::none()
+    }
 }
 
 impl State for GeneralSettingsState {
@@ -1752,154 +1917,14 @@ impl State for GeneralSettingsState {
                     },
                 )
             }
-            Message::SettingsSaved => {
-                self.saved = true;
-                tracing::info!("GeneralSettingsState: SettingsSaved received");
-                self.error = None;
-                // Reload unit setting from disk to sync toggle state with what was saved
-                let network_dir = cache.datadir_path.network_directory(cache.chain());
-                tracing::info!(
-                    "GeneralSettingsState: Loading settings from {:?}",
-                    network_dir.path()
-                );
-                if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
-                    tracing::info!(
-                        "GeneralSettingsState: Loaded settings, searching for cube_id: {}",
-                        self.cube_id
-                    );
-                    tracing::info!(
-                        "GeneralSettingsState: Available cubes: {:?}",
-                        settings.cubes.iter().map(|c| &c.id).collect::<Vec<_>>()
-                    );
-                    if let Some(cube) = settings
-                        .cubes
-                        .iter()
-                        .find(|c| c.id == self.cube_id && c.network == cache.chain())
-                    {
-                        tracing::info!(
-                            "GeneralSettingsState: Found cube, reloading unit_setting: {:?}",
-                            cube.unit_setting.display_unit
-                        );
-                        self.new_unit_setting = cube.unit_setting.clone();
-                        tracing::info!(
-                            "GeneralSettingsState: new_unit_setting now set to: {:?}",
-                            self.new_unit_setting.display_unit
-                        );
-                    } else {
-                        tracing::warn!(
-                            "GeneralSettingsState: Cube not found with id: {}",
-                            self.cube_id
-                        );
-                    }
-                } else {
-                    tracing::error!("GeneralSettingsState: Failed to load settings from disk");
-                }
-                Task::none()
-            }
-            Message::SettingsSaveFailed(e) => {
-                self.saved = false;
-                let err_msg = crate::user_error::report(&e);
-                self.error = Some(e);
-                // Show error in global toast
-                let toast_task = Task::done(Message::View(view::Message::ShowError(err_msg)));
-                // Reload settings from disk to revert toggle state to persisted value
-                let network_dir = cache.datadir_path.network_directory(cache.chain());
-                if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
-                    if let Some(cube) = settings
-                        .cubes
-                        .iter()
-                        .find(|c| c.id == self.cube_id && c.network == cache.chain())
-                    {
-                        tracing::info!(
-                            "Reverting unit_setting to persisted value after save failure: {:?}",
-                            cube.unit_setting.display_unit
-                        );
-                        self.new_unit_setting = cube.unit_setting.clone();
-                        self.new_price_setting = cube.fiat_price.clone().unwrap_or_default();
-                    } else {
-                        tracing::warn!(
-                            "Could not revert settings: Cube not found with id: {}",
-                            self.cube_id
-                        );
-                    }
-                } else {
-                    tracing::error!("Could not revert settings: Failed to load settings from disk");
-                }
-                toast_task
-            }
-            Message::Fiat(FiatMessage::ValidateCurrencySetting) => {
-                self.error = None;
-                if !self.currencies.contains(&self.new_price_setting.currency) {
-                    if self.currencies.contains(&Currency::default()) {
-                        self.new_price_setting.currency = Currency::default();
-                    } else if let Some(curr) = self.currencies.first() {
-                        self.new_price_setting.currency = *curr;
-                    } else {
-                        let err =
-                            Error::Unexpected("No available currencies in the list.".to_string());
-                        let err_msg = crate::user_error::report(&err);
-                        self.error = Some(err);
-                        return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                    }
-                }
-                Task::perform(async move {}, |_| FiatMessage::SaveChanges.into())
-            }
+            Message::SettingsSaved => self.apply_saved_preferences(cache),
+            Message::SettingsSaveFailed(e) => self.apply_preference_save_failure(cache, e),
+            Message::Fiat(FiatMessage::ValidateCurrencySetting) => self.validate_currency_setting(),
             Message::Fiat(FiatMessage::ListCurrenciesResult(source, res)) => {
-                if self.new_price_setting.source != source {
-                    return Task::none();
-                }
-                match res {
-                    Ok(list) => {
-                        self.error = None;
-                        self.currencies = list.currencies;
-                        Task::perform(async move {}, |_| {
-                            FiatMessage::ValidateCurrencySetting.into()
-                        })
-                    }
-                    Err(e) => {
-                        let err: Error = e.into();
-                        let err_msg = crate::user_error::report(&err);
-                        self.error = Some(err);
-                        Task::done(Message::View(view::Message::ShowError(err_msg)))
-                    }
-                }
+                self.apply_currency_list(source, res)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Fiat(msg))) => {
-                match msg {
-                    view::FiatMessage::Enable(is_enabled) => {
-                        self.new_price_setting.is_enabled = is_enabled;
-                        if self.new_price_setting.is_enabled {
-                            let source = self.new_price_setting.source;
-                            return Task::perform(async move { source }, |source| {
-                                FiatMessage::ListCurrencies(source).into()
-                            });
-                        } else {
-                            return Task::perform(async move {}, |_| {
-                                FiatMessage::SaveChanges.into()
-                            });
-                        }
-                    }
-                    view::FiatMessage::SourceEdited(source) => {
-                        self.new_price_setting.source = if cache.fiat_chain.is_blake2b() {
-                            crate::services::fiat::PriceSource::Coincube
-                        } else {
-                            source
-                        };
-                        if self.new_price_setting.is_enabled {
-                            let source = self.new_price_setting.source;
-                            return Task::perform(async move { source }, |source| {
-                                FiatMessage::ListCurrencies(source).into()
-                            });
-                        }
-                    }
-                    view::FiatMessage::CurrencyEdited(currency) => {
-                        self.new_price_setting.currency = currency;
-                        return Task::perform(async move {}, |_| {
-                            FiatMessage::ValidateCurrencySetting.into()
-                        });
-                    }
-                }
-                Task::none()
+                self.handle_fiat_preference(cache, msg)
             }
             Message::View(view::Message::Settings(view::SettingsMessage::DisplayUnitChanged(
                 unit,

@@ -186,26 +186,33 @@ impl JsonObjectFrame {
                     return true;
                 }
             }
-            if self.in_string {
-                if self.escaped {
-                    self.escaped = false;
-                } else if byte == b'\\' {
-                    self.escaped = true;
-                } else if byte == b'"' {
-                    self.in_string = false;
-                }
-            } else {
-                match byte {
-                    b'"' => self.in_string = true,
-                    b'{' | b'[' => self.depth += 1,
-                    b'}' | b']' => {
-                        self.depth -= 1;
-                        if self.depth == 0 {
-                            return true;
-                        }
+            if self.push_object_byte(byte) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn push_object_byte(&mut self, byte: u8) -> bool {
+        if self.in_string {
+            if self.escaped {
+                self.escaped = false;
+            } else if byte == b'\\' {
+                self.escaped = true;
+            } else if byte == b'"' {
+                self.in_string = false;
+            }
+        } else {
+            match byte {
+                b'"' => self.in_string = true,
+                b'{' | b'[' => self.depth += 1,
+                b'}' | b']' => {
+                    self.depth -= 1;
+                    if self.depth == 0 {
+                        return true;
                     }
-                    _ => {}
                 }
+                _ => {}
             }
         }
         false

@@ -180,55 +180,11 @@ pub fn two_of_three_inheritance_template<'a>(
                     }
                 }),
             )
-            .push(
-                path(
-                    color::BLUE,
-                    Some("Inheritance recovery option:".to_string()),
-                    inheritance_path.sequence,
-                    inheritance_path.warning,
-                    inheritance_path.threshold,
-                    inheritance_path
-                        .keys
-                        .iter()
-                        .enumerate()
-                        .map(|(i, inh_key)| {
-                            if let Some(key) = inh_key {
-                                defined_key(
-                                    &key.name,
-                                    color::BLUE,
-                                    "Inheritance key".to_string(),
-                                    if use_taproot && !key.source.is_compatible_taproot() {
-                                        Some("This device does not support Taproot")
-                                    } else {
-                                        None
-                                    },
-                                    true,
-                                )
-                            } else {
-                                undefined_key(
-                                    color::BLUE,
-                                    "Inheritance key",
-                                    !(primary_path.keys.iter().any(|k| k.is_none())
-                                        || inheritance_path.keys[0..i].iter().any(|k| k.is_none())),
-                                    true,
-                                )
-                            }
-                            .map(move |msg| message::DefinePath::Key(i, msg))
-                        })
-                        .collect(),
-                    true,
-                )
-                .map(move |msg| {
-                    if let message::DefinePath::Key(i, message::DefineKey::Edit) = msg {
-                        Message::DefineDescriptor(message::DefineDescriptor::KeysEdit(
-                            PathKind::Recovery,
-                            vec![(1, i)],
-                        ))
-                    } else {
-                        Message::DefineDescriptor(message::DefineDescriptor::Path(1, msg))
-                    }
-                }),
-            )
+            .push(two_of_three_inheritance_path_section(
+                use_taproot,
+                primary_path,
+                inheritance_path,
+            ))
             .spacing(20),
         true,
         Some(Message::Previous),
@@ -336,5 +292,21 @@ pub fn inheritance_template<'a>(
         true,
         Some(Message::Previous),
         super::template_actions(valid, true),
+    )
+}
+
+fn two_of_three_inheritance_path_section<'a>(
+    use_taproot: bool,
+    primary_path: &'a Path,
+    inheritance_path: &'a Path,
+) -> Element<'a, Message> {
+    super::fixed_recovery_path(
+        1,
+        inheritance_path,
+        color::BLUE,
+        "Inheritance recovery option:",
+        "Inheritance key",
+        use_taproot,
+        &primary_path.keys,
     )
 }

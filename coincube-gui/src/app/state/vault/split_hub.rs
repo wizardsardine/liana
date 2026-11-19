@@ -90,44 +90,7 @@ pub struct HubFacts {
 /// panel renders.
 pub fn items(facts: HubFacts) -> Vec<HubItem> {
     let here = facts.here;
-    let coins = HubItem {
-        title: localized_copy("Coins on both chains").into(),
-        detail: if facts.both_chains == 1 {
-            localized_format!(
-                "1 coin · {}. Split them from either chain; one side is enough.",
-                "1 moneda · {}. Sepárala desde cualquiera de las dos cadenas; basta con un lado.",
-                sats(facts.both_total)
-            )
-        } else if facts.both_chains > 1 {
-            localized_format!(
-                "{} coins · {}. Split them from either chain; one side is enough.",
-                "{} monedas · {}. Sepáralas desde cualquiera de las dos cadenas; basta con un lado.",
-                facts.both_chains,
-                sats(facts.both_total)
-            )
-        } else if facts.splitting > 0 {
-            localized_copy("Splitting. The coin rows show the confirmations.").into()
-        } else if facts.unverified == 1 {
-            localized_format!(
-                "1 coin not verified yet. Coin control shows each coin's status.",
-                "1 moneda aún sin verificar. El Control de monedas muestra el estado de cada moneda."
-            )
-        } else if facts.unverified > 1 {
-            localized_format!(
-                "{} coins not verified yet. Coin control shows each coin's status.",
-                "{} monedas aún sin verificar. El Control de monedas muestra el estado de cada moneda.",
-                facts.unverified
-            )
-        } else {
-            localized_copy("None. Every coin is split.").into()
-        },
-        state: if facts.both_chains > 0 || facts.splitting > 0 || facts.unverified > 0 {
-            ItemState::ToDo
-        } else {
-            ItemState::Done
-        },
-        action: (facts.both_chains > 0).then_some(("Split coins", HubAction::Split)),
-    };
+    let coins = coins_checklist_item(&facts);
     let signature = here.is_blake2b() && facts.signature_available;
     let key = HubItem {
         title: localized_format!("Split key on {}", "Clave dividida en {}", chain_name(here)),
@@ -207,6 +170,47 @@ pub fn items(facts: HubFacts) -> Vec<HubItem> {
                     .then_some(("Create copy", HubAction::CreateCopy)),
             },
         ]
+    }
+}
+
+fn coins_checklist_item(facts: &HubFacts) -> HubItem {
+    HubItem {
+        title: localized_copy("Coins on both chains").into(),
+        detail: if facts.both_chains == 1 {
+            localized_format!(
+                "1 coin · {}. Split them from either chain; one side is enough.",
+                "1 moneda · {}. Sepárala desde cualquiera de las dos cadenas; basta con un lado.",
+                sats(facts.both_total)
+            )
+        } else if facts.both_chains > 1 {
+            localized_format!(
+                "{} coins · {}. Split them from either chain; one side is enough.",
+                "{} monedas · {}. Sepáralas desde cualquiera de las dos cadenas; basta con un lado.",
+                facts.both_chains,
+                sats(facts.both_total)
+            )
+        } else if facts.splitting > 0 {
+            localized_copy("Splitting. The coin rows show the confirmations.").into()
+        } else if facts.unverified == 1 {
+            localized_format!(
+                "1 coin not verified yet. Coin control shows each coin's status.",
+                "1 moneda aún sin verificar. El Control de monedas muestra el estado de cada moneda."
+            )
+        } else if facts.unverified > 1 {
+            localized_format!(
+                "{} coins not verified yet. Coin control shows each coin's status.",
+                "{} monedas aún sin verificar. El Control de monedas muestra el estado de cada moneda.",
+                facts.unverified
+            )
+        } else {
+            localized_copy("None. Every coin is split.").into()
+        },
+        state: if facts.both_chains > 0 || facts.splitting > 0 || facts.unverified > 0 {
+            ItemState::ToDo
+        } else {
+            ItemState::Done
+        },
+        action: (facts.both_chains > 0).then_some(("Split coins", HubAction::Split)),
     }
 }
 

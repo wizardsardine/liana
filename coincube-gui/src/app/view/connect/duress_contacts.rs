@@ -22,7 +22,7 @@ use iced::{widget::container, Alignment, Length};
 
 use crate::{
     app::{
-        state::connect::ConnectAccountPanel,
+        state::connect::{account::DuressContactsState, ConnectAccountPanel},
         view::{ConnectAccountMessage, DuressContactsMessage},
     },
     services::coincube::{
@@ -434,6 +434,12 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             email_address::Options::default().with_required_tld(),
         )
         .is_ok();
+    // Submit is enabled only when the form is minimally valid.
+    let name_ok = !dc.form_name.trim().is_empty();
+    let reachable = phone_present || email_present;
+    let any_channel = ((dc.form_ch_sms || dc.form_ch_whatsapp) && phone_present)
+        || (dc.form_ch_email && email_present);
+    let can_submit = !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel;
 
     // Name field.
     let name_field = Column::new()
@@ -525,23 +531,7 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
         .push(email_box)
         .spacing(0);
 
-    // Submit button. Enabled only when the form is minimally valid.
-    let name_ok = !dc.form_name.trim().is_empty();
-    let reachable = phone_present || email_present;
-    let any_channel = ((dc.form_ch_sms || dc.form_ch_whatsapp) && phone_present)
-        || (dc.form_ch_email && email_present);
-    let can_submit = !dc.submitting && name_ok && reachable && phone_ok && email_ok && any_channel;
-
-    let submit_label = if dc.submitting {
-        "Saving\u{2026}"
-    } else if editing {
-        "Save contact"
-    } else {
-        "Add contact"
-    };
-    let submit = button::primary(None, submit_label)
-        .on_press_maybe(can_submit.then_some(msg(DuressContactsMessage::Submit)))
-        .width(Length::Fill);
+    let submit = contact_submit(dc, editing, can_submit);
 
     let title = if editing {
         localized_copy("Edit emergency contact")
@@ -582,6 +572,23 @@ pub fn form_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     }
 
     form.into()
+}
+
+fn contact_submit<'a>(
+    dc: &DuressContactsState,
+    editing: bool,
+    can_submit: bool,
+) -> Button<'a, ConnectAccountMessage> {
+    let submit_label = if dc.submitting {
+        "Saving\u{2026}"
+    } else if editing {
+        "Save contact"
+    } else {
+        "Add contact"
+    };
+    button::primary(None, submit_label)
+        .on_press_maybe(can_submit.then_some(msg(DuressContactsMessage::Submit)))
+        .width(Length::Fill)
 }
 
 /// A single channel checkbox. Disabled (no `on_toggle`) when `enabled` is

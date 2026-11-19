@@ -104,6 +104,28 @@ impl InstallStatsState {
             },
         )
     }
+
+    fn finish_response(&mut self) {
+        self.pending_responses = self.pending_responses.saturating_sub(1);
+        if self.pending_responses == 0 {
+            self.loading = false;
+        }
+    }
+
+    fn change_timeseries_period(&mut self, period: StatsPeriod) -> Task<Message> {
+        if self.period != period {
+            self.period = period;
+            self.timeseries = None;
+            self.error = None;
+            self.loading = true;
+            // Don't bump fetch_gen — in-flight download/today responses
+            // are still valid. The old timeseries response will be
+            // rejected by the period check without decrementing
+            // pending_responses, and the new request recycles that slot.
+            return self.fetch_timeseries();
+        }
+        Task::none()
+    }
 }
 
 impl From<InstallStatsState> for Box<dyn State> {
@@ -137,10 +159,7 @@ impl State for InstallStatsState {
                 if gen != self.fetch_gen {
                     return Task::none();
                 }
-                self.pending_responses = self.pending_responses.saturating_sub(1);
-                if self.pending_responses == 0 {
-                    self.loading = false;
-                }
+                self.finish_response();
                 match res {
                     Ok(stats) => self.download_stats = Some(stats),
                     Err(e) => self.error = Some(e),
@@ -150,10 +169,7 @@ impl State for InstallStatsState {
                 if gen != self.fetch_gen {
                     return Task::none();
                 }
-                self.pending_responses = self.pending_responses.saturating_sub(1);
-                if self.pending_responses == 0 {
-                    self.loading = false;
-                }
+                self.finish_response();
                 match res {
                     Ok(count) => self.today_count = Some(count),
                     Err(e) => self.error = Some(e),
@@ -167,10 +183,7 @@ impl State for InstallStatsState {
                 if gen != self.fetch_gen || period != self.period {
                     return Task::none();
                 }
-                self.pending_responses = self.pending_responses.saturating_sub(1);
-                if self.pending_responses == 0 {
-                    self.loading = false;
-                }
+                self.finish_response();
                 match res {
                     Ok(points) => self.timeseries = Some(points),
                     Err(e) => self.error = Some(e),
@@ -179,17 +192,7 @@ impl State for InstallStatsState {
             Message::View(view::Message::Settings(view::SettingsMessage::InstallStats(
                 view::InstallStatsViewMessage::PeriodChanged(period),
             ))) => {
-                if self.period != period {
-                    self.period = period;
-                    self.timeseries = None;
-                    self.error = None;
-                    self.loading = true;
-                    // Don't bump fetch_gen — in-flight download/today responses
-                    // are still valid. The old timeseries response will be
-                    // rejected by the period check without decrementing
-                    // pending_responses, and the new request recycles that slot.
-                    return self.fetch_timeseries();
-                }
+                return self.change_timeseries_period(period);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::InstallStats(
                 view::InstallStatsViewMessage::Refresh,

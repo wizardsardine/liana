@@ -730,6 +730,67 @@ fn section_content<'a>(
                 .padding(iced::Padding::default().bottom(16)),
         )
         .width(Length::Fill);
+    let mut notices = preference_notices(page.section, &model);
+    let idle = !model.saving && !model.loading;
+    let Some(saved) = model.saved else {
+        let status = if model.load_error.is_some() {
+            localized_copy(
+                "Device preferences are unavailable. Retry the load before changing settings. \
+             Amounts stay hidden until you choose.",
+            )
+        } else {
+            CopyText::LoadingDevicePreferencesAmountsRemainHidden.get()
+        };
+        notices.push((status.to_string(), Tone::Muted));
+        content = content.push(notice_column(notices));
+        if model.load_error.is_some() {
+            content = content.push(
+                Column::new()
+                    .push(
+                        ActionButton::new(
+                            "tenshu.preferences.retry-load",
+                            CopyText::RetryLoad.get(),
+                            ActionKind::Primary,
+                            Message::FocusAction,
+                        )
+                        .compact()
+                        .on_press_maybe(idle.then_some(Message::Action(Action::RetryLoad))),
+                    )
+                    .push(explicit_privacy_choice(
+                        idle && model.balance_privacy_interactive,
+                    ))
+                    .spacing(12)
+                    .padding(iced::Padding::default().top(12)),
+            );
+        }
+        return content.into();
+    };
+    if !notices.is_empty() {
+        content = content
+            .push(container(notice_column(notices)).padding(iced::Padding::default().bottom(16)));
+    }
+    let enabled = idle;
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    match page.section {
+        Section::Appearance => appearance_rows(&mut rows, &model, saved, enabled),
+        Section::Launcher => launcher_rows(&mut rows, &model, saved, enabled),
+        Section::BalancesAndMotion => balance_and_motion_rows(&mut rows, &model, saved, enabled),
+        Section::Developer => developer_rows(&mut rows, saved, enabled),
+        Section::Diagnostics => diagnostics_rows(&mut rows, page, &model),
+        Section::About => about_rows(&mut rows, page, &model),
+    }
+    // `.rows`: a rule above the first row; each row draws the rule under it.
+    content
+        .push(
+            rows.into_iter()
+                .fold(Column::new().push(horizontal_rule()), |list, row| {
+                    list.push(row)
+                }),
+        )
+        .into()
+}
+
+fn preference_notices(section: Section, model: &ViewModel<'_>) -> Vec<(String, Tone)> {
     let mut notices: Vec<(String, Tone)> = Vec::new();
     let mut notice = |line: String, tone: Tone| notices.push((line, tone));
     if let Some(error) = model.load_error {
@@ -763,7 +824,7 @@ fn section_content<'a>(
             Tone::Muted,
         );
     }
-    if page.section == Section::Appearance {
+    if section == Section::Appearance {
         if let Some(line) = model
             .worldview_changed
             .filter(|mode| model.saved.is_some_and(|saved| saved.worldview == *mode))
@@ -772,590 +833,564 @@ fn section_content<'a>(
             notice(line.to_owned(), Tone::Muted);
         }
     }
-    let idle = !model.saving && !model.loading;
-    let Some(saved) = model.saved else {
-        let status = if model.load_error.is_some() {
-            localized_copy(
-                "Device preferences are unavailable. Retry the load before changing settings. \
-             Amounts stay hidden until you choose.",
-            )
-        } else {
-            CopyText::LoadingDevicePreferencesAmountsRemainHidden.get()
-        };
-        notice(status.to_string(), Tone::Muted);
-        content = content.push(notice_column(notices));
-        if model.load_error.is_some() {
-            content = content.push(
-                Column::new()
-                    .push(
-                        ActionButton::new(
-                            "tenshu.preferences.retry-load",
-                            CopyText::RetryLoad.get(),
-                            ActionKind::Primary,
-                            Message::FocusAction,
-                        )
-                        .compact()
-                        .on_press_maybe(idle.then_some(Message::Action(Action::RetryLoad))),
-                    )
-                    .push(explicit_privacy_choice(
-                        idle && model.balance_privacy_interactive,
-                    ))
-                    .spacing(12)
-                    .padding(iced::Padding::default().top(12)),
-            );
-        }
-        return content.into();
-    };
-    if !notices.is_empty() {
-        content = content
-            .push(container(notice_column(notices)).padding(iced::Padding::default().bottom(16)));
-    }
-    let enabled = idle;
-    let mut rows: Vec<Element<'a, Message>> = Vec::new();
-    match page.section {
-        Section::Appearance => {
-            let current = match model.system_theme {
-                Some(ThemeMode::Light) => CopyText::SystemIsCurrentlyLight.get(),
-                Some(ThemeMode::Dark) => CopyText::SystemIsCurrentlyDark.get(),
-                None => CopyText::SystemThemeFallback.get(),
-            };
-            rows.push(
-                setting_row(
-                    CopyText::Theme.get(),
-                    segmented(
-                        [
-                            segment(
-                                "tenshu.preferences.theme.system",
-                                ThemePreference::System,
-                                CopyText::System.get(),
-                            )
-                            .icon(display_icon()),
-                            segment(
-                                "tenshu.preferences.theme.light",
-                                ThemePreference::Light,
-                                CopyText::Light.get(),
-                            )
-                            .icon(sun_icon()),
-                            segment(
-                                "tenshu.preferences.theme.dark",
-                                ThemePreference::Dark,
-                                CopyText::Dark.get(),
-                            )
-                            .icon(moon_icon()),
-                        ],
-                        Some(saved.theme),
-                        Message::FocusAction,
-                    )
-                    .size(SegmentSize::Compact)
-                    .on_select_maybe(enabled.then_some(
-                        |value: ThemePreference| Message::Change(PreferenceChange::Theme(value)),
-                    )),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::ColorsForTheLauncherAndEvery.get())
-                .note(current, Tone::Muted)
-                .into(),
-            );
-            rows.push(language_row(saved.language, enabled));
-            rows.push(worldview_row(saved, enabled));
-            rows.push(artwork_row(saved, enabled));
-            rows.push(worldview_sharing_row(&model.worldview_sharing));
-            let max_zoom = model.max_zoom.unwrap_or(Zoom::LARGEST);
-            let (zoom_selected, zoom_note) = zoom_choice(saved.zoom, max_zoom);
-            rows.push(
-                setting_row(
-                    CopyText::Zoom.get(),
-                    segmented(
-                        Zoom::STEPS.map(|zoom| {
-                            segment(
-                                format!("tenshu.preferences.zoom.{}", zoom.percent()),
-                                zoom,
-                                format!("{}%", zoom.percent()),
-                            )
-                            .enabled(zoom <= max_zoom)
-                        }),
-                        Some(zoom_selected),
-                        Message::FocusAction,
-                    )
-                    .size(SegmentSize::Compact)
-                    .on_select_maybe(
-                        enabled.then_some(|value: Zoom| {
-                            Message::Change(PreferenceChange::Zoom(value))
-                        }),
-                    ),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::ZoomDescription.get())
-                .note(zoom_note, Tone::Muted)
-                .into(),
-            );
-        }
-        Section::Launcher => {
-            let status = if !model.cubes_renderer_available
-                && saved.launcher_style == LauncherStyle::Cubes
-            {
-                CopyText::ShowingListNowTheCubesView.get()
-            } else if model
-                .effective
-                .is_some_and(|value| value.launcher_style == LauncherStyle::List)
-                && saved.launcher_style == LauncherStyle::Cubes
-            {
-                CopyText::ShowingListNowReducedMotionIs.get()
-            } else if saved.launcher_style == LauncherStyle::List {
-                CopyText::ShowingList.get()
-            } else {
-                CopyText::ShowingCubes.get()
-            };
-            rows.push(
-                setting_row(
-                    CopyText::LauncherStyle.get(),
-                    segmented(
-                        [
-                            segment(
-                                "tenshu.preferences.launcher.cubes",
-                                LauncherStyle::Cubes,
-                                "Cubes",
-                            )
-                            .icon(cube_outline_icon()),
-                            segment(
-                                "tenshu.preferences.launcher.list",
-                                LauncherStyle::List,
-                                CopyText::List.get(),
-                            )
-                            .icon(list_ul_icon()),
-                        ],
-                        Some(saved.launcher_style),
-                        Message::FocusAction,
-                    )
-                    .size(SegmentSize::Compact)
-                    .on_select_maybe(enabled.then_some(
-                        |value: LauncherStyle| {
-                            Message::Change(PreferenceChange::LauncherStyle(value))
-                        },
-                    )),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::ListIsUsedAutomaticallyUnderReduced.get())
-                .note(status, Tone::Muted)
-                .into(),
-            );
-            rows.push(
-                setting_row(
-                    CopyText::NetworkActivity.get(),
-                    toggle(
-                        "tenshu.preferences.launcher.network-activity",
-                        saved.network_activity,
-                        Message::FocusAction,
-                    )
-                    .switch()
-                    .on_toggle_maybe(enabled.then_some(|shown: bool| {
-                        Message::Change(PreferenceChange::NetworkActivity(shown))
-                    })),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::RecentBlocksTheMempoolFeeRate.get())
-                .into(),
-            );
-            if saved.network_activity {
-                rows.push(
-                    setting_row(
-                        CopyText::ActivitySource.get(),
-                        segmented(
-                            [
-                                segment(
-                                    "tenshu.preferences.launcher.activity.automatic",
-                                    NetworkActivitySource::Automatic,
-                                    CopyText::Automatic.get(),
-                                ),
-                                segment(
-                                    "tenshu.preferences.launcher.activity.local",
-                                    NetworkActivitySource::LocalNode,
-                                    CopyText::LocalNode.get(),
-                                ),
-                                segment(
-                                    "tenshu.preferences.launcher.activity.connect",
-                                    NetworkActivitySource::Connect,
-                                    "Connect",
-                                ),
-                            ],
-                            Some(saved.network_activity_source),
-                            Message::FocusAction,
-                        )
-                        .size(SegmentSize::Compact)
-                        .on_select_maybe(enabled.then_some(
-                            |value: NetworkActivitySource| {
-                                Message::Change(PreferenceChange::NetworkActivitySource(value))
-                            },
-                        )),
-                    )
-                    .tag(CopyText::ThisDevice.get())
-                    .trailing_tag()
-                    .description(CopyText::AutomaticReadsALocalNodeThat.get())
-                    .into(),
-                );
-            }
-        }
-        Section::BalancesAndMotion => {
-            let privacy_enabled = enabled && model.balance_privacy_interactive;
-            let system_status = match model.system_reduces_motion {
-                Some(true) => CopyText::SystemIsCurrentlyReducedMotion.get(),
-                Some(false) => CopyText::SystemIsCurrentlyFullMotion.get(),
-                None => CopyText::SystemMotionPreferenceUnavailable.get(),
-            };
-            let control: Element<'a, Message> = match model.balance_privacy {
-                BalancePrivacy::Unresolved => explicit_privacy_choice(privacy_enabled),
-                BalancePrivacy::HiddenLocally => retry_hide_controls(privacy_enabled),
-                privacy => {
-                    let change = privacy.toggle_change();
-                    toggle(
-                        "tenshu.preferences.hide-balances",
-                        privacy.masks_amounts(),
-                        Message::FocusAction,
-                    )
-                    .switch()
-                    .on_toggle_maybe(
-                        privacy_enabled.then_some(move |_: bool| Message::Change(change)),
-                    )
-                    .into()
-                }
-            };
-            let mut hide = setting_row(CopyText::HideBalances.get(), control)
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::AmountsShowAsInEveryCube.get());
-            if !model.balance_privacy_interactive {
-                hide = hide.note(
-                    CopyText::BalanceVisibilityChangesAreTemporarilyUnavailable.get(),
-                    Tone::Muted,
-                );
-            }
-            rows.push(hide.into());
-            rows.push(
-                setting_row(
-                    CopyText::Motion.get(),
-                    segmented(
-                        [
-                            segment(
-                                "tenshu.preferences.motion.system",
-                                MotionPreference::FollowSystem,
-                                CopyText::FollowSystem.get(),
-                            ),
-                            segment(
-                                "tenshu.preferences.motion.reduced",
-                                MotionPreference::Reduced,
-                                CopyText::Reduced.get(),
-                            ),
-                        ],
-                        Some(saved.motion),
-                        Message::FocusAction,
-                    )
-                    .size(SegmentSize::Compact)
-                    .on_select_maybe(enabled.then_some(
-                        |value: MotionPreference| Message::Change(PreferenceChange::Motion(value)),
-                    )),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(localized_copy(
-                    "Reduced removes the Cube turn and other movement. Security checks never \
-                     wait for animation.",
-                ))
-                .note(system_status, Tone::Muted)
-                .into(),
-            );
-        }
-        Section::Developer => {
-            rows.push(
-                setting_row(
-                    CopyText::DeveloperMode.get(),
-                    toggle(
-                        "tenshu.preferences.developer-mode",
-                        saved.developer_mode,
-                        Message::FocusAction,
-                    )
-                    .switch()
-                    .on_toggle_maybe(
-                        enabled.then_some(|on: bool| {
-                            Message::Change(PreferenceChange::DeveloperMode(on))
-                        }),
-                    ),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::ShowTestNetworksInTheCubes.get())
-                .into(),
-            );
-            rows.push(
-                setting_row(
-                    "Bitcoin Blake2b",
-                    toggle(
-                        "tenshu.preferences.bitcoin-blake2b-beta",
-                        saved.bitcoin_blake2b_beta,
-                        Message::FocusAction,
-                    )
-                    .switch()
-                    .on_toggle_maybe(enabled.then_some(|on: bool| {
-                        Message::Change(PreferenceChange::BitcoinBlake2bBeta(on))
-                    })),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(localized_copy(
-                    "Show the Bitcoin Blake2b network in the Launcher, when creating Cubes and in \
-                     Vault tools.",
-                ))
-                .into(),
-            );
-        }
-        Section::Diagnostics => {
-            let diagnostics = model.diagnostics;
-            let mut logs = Column::new().width(Length::Fill).push(
-                setting_row(
-                    CopyText::Logs.get(),
-                    Row::new()
-                        .push(
-                            ActionButton::new(
-                                "tenshu.preferences.open-logs",
-                                CopyText::OpenFolder.get(),
-                                ActionKind::Secondary,
-                                Message::FocusAction,
-                            )
-                            .compact()
-                            .icon(folder_icon())
-                            .on_press_maybe(
-                                diagnostics
-                                    .can_open_logs
-                                    .then_some(Message::Action(Action::OpenLogs)),
-                            ),
-                        )
-                        .push(
-                            ActionButton::new(
-                                "tenshu.preferences.copy-support-summary",
-                                if diagnostics.support_summary_copied {
-                                    CopyText::Copied.get()
-                                } else {
-                                    CopyText::CopySummary.get()
-                                },
-                                ActionKind::Secondary,
-                                Message::FocusAction,
-                            )
-                            .compact()
-                            .icon(copy_icon())
-                            .on_press_maybe(
-                                diagnostics
-                                    .support_summary_preview
-                                    .map(|_| Message::Action(Action::CopySupportSummary)),
-                            ),
-                        )
-                        .spacing(8),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::LogFilesCanIncludeYourAccountEmail.get())
-                .without_divider(),
-            );
-            if diagnostics.open_logs_failed {
-                logs = logs.push(status_text(
-                    CopyText::CouldNotOpenTheLogFolder.get(),
-                    Tone::Bad,
-                ));
-                logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
-            }
-            // The allowlisted summary stays inspectable before Copy.
-            if let Some(preview) = diagnostics.support_summary_preview {
-                logs = logs.push(
-                    container(status_text(preview, Tone::Neutral))
-                        .padding([12, 16])
-                        .width(Length::Fill)
-                        .style(review_style),
-                );
-                logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
-            }
-            rows.push(logs.push(horizontal_rule()).into());
+    notices
+}
 
-            let mut repair = Column::new().width(Length::Fill).push(
-                setting_row(
-                    CopyText::RepairDeviceRegistration.get(),
+fn appearance_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    model: &ViewModel<'a>,
+    saved: DevicePreferences,
+    enabled: bool,
+) {
+    let current = match model.system_theme {
+        Some(ThemeMode::Light) => CopyText::SystemIsCurrentlyLight.get(),
+        Some(ThemeMode::Dark) => CopyText::SystemIsCurrentlyDark.get(),
+        None => CopyText::SystemThemeFallback.get(),
+    };
+    rows.push(
+        setting_row(
+            CopyText::Theme.get(),
+            segmented(
+                [
+                    segment(
+                        "tenshu.preferences.theme.system",
+                        ThemePreference::System,
+                        CopyText::System.get(),
+                    )
+                    .icon(display_icon()),
+                    segment(
+                        "tenshu.preferences.theme.light",
+                        ThemePreference::Light,
+                        CopyText::Light.get(),
+                    )
+                    .icon(sun_icon()),
+                    segment(
+                        "tenshu.preferences.theme.dark",
+                        ThemePreference::Dark,
+                        CopyText::Dark.get(),
+                    )
+                    .icon(moon_icon()),
+                ],
+                Some(saved.theme),
+                Message::FocusAction,
+            )
+            .size(SegmentSize::Compact)
+            .on_select_maybe(enabled.then_some(|value: ThemePreference| {
+                Message::Change(PreferenceChange::Theme(value))
+            })),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::ColorsForTheLauncherAndEvery.get())
+        .note(current, Tone::Muted)
+        .into(),
+    );
+    rows.push(language_row(saved.language, enabled));
+    rows.push(worldview_row(saved, enabled));
+    rows.push(artwork_row(saved, enabled));
+    rows.push(worldview_sharing_row(&model.worldview_sharing));
+    let max_zoom = model.max_zoom.unwrap_or(Zoom::LARGEST);
+    let (zoom_selected, zoom_note) = zoom_choice(saved.zoom, max_zoom);
+    rows.push(
+        setting_row(
+            CopyText::Zoom.get(),
+            segmented(
+                Zoom::STEPS.map(|zoom| {
+                    segment(
+                        format!("tenshu.preferences.zoom.{}", zoom.percent()),
+                        zoom,
+                        format!("{}%", zoom.percent()),
+                    )
+                    .enabled(zoom <= max_zoom)
+                }),
+                Some(zoom_selected),
+                Message::FocusAction,
+            )
+            .size(SegmentSize::Compact)
+            .on_select_maybe(
+                enabled.then_some(|value: Zoom| Message::Change(PreferenceChange::Zoom(value))),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::ZoomDescription.get())
+        .note(zoom_note, Tone::Muted)
+        .into(),
+    );
+}
+
+fn launcher_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    model: &ViewModel<'a>,
+    saved: DevicePreferences,
+    enabled: bool,
+) {
+    let status = if !model.cubes_renderer_available && saved.launcher_style == LauncherStyle::Cubes
+    {
+        CopyText::ShowingListNowTheCubesView.get()
+    } else if model
+        .effective
+        .is_some_and(|value| value.launcher_style == LauncherStyle::List)
+        && saved.launcher_style == LauncherStyle::Cubes
+    {
+        CopyText::ShowingListNowReducedMotionIs.get()
+    } else if saved.launcher_style == LauncherStyle::List {
+        CopyText::ShowingList.get()
+    } else {
+        CopyText::ShowingCubes.get()
+    };
+    rows.push(
+        setting_row(
+            CopyText::LauncherStyle.get(),
+            segmented(
+                [
+                    segment(
+                        "tenshu.preferences.launcher.cubes",
+                        LauncherStyle::Cubes,
+                        "Cubes",
+                    )
+                    .icon(cube_outline_icon()),
+                    segment(
+                        "tenshu.preferences.launcher.list",
+                        LauncherStyle::List,
+                        CopyText::List.get(),
+                    )
+                    .icon(list_ul_icon()),
+                ],
+                Some(saved.launcher_style),
+                Message::FocusAction,
+            )
+            .size(SegmentSize::Compact)
+            .on_select_maybe(enabled.then_some(|value: LauncherStyle| {
+                Message::Change(PreferenceChange::LauncherStyle(value))
+            })),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::ListIsUsedAutomaticallyUnderReduced.get())
+        .note(status, Tone::Muted)
+        .into(),
+    );
+    rows.push(
+        setting_row(
+            CopyText::NetworkActivity.get(),
+            toggle(
+                "tenshu.preferences.launcher.network-activity",
+                saved.network_activity,
+                Message::FocusAction,
+            )
+            .switch()
+            .on_toggle_maybe(
+                enabled.then_some(|shown: bool| {
+                    Message::Change(PreferenceChange::NetworkActivity(shown))
+                }),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::RecentBlocksTheMempoolFeeRate.get())
+        .into(),
+    );
+    if saved.network_activity {
+        rows.push(
+            setting_row(
+                CopyText::ActivitySource.get(),
+                segmented(
+                    [
+                        segment(
+                            "tenshu.preferences.launcher.activity.automatic",
+                            NetworkActivitySource::Automatic,
+                            CopyText::Automatic.get(),
+                        ),
+                        segment(
+                            "tenshu.preferences.launcher.activity.local",
+                            NetworkActivitySource::LocalNode,
+                            CopyText::LocalNode.get(),
+                        ),
+                        segment(
+                            "tenshu.preferences.launcher.activity.connect",
+                            NetworkActivitySource::Connect,
+                            "Connect",
+                        ),
+                    ],
+                    Some(saved.network_activity_source),
+                    Message::FocusAction,
+                )
+                .size(SegmentSize::Compact)
+                .on_select_maybe(enabled.then_some(
+                    |value: NetworkActivitySource| {
+                        Message::Change(PreferenceChange::NetworkActivitySource(value))
+                    },
+                )),
+            )
+            .tag(CopyText::ThisDevice.get())
+            .trailing_tag()
+            .description(CopyText::AutomaticReadsALocalNodeThat.get())
+            .into(),
+        );
+    }
+}
+
+fn balance_and_motion_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    model: &ViewModel<'a>,
+    saved: DevicePreferences,
+    enabled: bool,
+) {
+    let privacy_enabled = enabled && model.balance_privacy_interactive;
+    let system_status = match model.system_reduces_motion {
+        Some(true) => CopyText::SystemIsCurrentlyReducedMotion.get(),
+        Some(false) => CopyText::SystemIsCurrentlyFullMotion.get(),
+        None => CopyText::SystemMotionPreferenceUnavailable.get(),
+    };
+    let control: Element<'a, Message> = match model.balance_privacy {
+        BalancePrivacy::Unresolved => explicit_privacy_choice(privacy_enabled),
+        BalancePrivacy::HiddenLocally => retry_hide_controls(privacy_enabled),
+        privacy => {
+            let change = privacy.toggle_change();
+            toggle(
+                "tenshu.preferences.hide-balances",
+                privacy.masks_amounts(),
+                Message::FocusAction,
+            )
+            .switch()
+            .on_toggle_maybe(privacy_enabled.then_some(move |_: bool| Message::Change(change)))
+            .into()
+        }
+    };
+    let mut hide = setting_row(CopyText::HideBalances.get(), control)
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::AmountsShowAsInEveryCube.get());
+    if !model.balance_privacy_interactive {
+        hide = hide.note(
+            CopyText::BalanceVisibilityChangesAreTemporarilyUnavailable.get(),
+            Tone::Muted,
+        );
+    }
+    rows.push(hide.into());
+    rows.push(
+        setting_row(
+            CopyText::Motion.get(),
+            segmented(
+                [
+                    segment(
+                        "tenshu.preferences.motion.system",
+                        MotionPreference::FollowSystem,
+                        CopyText::FollowSystem.get(),
+                    ),
+                    segment(
+                        "tenshu.preferences.motion.reduced",
+                        MotionPreference::Reduced,
+                        CopyText::Reduced.get(),
+                    ),
+                ],
+                Some(saved.motion),
+                Message::FocusAction,
+            )
+            .size(SegmentSize::Compact)
+            .on_select_maybe(enabled.then_some(|value: MotionPreference| {
+                Message::Change(PreferenceChange::Motion(value))
+            })),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(localized_copy(
+            "Reduced removes the Cube turn and other movement. Security checks never \
+             wait for animation.",
+        ))
+        .note(system_status, Tone::Muted)
+        .into(),
+    );
+}
+
+fn developer_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    saved: DevicePreferences,
+    enabled: bool,
+) {
+    rows.push(
+        setting_row(
+            CopyText::DeveloperMode.get(),
+            toggle(
+                "tenshu.preferences.developer-mode",
+                saved.developer_mode,
+                Message::FocusAction,
+            )
+            .switch()
+            .on_toggle_maybe(
+                enabled.then_some(|on: bool| Message::Change(PreferenceChange::DeveloperMode(on))),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::ShowTestNetworksInTheCubes.get())
+        .into(),
+    );
+    rows.push(
+        setting_row(
+            "Bitcoin Blake2b",
+            toggle(
+                "tenshu.preferences.bitcoin-blake2b-beta",
+                saved.bitcoin_blake2b_beta,
+                Message::FocusAction,
+            )
+            .switch()
+            .on_toggle_maybe(
+                enabled.then_some(|on: bool| {
+                    Message::Change(PreferenceChange::BitcoinBlake2bBeta(on))
+                }),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(localized_copy(
+            "Show the Bitcoin Blake2b network in the Launcher, when creating Cubes and in \
+             Vault tools.",
+        ))
+        .into(),
+    );
+}
+
+fn diagnostics_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    page: &PreferencesPageState,
+    model: &ViewModel<'a>,
+) {
+    let diagnostics = model.diagnostics;
+    let mut logs = Column::new().width(Length::Fill).push(
+        setting_row(
+            CopyText::Logs.get(),
+            Row::new()
+                .push(
                     ActionButton::new(
-                        "tenshu.preferences.repair-details",
-                        CopyText::Repair.get(),
+                        "tenshu.preferences.open-logs",
+                        CopyText::OpenFolder.get(),
                         ActionKind::Secondary,
                         Message::FocusAction,
                     )
                     .compact()
-                    .on_press(Message::ToggleRegistrationRepair),
+                    .icon(folder_icon())
+                    .on_press_maybe(
+                        diagnostics
+                            .can_open_logs
+                            .then_some(Message::Action(Action::OpenLogs)),
+                    ),
                 )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::ForWhenConnectNoLongerRecognises.get())
-                .without_divider(),
-            );
-            if page.registration_repair_expanded {
-                repair = repair
-                    .push(
-                        container(
-                            Column::new()
-                                .push(
-                                    tenshu_text::body(
-                                        CopyText::ReRegisterThisDeviceWithConnect.get(),
-                                    )
-                                    .font(font::SEMIBOLD)
-                                    .style(theme::tenshu::text::ink),
-                                )
-                                .push(
-                                    Column::new()
-                                        .push(bullet(CopyText::ReRegistersThisDeviceWithYour.get()))
-                                        .push(bullet(
-                                            CopyText::RequiresSigningInToConnectFirst.get(),
-                                        ))
-                                        .push(bullet(CopyText::DoesNotChangeAnyCubeWallet.get()))
-                                        .spacing(2)
-                                        .padding(iced::Padding {
-                                            top: 6.0,
-                                            bottom: 12.0,
-                                            ..iced::Padding::ZERO
-                                        }),
-                                )
-                                .push(
-                                    Row::new()
-                                        .push(
-                                            ActionButton::new(
-                                                "tenshu.preferences.repair-registration",
-                                                CopyText::SignInAndRepair.get(),
-                                                ActionKind::Primary,
-                                                Message::FocusAction,
-                                            )
-                                            .compact()
-                                            .on_press_maybe(
-                                                diagnostics.can_repair_registration.then_some(
-                                                    Message::Action(Action::RepairRegistration),
-                                                ),
-                                            ),
-                                        )
-                                        .push(
-                                            ActionButton::new(
-                                                "tenshu.preferences.repair-cancel",
-                                                CopyText::Cancel.get(),
-                                                ActionKind::Secondary,
-                                                Message::FocusAction,
-                                            )
-                                            .compact()
-                                            .on_press(Message::ToggleRegistrationRepair),
-                                        )
-                                        .spacing(12)
-                                        .align_y(Alignment::Center),
-                                ),
-                        )
-                        .padding([14, 16])
-                        .width(Length::Fill)
-                        .style(review_style),
+                .push(
+                    ActionButton::new(
+                        "tenshu.preferences.copy-support-summary",
+                        if diagnostics.support_summary_copied {
+                            CopyText::Copied.get()
+                        } else {
+                            CopyText::CopySummary.get()
+                        },
+                        ActionKind::Secondary,
+                        Message::FocusAction,
                     )
-                    .push(iced::widget::Space::new().height(Length::Fixed(14.0)));
-            }
-            rows.push(repair.push(horizontal_rule()).into());
-
-            let stream: Element<'a, Message> = match diagnostics.stream_status {
-                Some(status) => status_text(status, Tone::Neutral).into(),
-                None => status_line(dash_circle_icon(), CopyText::Unavailable.get(), Tone::Muted),
-            };
-            rows.push(
-                setting_row(CopyText::StreamStatus.get(), stream)
-                    .tag(CopyText::ThisDevice.get())
-                    .trailing_tag()
-                    .description(CopyText::LiveUpdatesFromConnectToThis.get())
-                    .into(),
-            );
-        }
-        Section::About => {
-            let about = model.about;
-            rows.push(
-                setting_row(
-                    CopyText::TenshuVersion.get(),
-                    value_text(crate::VERSION.to_string()),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::InstalledOnThisDevice.get())
-                .into(),
-            );
-            rows.push(
-                setting_row(
-                    CopyText::BuildProvenance.get(),
-                    value_text(
-                        about
-                            .build_provenance
-                            .unwrap_or(CopyText::Unavailable.get()),
+                    .compact()
+                    .icon(copy_icon())
+                    .on_press_maybe(
+                        diagnostics
+                            .support_summary_preview
+                            .map(|_| Message::Action(Action::CopySupportSummary)),
                     ),
                 )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(CopyText::WhichBuildThisIsAndWhether.get())
-                .into(),
-            );
-            rows.push(component_versions_row(page.component_versions_expanded));
-            if page.component_versions_expanded {
-                rows.push(sub_row(
-                    CopyText::WalletDaemon.get(),
-                    about.daemon_version.unwrap_or(localized_copy("Checking…")),
-                ));
-                rows.push(sub_row(
-                    CopyText::SparkBridge.get(),
-                    about
-                        .spark_bridge_version
-                        .unwrap_or(localized_copy("Checking…")),
-                ));
-            }
-            rows.push(
-                setting_row(
-                    CopyText::DownloadStats.get(),
-                    link_action(
-                        "tenshu.preferences.open-download-stats",
-                        CopyText::ViewDownloadStats.get(),
-                        about
-                            .can_open_download_stats
-                            .then_some(Message::Action(Action::OpenDownloadStats)),
-                    ),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(localized_copy(
-                    "Public download counts for COINCUBE Desktop releases",
-                ))
-                .into(),
-            );
-            rows.push(
-                setting_row(
-                    localized_copy("Open-source licenses"),
-                    link_action(
-                        "tenshu.preferences.open-licenses",
-                        localized_copy("View licenses"),
-                        about
-                            .can_open_licenses
-                            .then_some(Message::Action(Action::OpenLicenses)),
-                    ),
-                )
-                .tag(CopyText::ThisDevice.get())
-                .trailing_tag()
-                .description(localized_copy(
-                    "Licenses for the software COINCUBE Desktop is built on",
-                ))
-                .into(),
-            );
-        }
-    }
-    // `.rows`: a rule above the first row; each row draws the rule under it.
-    content
-        .push(
-            rows.into_iter()
-                .fold(Column::new().push(horizontal_rule()), |list, row| {
-                    list.push(row)
-                }),
+                .spacing(8),
         )
-        .into()
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::LogFilesCanIncludeYourAccountEmail.get())
+        .without_divider(),
+    );
+    if diagnostics.open_logs_failed {
+        logs = logs.push(status_text(
+            CopyText::CouldNotOpenTheLogFolder.get(),
+            Tone::Bad,
+        ));
+        logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
+    }
+    // The allowlisted summary stays inspectable before Copy.
+    if let Some(preview) = diagnostics.support_summary_preview {
+        logs = logs.push(
+            container(status_text(preview, Tone::Neutral))
+                .padding([12, 16])
+                .width(Length::Fill)
+                .style(review_style),
+        );
+        logs = logs.push(iced::widget::Space::new().height(Length::Fixed(14.0)));
+    }
+    rows.push(logs.push(horizontal_rule()).into());
+
+    let mut repair = Column::new().width(Length::Fill).push(
+        setting_row(
+            CopyText::RepairDeviceRegistration.get(),
+            ActionButton::new(
+                "tenshu.preferences.repair-details",
+                CopyText::Repair.get(),
+                ActionKind::Secondary,
+                Message::FocusAction,
+            )
+            .compact()
+            .on_press(Message::ToggleRegistrationRepair),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::ForWhenConnectNoLongerRecognises.get())
+        .without_divider(),
+    );
+    if page.registration_repair_expanded {
+        repair = repair
+            .push(
+                container(
+                    Column::new()
+                        .push(
+                            tenshu_text::body(CopyText::ReRegisterThisDeviceWithConnect.get())
+                                .font(font::SEMIBOLD)
+                                .style(theme::tenshu::text::ink),
+                        )
+                        .push(
+                            Column::new()
+                                .push(bullet(CopyText::ReRegistersThisDeviceWithYour.get()))
+                                .push(bullet(CopyText::RequiresSigningInToConnectFirst.get()))
+                                .push(bullet(CopyText::DoesNotChangeAnyCubeWallet.get()))
+                                .spacing(2)
+                                .padding(iced::Padding {
+                                    top: 6.0,
+                                    bottom: 12.0,
+                                    ..iced::Padding::ZERO
+                                }),
+                        )
+                        .push(
+                            Row::new()
+                                .push(
+                                    ActionButton::new(
+                                        "tenshu.preferences.repair-registration",
+                                        CopyText::SignInAndRepair.get(),
+                                        ActionKind::Primary,
+                                        Message::FocusAction,
+                                    )
+                                    .compact()
+                                    .on_press_maybe(
+                                        diagnostics
+                                            .can_repair_registration
+                                            .then_some(Message::Action(Action::RepairRegistration)),
+                                    ),
+                                )
+                                .push(
+                                    ActionButton::new(
+                                        "tenshu.preferences.repair-cancel",
+                                        CopyText::Cancel.get(),
+                                        ActionKind::Secondary,
+                                        Message::FocusAction,
+                                    )
+                                    .compact()
+                                    .on_press(Message::ToggleRegistrationRepair),
+                                )
+                                .spacing(12)
+                                .align_y(Alignment::Center),
+                        ),
+                )
+                .padding([14, 16])
+                .width(Length::Fill)
+                .style(review_style),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(14.0)));
+    }
+    rows.push(repair.push(horizontal_rule()).into());
+
+    let stream: Element<'a, Message> = match diagnostics.stream_status {
+        Some(status) => status_text(status, Tone::Neutral).into(),
+        None => status_line(dash_circle_icon(), CopyText::Unavailable.get(), Tone::Muted),
+    };
+    rows.push(
+        setting_row(CopyText::StreamStatus.get(), stream)
+            .tag(CopyText::ThisDevice.get())
+            .trailing_tag()
+            .description(CopyText::LiveUpdatesFromConnectToThis.get())
+            .into(),
+    );
+}
+
+fn about_rows<'a>(
+    rows: &mut Vec<Element<'a, Message>>,
+    page: &PreferencesPageState,
+    model: &ViewModel<'a>,
+) {
+    let about = model.about;
+    rows.push(
+        setting_row(
+            CopyText::TenshuVersion.get(),
+            value_text(crate::VERSION.to_string()),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::InstalledOnThisDevice.get())
+        .into(),
+    );
+    rows.push(
+        setting_row(
+            CopyText::BuildProvenance.get(),
+            value_text(
+                about
+                    .build_provenance
+                    .unwrap_or(CopyText::Unavailable.get()),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(CopyText::WhichBuildThisIsAndWhether.get())
+        .into(),
+    );
+    rows.push(component_versions_row(page.component_versions_expanded));
+    if page.component_versions_expanded {
+        rows.push(sub_row(
+            CopyText::WalletDaemon.get(),
+            about.daemon_version.unwrap_or(localized_copy("Checking…")),
+        ));
+        rows.push(sub_row(
+            CopyText::SparkBridge.get(),
+            about
+                .spark_bridge_version
+                .unwrap_or(localized_copy("Checking…")),
+        ));
+    }
+    rows.push(
+        setting_row(
+            CopyText::DownloadStats.get(),
+            link_action(
+                "tenshu.preferences.open-download-stats",
+                CopyText::ViewDownloadStats.get(),
+                about
+                    .can_open_download_stats
+                    .then_some(Message::Action(Action::OpenDownloadStats)),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(localized_copy(
+            "Public download counts for COINCUBE Desktop releases",
+        ))
+        .into(),
+    );
+    rows.push(
+        setting_row(
+            localized_copy("Open-source licenses"),
+            link_action(
+                "tenshu.preferences.open-licenses",
+                localized_copy("View licenses"),
+                about
+                    .can_open_licenses
+                    .then_some(Message::Action(Action::OpenLicenses)),
+            ),
+        )
+        .tag(CopyText::ThisDevice.get())
+        .trailing_tag()
+        .description(localized_copy(
+            "Licenses for the software COINCUBE Desktop is built on",
+        ))
+        .into(),
+    );
 }
 
 /// A page About opens: a back link to About, the page's heading, its body.

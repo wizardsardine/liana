@@ -395,34 +395,7 @@ impl HardwareSource {
         match message {
             HardwareMessage::Focus(id) => (iced::widget::operation::focus(id), false),
             HardwareMessage::Devices(message, action_scope) => {
-                if action_scope != self.action_scope {
-                    return (Task::none(), false);
-                }
-                let Some(devices) = self.devices.as_mut() else {
-                    return (Task::none(), false);
-                };
-                let task = devices
-                    .update(message)
-                    .map(|task| {
-                        task.map(move |message| HardwareMessage::Devices(message, action_scope))
-                    })
-                    .unwrap_or_else(|_| Task::none());
-                let gone = self
-                    .selected_device()
-                    .map(str::to_string)
-                    .is_some_and(|id| self.supported(&id).is_none());
-                if gone {
-                    self.clear();
-                    self.status = HardwareStatus::Failed(HardwareSourceError::Disconnected);
-                }
-                (
-                    if gone {
-                        Task::batch([task, focus_if_unfocused(self.action_id(ACCOUNT_INPUT_ID))])
-                    } else {
-                        task
-                    },
-                    gone,
-                )
+                self.apply_device_update(message, action_scope)
             }
             HardwareMessage::PurposeSelected(purpose) => {
                 if self.purpose == purpose {
@@ -493,6 +466,39 @@ impl HardwareSource {
                 (focus_if_unfocused(focus_id), true)
             }
         }
+    }
+
+    fn apply_device_update(
+        &mut self,
+        message: HardwareWalletMessage,
+        action_scope: u64,
+    ) -> (Task<HardwareMessage>, bool) {
+        if action_scope != self.action_scope {
+            return (Task::none(), false);
+        }
+        let Some(devices) = self.devices.as_mut() else {
+            return (Task::none(), false);
+        };
+        let task = devices
+            .update(message)
+            .map(|task| task.map(move |message| HardwareMessage::Devices(message, action_scope)))
+            .unwrap_or_else(|_| Task::none());
+        let gone = self
+            .selected_device()
+            .map(str::to_string)
+            .is_some_and(|id| self.supported(&id).is_none());
+        if gone {
+            self.clear();
+            self.status = HardwareStatus::Failed(HardwareSourceError::Disconnected);
+        }
+        (
+            if gone {
+                Task::batch([task, focus_if_unfocused(self.action_id(ACCOUNT_INPUT_ID))])
+            } else {
+                task
+            },
+            gone,
+        )
     }
 
     #[cfg(test)]

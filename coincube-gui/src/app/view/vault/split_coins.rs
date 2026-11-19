@@ -437,46 +437,7 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
         });
     }
 
-    let fee = match (overlay.fee(), overlay.feerate) {
-        (Some(fee), Some(rate)) => {
-            localized_format!(
-                "Fee ≈ {} at {} sat/vB",
-                "Comisión ≈ {} a {} sat/vB",
-                sats(fee),
-                rate
-            )
-        }
-        _ if overlay.fee_failed => localized_copy("Fee rate unavailable").to_string(),
-        _ => localized_copy("Getting the fee rate…").to_string(),
-    };
-    let back = overlay
-        .fee()
-        .map(|fee| spent.checked_sub(fee).unwrap_or(Amount::ZERO));
-    body = body.push(
-        Column::new()
-            .spacing(6)
-            .push(p1_bold(localized_copy("Result")))
-            .push(p2_regular(localized_format!(
-                "Spends {} · {}{}",
-                "Gasta {} · {}{}",
-                coins_count(coins),
-                sats(spent),
-                if overlay.method == Method::SplitKey && overlay.has_key() {
-                    localized_copy(" including the split key")
-                } else {
-                    ""
-                }
-            )))
-            .push(p2_regular(match back {
-                Some(back) => localized_format!(
-                    "Back to this Vault · fresh address · ≈ {}",
-                    "Volver a este Vault · dirección nueva · ≈ {}",
-                    sats(back)
-                ),
-                None => localized_copy("Back to this Vault · fresh address").to_string(),
-            }))
-            .push(p2_regular(fee).style(theme::text::secondary)),
-    );
+    body = body.push(split_result(overlay, coins, spent));
     body = body
         .push(
             p2_regular(localized_format!(
@@ -527,6 +488,47 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
     .max_height(720)
     .style(theme::card::modal)
     .into()
+}
+
+fn split_result<'a>(overlay: &SplitOverlay, coins: usize, spent: Amount) -> Column<'a, Message> {
+    let fee = match (overlay.fee(), overlay.feerate) {
+        (Some(fee), Some(rate)) => {
+            localized_format!(
+                "Fee ≈ {} at {} sat/vB",
+                "Comisión ≈ {} a {} sat/vB",
+                sats(fee),
+                rate
+            )
+        }
+        _ if overlay.fee_failed => localized_copy("Fee rate unavailable").to_string(),
+        _ => localized_copy("Getting the fee rate…").to_string(),
+    };
+    let back = overlay
+        .fee()
+        .map(|fee| spent.checked_sub(fee).unwrap_or(Amount::ZERO));
+    Column::new()
+        .spacing(6)
+        .push(p1_bold(localized_copy("Result")))
+        .push(p2_regular(localized_format!(
+            "Spends {} · {}{}",
+            "Gasta {} · {}{}",
+            coins_count(coins),
+            sats(spent),
+            if overlay.method == Method::SplitKey && overlay.has_key() {
+                localized_copy(" including the split key")
+            } else {
+                ""
+            }
+        )))
+        .push(p2_regular(match back {
+            Some(back) => localized_format!(
+                "Back to this Vault · fresh address · ≈ {}",
+                "Volver a este Vault · dirección nueva · ≈ {}",
+                sats(back)
+            ),
+            None => localized_copy("Back to this Vault · fresh address").to_string(),
+        }))
+        .push(p2_regular(fee).style(theme::text::secondary))
 }
 
 fn key_needed_box<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {

@@ -300,74 +300,81 @@ pub fn settings_view<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCube
     }
 
     if state.ln_editing {
-        let username = state.ln_username_input.as_str();
-        let can_save = can_change_lightning_address(
-            username,
-            state.ln_username_error.as_deref(),
-            state.ln_username_available,
-            current_username.as_deref(),
-            state.ln_changing,
-        );
-        let save = can_save.then_some(ConnectCubeMessage::SaveLightningAddress);
-        let submit = save.clone();
-        let form = crate::app::view::responsive(move |size| {
-            let field = username_field(
-                state,
-                "New username",
-                current_username.as_deref(),
-                state.ln_changing,
-                submit.clone(),
-            );
-            if size.width < 760.0 {
-                Column::new()
-                    .spacing(20)
-                    .push(field)
-                    .push(release_callout(&address))
-                    .into()
-            } else {
-                let field_width = ((size.width - 40.0) * 13.0 / 24.0).min(520.0);
-                Row::new()
-                    .spacing(40)
-                    .align_y(Alignment::Start)
-                    .push(Container::new(field).width(field_width))
-                    .push(
-                        Container::new(release_callout(&address))
-                            .padding(iced::Padding::default().top(29))
-                            .width((size.width - field_width - 40.0).min(440.0)),
-                    )
-                    .into()
-            }
-        });
-        let buttons = Row::new()
-            .spacing(8)
-            .push(action(
-                SAVE_ID,
-                if state.ln_changing {
-                    "Saving…"
-                } else {
-                    "Save new address"
-                },
-                ActionKind::Primary,
-                save,
-            ))
-            .push(action(
-                CANCEL_ID,
-                coincube_ui::locale::copy("Cancel"),
-                ActionKind::Secondary,
-                (!state.ln_changing).then_some(ConnectCubeMessage::CancelEditLightningAddress),
-            ));
-        let mut edit = Column::new()
-            .spacing(24)
-            .width(Length::Fill)
-            .push(form)
-            .push(buttons);
-        if let Some(err) = state.ln_claim_error.as_deref() {
-            edit = edit.push(page::status(page::Status::Bad, err));
-        }
-        content =
-            content.push(Container::new(edit).padding(iced::Padding::default().top(4).bottom(28)));
+        content = content.push(edit_address_form(state, address, current_username));
     }
     content.push(page::rule()).into()
+}
+
+fn edit_address_form<'a>(
+    state: &'a ConnectCubePanel,
+    address: String,
+    current_username: Option<String>,
+) -> Container<'a, ConnectCubeMessage> {
+    let username = state.ln_username_input.as_str();
+    let can_save = can_change_lightning_address(
+        username,
+        state.ln_username_error.as_deref(),
+        state.ln_username_available,
+        current_username.as_deref(),
+        state.ln_changing,
+    );
+    let save = can_save.then_some(ConnectCubeMessage::SaveLightningAddress);
+    let submit = save.clone();
+    let form = crate::app::view::responsive(move |size| {
+        let field = username_field(
+            state,
+            "New username",
+            current_username.as_deref(),
+            state.ln_changing,
+            submit.clone(),
+        );
+        if size.width < 760.0 {
+            Column::new()
+                .spacing(20)
+                .push(field)
+                .push(release_callout(&address))
+                .into()
+        } else {
+            let field_width = ((size.width - 40.0) * 13.0 / 24.0).min(520.0);
+            Row::new()
+                .spacing(40)
+                .align_y(Alignment::Start)
+                .push(Container::new(field).width(field_width))
+                .push(
+                    Container::new(release_callout(&address))
+                        .padding(iced::Padding::default().top(29))
+                        .width((size.width - field_width - 40.0).min(440.0)),
+                )
+                .into()
+        }
+    });
+    let buttons = Row::new()
+        .spacing(8)
+        .push(action(
+            SAVE_ID,
+            if state.ln_changing {
+                "Saving…"
+            } else {
+                "Save new address"
+            },
+            ActionKind::Primary,
+            save,
+        ))
+        .push(action(
+            CANCEL_ID,
+            coincube_ui::locale::copy("Cancel"),
+            ActionKind::Secondary,
+            (!state.ln_changing).then_some(ConnectCubeMessage::CancelEditLightningAddress),
+        ));
+    let mut edit = Column::new()
+        .spacing(24)
+        .width(Length::Fill)
+        .push(form)
+        .push(buttons);
+    if let Some(err) = state.ln_claim_error.as_deref() {
+        edit = edit.push(page::status(page::Status::Bad, err));
+    }
+    Container::new(edit).padding(iced::Padding::default().top(4).bottom(28))
 }
 
 /// No address yet: the username field and Claim.

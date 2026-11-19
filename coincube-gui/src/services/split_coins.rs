@@ -156,10 +156,7 @@ pub fn derive(
             .iter()
             .filter(|coin| coin.outpoint.txid == record.txid)
             .collect();
-        let confirmations = match outputs.iter().find_map(|coin| coin.block_height) {
-            Some(height) if height >= 0 && height <= tip => (tip - height + 1) as u32,
-            _ => 0,
-        };
+        let confirmations = split_confirmations(&outputs, tip);
         // Follow the chain both ways: a reorg that drops the split takes its
         // confirmations with it.
         if confirmations != record.confirmations {
@@ -178,32 +175,48 @@ pub fn derive(
             }
             continue;
         }
-        match record.method {
-            // Not a proof for these outputs: the Vault holds the inputs' keys
-            // on Bitcoin too and could still confirm a legacy-signed copy of
-            // this transaction there, which would put the outputs on both
-            // chains. They are shown as split but unconfirmed, never proven.
-            // The twin Cube's inputs are another matter: see `twin_confirmed`.
-            Method::Signature => {
-                derived
-                    .unconfirmed
-                    .extend(outputs.iter().map(|coin| coin.outpoint));
-            }
-            Method::SplitKey => {
-                let Some(tx) = transactions.get(&record.txid) else {
-                    continue;
-                };
-                for coin in &outputs {
-                    if let Some(path) = extended_path(record, tx, coin.outpoint) {
-                        derived
-                            .proofs
-                            .push((coin.outpoint, ProofEntry::Saved(path)));
-                    }
+        record_confirmed_split_outputs(&mut derived, record, &outputs, transactions);
+    }
+    derived
+}
+
+fn split_confirmations(outputs: &[&Coin], tip: i32) -> u32 {
+    match outputs.iter().find_map(|coin| coin.block_height) {
+        Some(height) if height >= 0 && height <= tip => (tip - height + 1) as u32,
+        _ => 0,
+    }
+}
+
+fn record_confirmed_split_outputs(
+    derived: &mut Derived,
+    record: &SplitRecord,
+    outputs: &[&Coin],
+    transactions: &HashMap<Txid, Transaction>,
+) {
+    match record.method {
+        // Not a proof for these outputs: the Vault holds the inputs' keys
+        // on Bitcoin too and could still confirm a legacy-signed copy of
+        // this transaction there, which would put the outputs on both
+        // chains. They are shown as split but unconfirmed, never proven.
+        // The twin Cube's inputs are another matter: see `twin_confirmed`.
+        Method::Signature => {
+            derived
+                .unconfirmed
+                .extend(outputs.iter().map(|coin| coin.outpoint));
+        }
+        Method::SplitKey => {
+            let Some(tx) = transactions.get(&record.txid) else {
+                return;
+            };
+            for coin in outputs {
+                if let Some(path) = extended_path(record, tx, coin.outpoint) {
+                    derived
+                        .proofs
+                        .push((coin.outpoint, ProofEntry::Saved(path)));
                 }
             }
         }
     }
-    derived
 }
 
 /// The proof of a split-key split's output: the split transaction, linked

@@ -1754,6 +1754,8 @@ pub fn start_internal_bitcoind<'a>(
                 Message::InternalBitcoind(message::InternalBitcoindMsg::RegularComputerPreset),
             )));
         }
+        // e.g. resource validation that sent the user back here from confirm.
+        col = col.push(error.map(|e| card::invalid(text(coincube_ui::locale::notice(e.clone())))));
         col = col.push(actions([button::secondary(
             None,
             localized_copy("Download & start"),

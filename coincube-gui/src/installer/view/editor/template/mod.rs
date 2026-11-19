@@ -15,13 +15,72 @@ use coincube_ui::{
 use self::diagram::{policy_timeline, PolicyRow};
 use crate::installer::context::DescriptorTemplate;
 use crate::installer::{
-    message::Message,
+    descriptor::{Key, Path, PathKind},
+    message::{DefineDescriptor, DefineKey, DefinePath, Message},
     view::{layout, layout_with_actions},
 };
 
+use super::{defined_key, path, undefined_key};
+
+/// Enables each empty recovery slot once all preceding and prerequisite keys are set.
+fn fixed_recovery_path<'a>(
+    path_index: usize,
+    recovery_path: &'a Path,
+    color: iced::Color,
+    title: &'static str,
+    key_label: &'static str,
+    use_taproot: bool,
+    prerequisite_keys: &[Option<Key>],
+) -> Element<'a, Message> {
+    path(
+        color,
+        Some(title.to_string()),
+        recovery_path.sequence,
+        recovery_path.warning,
+        recovery_path.threshold,
+        recovery_path
+            .keys
+            .iter()
+            .enumerate()
+            .map(|(index, key)| {
+                if let Some(key) = key {
+                    defined_key(
+                        &key.name,
+                        color,
+                        key_label.to_string(),
+                        if use_taproot && !key.source.is_compatible_taproot() {
+                            Some("This device does not support Taproot")
+                        } else {
+                            None
+                        },
+                        true,
+                    )
+                } else {
+                    undefined_key(
+                        color,
+                        key_label,
+                        !(prerequisite_keys.iter().any(|key| key.is_none())
+                            || recovery_path.keys[..index].iter().any(|key| key.is_none())),
+                        true,
+                    )
+                }
+                .map(move |msg| DefinePath::Key(index, msg))
+            })
+            .collect(),
+        true,
+    )
+    .map(move |msg| {
+        Message::DefineDescriptor(match msg {
+            DefinePath::Key(index, DefineKey::Edit) => {
+                DefineDescriptor::KeysEdit(PathKind::Recovery, vec![(path_index, index)])
+            }
+            other => DefineDescriptor::Path(path_index, other),
+        })
+    })
+}
+
 /// Shared controls for configured policies; custom policies omit Customize.
 fn template_actions(valid: bool, allow_customization: bool) -> Element<'static, Message> {
-    use crate::installer::message::DefineDescriptor;
     use coincube_ui::component::button;
 
     let mut actions = Row::new().spacing(12).align_y(Alignment::Center).push(

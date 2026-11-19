@@ -225,92 +225,14 @@ impl MeldState {
                     self.webview_manager.clear_view(&active);
                 }
             }
-            MeldMessage::SessionError(mut err, description) => {
-                #[derive(serde::Deserialize)]
-                struct ErrorExtractor {
-                    message: String,
-                }
-
-                // attempt to extract message from JSON response
-                if let Ok(ErrorExtractor { message }) = serde_json::from_str::<ErrorExtractor>(&err)
-                {
-                    err = message;
-                }
-
-                // `description` is our internal step code and `err` is
-                // whatever the Meld API returned — neither is user copy, and
-                // the old format put both on screen as
-                // "MELD | QUOTE_ACQUISITION_FAILED | <upstream payload>".
-                // The provider's own code becomes the support reference so it
-                // is still greppable against their dashboard.
-                let (title, guidance) = match description {
-                    "QUOTE_ACQUISITION_FAILED" => {
-                        if let Some(MeldFlowStep::AddressSelection {
-                            processing_request, ..
-                        }) = self.steps.last_mut()
-                        {
-                            *processing_request = false;
-                        }
-
-                        (
-                            "Couldn't get a quote",
-                            "Our payment provider didn't return any prices. Check your internet connection and try again in a moment.",
-                        )
-                    }
-                    "WEBVIEW_INIT_FAILURE" => {
-                        // reset webview loading state
-                        if let Some(MeldFlowStep::QuoteSelection {
-                            webview_pending, ..
-                        }) = self.steps.last_mut()
-                        {
-                            *webview_pending = false;
-                        }
-
-                        (
-                            "Couldn't open the payment page",
-                            "Close this and start the purchase again. If it keeps failing, contact support and quote the reference below.",
-                        )
-                    }
-                    _ => (
-                        "That didn't work",
-                        "Check the details and try again. If it keeps failing, contact support and quote the reference below.",
-                    ),
-                };
-
-                let msg =
-                    crate::user_error::UserError::logged(title, guidance, description, true, &err)
-                        .toast();
-
-                return Some(iced::Task::done(view::Message::ShowError(msg)));
+            MeldMessage::SessionError(err, description) => {
+                return Some(self.session_error_task(err, description))
             }
 
             // initialization
             MeldMessage::CountryNotSupported => self.steps.push(MeldFlowStep::NotSupported),
             MeldMessage::InitializeCountryData(limits, regions_) => {
-                match regions_ {
-                    Some(regions) => {
-                        self.steps.push(MeldFlowStep::RegionSelection {
-                            selected: None,
-                            search: String::new(),
-                            regions,
-                            limits,
-                        });
-                    }
-                    None => {
-                        // automatically skip to input form
-                        self.steps.push(MeldFlowStep::AmountInputForm {
-                            amount: limits.minimum_amount.to_string(),
-                            limits,
-                            btc_balance: cache
-                                .coins()
-                                .iter()
-                                .filter(|c| c.block_height.is_some() && c.is_from_self)
-                                .map(|c| c.amount)
-                                .sum(),
-                            processing_request: false,
-                        });
-                    }
-                }
+                self.initialize_country_data(limits, regions_, cache)
             }
 
             // optional region Selection
@@ -325,36 +247,8 @@ impl MeldState {
                     *selected = None;
                 }
             }
-            MeldMessage::SelectRegion(idx) => {
-                if let Some(MeldFlowStep::RegionSelection { selected, .. }) = self.steps.last_mut()
-                {
-                    if *selected == Some(idx) {
-                        *selected = None
-                    } else {
-                        *selected = Some(idx)
-                    }
-                }
-            }
-            MeldMessage::ConfirmRegion => {
-                if let Some(MeldFlowStep::RegionSelection {
-                    selected: Some(_idx),
-                    limits,
-                    ..
-                }) = self.steps.last()
-                {
-                    self.steps.push(MeldFlowStep::AmountInputForm {
-                        amount: limits.minimum_amount.to_string(),
-                        limits: limits.clone(),
-                        btc_balance: cache
-                            .coins()
-                            .iter()
-                            .filter(|c| c.block_height.is_some() && c.is_from_self)
-                            .map(|c| c.amount)
-                            .sum(),
-                        processing_request: false,
-                    });
-                }
-            }
+            MeldMessage::SelectRegion(idx) => self.select_region(idx),
+            MeldMessage::ConfirmRegion => self.confirm_region(cache),
 
             // input form
             MeldMessage::SetAmount(a) => {
@@ -373,105 +267,15 @@ impl MeldState {
                 }
             }
             MeldMessage::SubmitInputAmount(btc_amount) => {
-                if matches!(self.buy_or_sell, BuyOrSell::Buy) {
-                    self.steps.push(MeldFlowStep::AddressSelection {
-                        amount: btc_amount,
-                        deposit_address: None,
-                        was_picked_from_existing_addresses: false,
-                        existing_addresses: None,
-                        addresses_continue_from: None,
-                        address_picker_open: false,
-                        processing_request: false,
-                    });
-
-                    return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::Meld(MeldMessage::LoadMoreAddresses),
-                    )));
-                } else {
-                    return Some(iced::Task::done(view::Message::BuySell(
-                        view::BuySellMessage::Meld(MeldMessage::GetQuotes),
-                    )));
-                }
+                return Some(self.submit_input_amount(btc_amount))
             }
 
             // address picker form
-            MeldMessage::LoadMoreAddresses => {
-                if matches!(self.buy_or_sell, BuyOrSell::Buy) {
-                    if let Some(MeldFlowStep::AddressSelection {
-                        addresses_continue_from,
-                        ..
-                    }) = self.steps.last_mut()
-                    {
-                        let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                        let start_index = *addresses_continue_from;
-
-                        let task = iced::Task::perform(
-                            async move {
-                                daemon
-                                    .list_revealed_addresses(false, false, 20, start_index)
-                                    .await
-                            },
-                            |res| match res {
-                                Ok(result) => {
-                                    let addresses: Vec<LabelledAddress> = result
-                                        .addresses
-                                        .into_iter()
-                                        // A new wallet always has index 0 "revealed", but we ignore it
-                                        // as it was not generated by the user.
-                                        .filter(|entry| entry.index != 0.into())
-                                        .map(|entry| LabelledAddress {
-                                            address: entry.address,
-                                            index: entry.index,
-                                            label: entry.label,
-                                        })
-                                        .collect();
-
-                                    view::Message::BuySell(view::BuySellMessage::Meld(
-                                        MeldMessage::ReceivedAddresses {
-                                            addresses,
-                                            continue_from: result.continue_from,
-                                        },
-                                    ))
-                                }
-                                Err(e) => {
-                                    view::Message::BuySell(view::BuySellMessage::SessionError(
-                                        "Unable to load addresses",
-                                        e.to_string(),
-                                    ))
-                                }
-                            },
-                        );
-
-                        return Some(task);
-                    }
-                }
-            }
+            MeldMessage::LoadMoreAddresses => return self.load_more_addresses(daemon),
             MeldMessage::ReceivedAddresses {
                 addresses,
                 continue_from,
-            } => {
-                if let Some(MeldFlowStep::AddressSelection {
-                    existing_addresses,
-                    addresses_continue_from,
-                    ..
-                }) = self.steps.last_mut()
-                {
-                    *addresses_continue_from = continue_from;
-                    match existing_addresses {
-                        Some(e) => e.extend(addresses),
-                        e => {
-                            if addresses.is_empty() {
-                                // generate a default deposit address
-                                return Some(iced::Task::done(view::Message::BuySell(
-                                    view::BuySellMessage::Meld(MeldMessage::CreateNewAddress),
-                                )));
-                            } else {
-                                *e = Some(addresses)
-                            }
-                        }
-                    }
-                }
-            }
+            } => return self.received_addresses(addresses, continue_from),
             MeldMessage::ToggleAddressPicker => {
                 if let Some(MeldFlowStep::AddressSelection {
                     address_picker_open,
@@ -481,26 +285,7 @@ impl MeldState {
                     *address_picker_open = !*address_picker_open;
                 }
             }
-            MeldMessage::SelectExistingAddress(idx) => {
-                if let Some(MeldFlowStep::AddressSelection {
-                    existing_addresses: Some(addresses),
-                    deposit_address,
-                    address_picker_open,
-                    was_picked_from_existing_addresses,
-                    ..
-                }) = self.steps.last_mut()
-                {
-                    if let Some(la) = addresses.get(idx).cloned() {
-                        let address = la.address.to_string();
-                        let qr_code_data =
-                            iced::widget::qr_code::Data::new(address.as_bytes()).unwrap();
-
-                        *deposit_address = Some((address, qr_code_data));
-                        *address_picker_open = false;
-                        *was_picked_from_existing_addresses = true;
-                    }
-                }
-            }
+            MeldMessage::SelectExistingAddress(idx) => self.select_existing_address(idx),
             MeldMessage::CopyAddressToClipboard => {
                 if let Some(address) = self.get_deposit_address() {
                     return Some(iced::Task::batch([
@@ -513,27 +298,7 @@ impl MeldState {
             }
 
             MeldMessage::CreateNewAddress => {
-                let daemon = daemon.expect("Daemon must be available for BuySell panel");
-                let (data_dir, wallet) = (cache.datadir_path.clone(), wallet.clone());
-                let task = iced::Task::perform(
-                    async move {
-                        crate::app::state::vault::receive::vault_receive_address(
-                            data_dir, &wallet, daemon,
-                        )
-                        .await
-                    },
-                    |res| match res {
-                        Ok(new) => view::Message::BuySell(view::BuySellMessage::Meld(
-                            MeldMessage::NewAddressCreated(new),
-                        )),
-                        Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
-                            "Error while creating new address",
-                            err.to_string(),
-                        )),
-                    },
-                );
-
-                return Some(task);
+                return Some(Self::create_new_address(cache, daemon, wallet))
             }
             MeldMessage::NewAddressCreated(coincubed::commands::GetAddressResult {
                 address,
@@ -553,201 +318,15 @@ impl MeldState {
                 }
             }
 
-            MeldMessage::GetQuotes => {
-                let (source_amount, deposit_address, processing) = match self.steps.last_mut() {
-                    Some(MeldFlowStep::AddressSelection {
-                        amount,
-                        processing_request,
-                        deposit_address: Some((address, _)),
-                        ..
-                    }) => (*amount, Some(address.clone()), processing_request),
-                    Some(MeldFlowStep::AmountInputForm {
-                        amount,
-                        processing_request,
-                        ..
-                    }) => (amount.parse().unwrap(), None, processing_request),
-                    _ => {
-                        log::warn!("[MELD] Ignoring `GetQuotes` message, not in a valid state",);
-                        return None;
-                    }
-                };
-
-                *processing = true;
-
-                let client = client.clone();
-
-                let buy_or_sell = self.buy_or_sell;
-                let country = self.country;
-                let state_code = self.get_region().map(|r| r.region_code.clone());
-
-                let task = iced::Task::perform(
-                    async move {
-                        let req = match buy_or_sell {
-                            BuyOrSell::Sell => meld::api::GetQuotesRequest {
-                                session_type: meld::api::SessionType::Sell,
-                                country_code: country.code,
-                                state_code: state_code.as_deref(),
-                                destination_currency: country.currency.code,
-                                source_currency: "BTC",
-                                source_amount,
-                                wallet_address: None,
-                            },
-                            BuyOrSell::Buy => meld::api::GetQuotesRequest {
-                                session_type: meld::api::SessionType::Buy,
-                                country_code: country.code,
-                                state_code: state_code.as_deref(),
-                                destination_currency: "BTC",
-                                source_currency: country.currency.code,
-                                source_amount,
-                                wallet_address: deposit_address.as_deref(),
-                            },
-                        };
-
-                        let meld_client = meld::MeldClient(&client);
-                        meld_client.get_quotes(req).await
-                    },
-                    |res| match res {
-                        Ok(meld::api::GetQuoteResponse {
-                            quotes,
-                            message,
-                            error,
-                        }) => {
-                            if let Some(e) = error {
-                                log::error!(
-                                    "[MELD] Encountered an issue while getting quotes: {}",
-                                    e
-                                )
-                            }
-                            if let Some(msg) = message {
-                                log::info!("[MELD] {}", msg)
-                            }
-
-                            MeldMessage::ReceivedQuotes(quotes)
-                        }
-                        Err(e) => {
-                            MeldMessage::SessionError(e.to_string(), "QUOTE_ACQUISITION_FAILED")
-                        }
-                    },
-                )
-                .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
-
-                return Some(task);
-            }
-            MeldMessage::ReceivedQuotes(mut quotes) => {
-                match self.steps.last_mut() {
-                    Some(MeldFlowStep::AmountInputForm {
-                        processing_request, ..
-                    })
-                    | Some(MeldFlowStep::AddressSelection {
-                        processing_request, ..
-                    }) => *processing_request = false,
-                    _ => {
-                        log::warn!("[MELD] Ignoring `GetQuotes` message, not in a valid state",);
-                        return None;
-                    }
-                }
-
-                log::trace!("[MELD] Successfully received quotes: {}", quotes.len(),);
-
-                match quotes.as_slice() {
-                    [] => {
-                        let msg = format!("[MELD] No quotes available for {}", self.country);
-
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::SessionError(
-                                msg,
-                                "Please set your transaction amount within the expected limits",
-                            )),
-                        )));
-                    }
-                    [quote] => {
-                        // skip directly to create session without picking a quote
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(
-                                quote.clone(),
-                            ))),
-                        )));
-                    }
-                    _ => {
-                        // TODO: Use Meld's recommended quote ranking
-                        quotes.sort_by(|a, b| b.customer_score.total_cmp(&a.customer_score));
-                        self.steps.push(MeldFlowStep::QuoteSelection {
-                            quotes,
-                            selected: None,
-                            webview_pending: false,
-                        });
-                    }
-                }
-            }
+            MeldMessage::GetQuotes => return self.get_quotes(client),
+            MeldMessage::ReceivedQuotes(quotes) => return self.received_quotes(quotes),
 
             // Quote Selection
-            MeldMessage::SelectQuote(idx) => {
-                if let Some(MeldFlowStep::QuoteSelection { selected, .. }) = self.steps.last_mut() {
-                    if *selected == Some(idx) {
-                        *selected = None
-                    } else {
-                        *selected = Some(idx)
-                    }
-                }
-            }
+            MeldMessage::SelectQuote(idx) => self.select_quote(idx),
             MeldMessage::ConfirmSelectedQuote(selected) => {
-                if let Some(MeldFlowStep::QuoteSelection {
-                    webview_pending,
-                    quotes,
-                    ..
-                }) = self.steps.last_mut()
-                {
-                    *webview_pending = true;
-
-                    if let Some(quote) = quotes.get(selected).cloned() {
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(quote))),
-                        )));
-                    }
-                }
+                return self.confirm_selected_quote(selected)
             }
-            MeldMessage::CreateSession(quote) => {
-                log::info!(
-                    "[MELD] Starting session for provider: {:?}",
-                    quote.service_provider
-                );
-
-                // setup request
-                let coincube_client = client.clone();
-                let country = self.country;
-                let buy_or_sell = self.buy_or_sell;
-
-                let deposit_address = self.get_deposit_address();
-                let region_code = self.get_region().map(|r| r.region_code.clone());
-
-                let task = iced::Task::perform(
-                    async move {
-                        let req = meld::api::CreateSessionRequest {
-                            session_type: match buy_or_sell {
-                                BuyOrSell::Sell => meld::api::SessionType::Sell,
-                                BuyOrSell::Buy => meld::api::SessionType::Buy,
-                            },
-                            quote_provider: &quote.service_provider,
-                            source_amount: quote.source_amount,
-                            source_currency: &quote.source_currency_code,
-                            destination_currency: &quote.destination_currency_code,
-                            country_code: country.code,
-                            state_code: region_code.as_deref(),
-                            wallet_address: deposit_address.as_deref(),
-                        };
-
-                        let client = meld::MeldClient(&coincube_client);
-                        client.create_session(req).await
-                    },
-                    |res| match res {
-                        Ok(s) => MeldMessage::SessionCreated(s),
-                        Err(e) => MeldMessage::SessionError(e.to_string(), "WEBVIEW_INIT_FAILURE"),
-                    },
-                )
-                .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
-
-                return Some(task);
-            }
+            MeldMessage::CreateSession(quote) => return Some(self.create_session(quote, client)),
             // webview session
             MeldMessage::SessionCreated(session) => {
                 // extract the main window's raw_window_handle, to instantiate a webview with
@@ -758,142 +337,647 @@ impl MeldState {
                 }));
             }
             MeldMessage::CreateWebviewSession(id, session) => {
-                let url = session
-                    .service_provider_widget_url
-                    .as_deref()
-                    .unwrap_or(session.widget_url.as_str());
-
-                let attrs = iced_wry::wry::WebViewAttributes {
-                    url: Some(url.to_owned()),
-                    devtools: cfg!(debug_assertions),
-                    incognito: true,
-                    ..Default::default()
-                };
-
-                match self.webview_manager.new_webview(attrs, id) {
-                    Some(active) => {
-                        log::info!(
-                            "[MELD] Successfully created Webview Session with ID: {}",
-                            session.session_id
-                        );
-
-                        // reset webview loading state
-                        if let Some(MeldFlowStep::QuoteSelection {
-                            webview_pending, ..
-                        }) = self.steps.last_mut()
-                        {
-                            *webview_pending = false;
-                        }
-
-                        self.steps.push(MeldFlowStep::ActiveSession {
-                            event_idempotency_set: std::collections::BTreeSet::new(),
-                            deposit_address: self.get_deposit_address(),
-                            session,
-                            active,
-                        })
-                    }
-                    None => {
-                        return Some(iced::Task::done(view::Message::BuySell(
-                            view::BuySellMessage::Meld(MeldMessage::SessionError(
-                                "Unable to start ActiveSession".into(),
-                                "Webview failed to initialize, check logs for specific details",
-                            )),
-                        )));
-                    }
-                }
+                return self.create_webview_session(id, session)
             }
             MeldMessage::WebviewManagerUpdate(msg) => self.webview_manager.update(msg),
             // sse updates
             MeldMessage::EventSourceConnected => {
                 log::info!("[MELD] Successfully connected to EventSource");
             }
-            MeldMessage::EventSourceDisconnected(msg) => {
-                log::warn!("[MELD] EventSource has disconnected: {}", msg);
+            MeldMessage::EventSourceDisconnected(msg) => self.event_source_disconnected(msg),
+            MeldMessage::SseEvent(event) => return self.sse_event(event),
+        }
 
-                if let Some(MeldFlowStep::ActiveSession {
-                    event_idempotency_set,
-                    ..
+        None
+    }
+
+    fn session_error_task(
+        &mut self,
+        mut err: String,
+        description: &'static str,
+    ) -> iced::Task<view::Message> {
+        #[derive(serde::Deserialize)]
+        struct ErrorExtractor {
+            message: String,
+        }
+
+        // attempt to extract message from JSON response
+        if let Ok(ErrorExtractor { message }) = serde_json::from_str::<ErrorExtractor>(&err) {
+            err = message;
+        }
+
+        // `description` is our internal step code and `err` is
+        // whatever the Meld API returned — neither is user copy, and
+        // the old format put both on screen as
+        // "MELD | QUOTE_ACQUISITION_FAILED | <upstream payload>".
+        // The provider's own code becomes the support reference so it
+        // is still greppable against their dashboard.
+        let (title, guidance) = match description {
+            "QUOTE_ACQUISITION_FAILED" => {
+                // reset quote loading state (buy: address step, sell: amount form)
+                if let Some(
+                    MeldFlowStep::AddressSelection {
+                        processing_request, ..
+                    }
+                    | MeldFlowStep::AmountInputForm {
+                        processing_request, ..
+                    },
+                ) = self.steps.last_mut()
+                {
+                    *processing_request = false;
+                }
+
+                (
+                    "Couldn't get a quote",
+                    "Our payment provider didn't return any prices. Check your internet connection and try again in a moment.",
+                )
+            }
+            "WEBVIEW_INIT_FAILURE" => {
+                // reset webview loading state
+                if let Some(MeldFlowStep::QuoteSelection {
+                    webview_pending, ..
                 }) = self.steps.last_mut()
                 {
-                    // incrementing sse_retries updates the data hash for the subscription, thus recreating it
-                    self.sse_retries += 1;
-                    event_idempotency_set.clear();
+                    *webview_pending = false;
                 }
+
+                (
+                    "Couldn't open the payment page",
+                    "Close this and start the purchase again. If it keeps failing, contact support and quote the reference below.",
+                )
             }
-            MeldMessage::SseEvent(event) => {
-                match serde_json::from_str::<meld::api::MeldEvent>(&event.data) {
-                    Ok(ev) => {
-                        // ensure event belongs to current session
-                        if let Some(MeldFlowStep::ActiveSession {
-                            session,
-                            event_idempotency_set,
-                            ..
-                        }) = self.steps.last_mut()
-                        {
-                            if ev.meld_session_id != session.session_id {
-                                log::debug!(
-                                    "[MELD] Ignoring event received for previous session: {:?}",
-                                    ev.meld_session_id
-                                );
+            _ => (
+                "That didn't work",
+                "Check the details and try again. If it keeps failing, contact support and quote the reference below.",
+            ),
+        };
 
-                                return None;
-                            }
+        let msg =
+            crate::user_error::UserError::logged(title, guidance, description, true, &err).toast();
 
-                            // check for duplicate events
-                            let hash = {
-                                use std::hash::Hasher;
+        iced::Task::done(view::Message::ShowError(msg))
+    }
 
-                                let mut hash = std::hash::DefaultHasher::new();
-                                hash.write(ev.event_id.as_bytes());
-                                hash.finish()
-                            };
+    fn initialize_country_data(
+        &mut self,
+        limits: meld::api::CurrencyLimit,
+        regions_: Option<Vec<meld::api::MeldRegion>>,
+        cache: &Cache,
+    ) {
+        // an empty region list has nothing to pick from, so treat it as "no regions"
+        match regions_.filter(|regions| !regions.is_empty()) {
+            Some(regions) => {
+                self.steps.push(MeldFlowStep::RegionSelection {
+                    selected: None,
+                    search: String::new(),
+                    regions,
+                    limits,
+                });
+            }
+            None => {
+                // automatically skip to input form
+                self.steps.push(MeldFlowStep::AmountInputForm {
+                    amount: limits.minimum_amount.to_string(),
+                    limits,
+                    btc_balance: cache
+                        .coins()
+                        .iter()
+                        .filter(|c| c.block_height.is_some() && c.is_from_self)
+                        .map(|c| c.amount)
+                        .sum(),
+                    processing_request: false,
+                });
+            }
+        }
+    }
 
-                            if !event_idempotency_set.insert(hash) {
-                                log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
-                                return None;
-                            }
+    fn select_region(&mut self, idx: usize) {
+        if let Some(MeldFlowStep::RegionSelection { selected, .. }) = self.steps.last_mut() {
+            if *selected == Some(idx) {
+                *selected = None
+            } else {
+                *selected = Some(idx)
+            }
+        }
+    }
+
+    fn confirm_region(&mut self, cache: &Cache) {
+        if let Some(MeldFlowStep::RegionSelection {
+            selected: Some(_idx),
+            limits,
+            ..
+        }) = self.steps.last()
+        {
+            self.steps.push(MeldFlowStep::AmountInputForm {
+                amount: limits.minimum_amount.to_string(),
+                limits: limits.clone(),
+                btc_balance: cache
+                    .coins()
+                    .iter()
+                    .filter(|c| c.block_height.is_some() && c.is_from_self)
+                    .map(|c| c.amount)
+                    .sum(),
+                processing_request: false,
+            });
+        }
+    }
+
+    fn submit_input_amount(&mut self, btc_amount: f64) -> iced::Task<view::Message> {
+        if matches!(self.buy_or_sell, BuyOrSell::Buy) {
+            self.steps.push(MeldFlowStep::AddressSelection {
+                amount: btc_amount,
+                deposit_address: None,
+                was_picked_from_existing_addresses: false,
+                existing_addresses: None,
+                addresses_continue_from: None,
+                address_picker_open: false,
+                processing_request: false,
+            });
+
+            iced::Task::done(view::Message::BuySell(view::BuySellMessage::Meld(
+                MeldMessage::LoadMoreAddresses,
+            )))
+        } else {
+            iced::Task::done(view::Message::BuySell(view::BuySellMessage::Meld(
+                MeldMessage::GetQuotes,
+            )))
+        }
+    }
+
+    fn load_more_addresses(
+        &mut self,
+        daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+    ) -> Option<iced::Task<view::Message>> {
+        if matches!(self.buy_or_sell, BuyOrSell::Buy) {
+            if let Some(MeldFlowStep::AddressSelection {
+                addresses_continue_from,
+                ..
+            }) = self.steps.last_mut()
+            {
+                let daemon = daemon.expect("Daemon must be available for BuySell panel");
+                let start_index = *addresses_continue_from;
+
+                let task = iced::Task::perform(
+                    async move {
+                        daemon
+                            .list_revealed_addresses(false, false, 20, start_index)
+                            .await
+                    },
+                    |res| match res {
+                        Ok(result) => {
+                            let addresses: Vec<LabelledAddress> = result
+                                .addresses
+                                .into_iter()
+                                // A new wallet always has index 0 "revealed", but we ignore it
+                                // as it was not generated by the user.
+                                .filter(|entry| entry.index != 0.into())
+                                .map(|entry| LabelledAddress {
+                                    address: entry.address,
+                                    index: entry.index,
+                                    label: entry.label,
+                                })
+                                .collect();
+
+                            view::Message::BuySell(view::BuySellMessage::Meld(
+                                MeldMessage::ReceivedAddresses {
+                                    addresses,
+                                    continue_from: result.continue_from,
+                                },
+                            ))
                         }
+                        Err(e) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                            "Unable to load addresses",
+                            e.to_string(),
+                        )),
+                    },
+                );
 
-                        // check if event was a success
-                        match ev.status {
-                            meld::api::TransactionStatus::Settled => {
-                                // wait a few seconds before resetting widget
-                                let task = iced::Task::perform(
-                                    async move {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await
-                                    },
-                                    |_| view::Message::BuySell(view::BuySellMessage::ResetWidget),
-                                );
+                return Some(task);
+            }
+        }
+        None
+    }
 
-                                return Some(task);
-                            }
-                            meld::api::TransactionStatus::Error => {
-                                let task = iced::Task::done(view::Message::BuySell(
-                                    view::BuySellMessage::Meld(MeldMessage::SessionError(
-                                        "Unable to complete transaction".to_string(),
-                                        "Unable to settle transaction",
-                                    )),
-                                ));
-
-                                return Some(task);
-                            }
-                            meld::api::TransactionStatus::Pending
-                            | meld::api::TransactionStatus::Settling => {
-                                log::info!("[MELD] Transaction is currently in flight");
-                            }
-                        }
-                    }
-                    Err(er) => {
-                        log::error!(
-                            "[MELD] Event data from SSE was malformed: {:?}\n{:?}",
-                            er,
-                            event
-                        )
+    fn received_addresses(
+        &mut self,
+        addresses: Vec<LabelledAddress>,
+        continue_from: Option<bitcoin::bip32::ChildNumber>,
+    ) -> Option<iced::Task<view::Message>> {
+        if let Some(MeldFlowStep::AddressSelection {
+            existing_addresses,
+            addresses_continue_from,
+            ..
+        }) = self.steps.last_mut()
+        {
+            *addresses_continue_from = continue_from;
+            match existing_addresses {
+                Some(e) => e.extend(addresses),
+                e => {
+                    if addresses.is_empty() {
+                        // generate a default deposit address
+                        return Some(iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::Meld(MeldMessage::CreateNewAddress),
+                        )));
+                    } else {
+                        *e = Some(addresses)
                     }
                 }
             }
         }
+        None
+    }
 
+    fn select_existing_address(&mut self, idx: usize) {
+        if let Some(MeldFlowStep::AddressSelection {
+            existing_addresses: Some(addresses),
+            deposit_address,
+            address_picker_open,
+            was_picked_from_existing_addresses,
+            processing_request,
+            ..
+        }) = self.steps.last_mut()
+        {
+            // the in-flight quote request was made for the current address
+            if *processing_request {
+                return;
+            }
+            if let Some(la) = addresses.get(idx).cloned() {
+                let address = la.address.to_string();
+                let qr_code_data = iced::widget::qr_code::Data::new(address.as_bytes()).unwrap();
+
+                *deposit_address = Some((address, qr_code_data));
+                *address_picker_open = false;
+                *was_picked_from_existing_addresses = true;
+            }
+        }
+    }
+
+    /// The Vault's next receive address, reserved the way its Receive
+    /// screen reserves one (an imported Vault takes its source lock).
+    fn create_new_address(
+        cache: &Cache,
+        daemon: Option<std::sync::Arc<dyn crate::daemon::Daemon + Sync + Send>>,
+        wallet: &std::sync::Arc<crate::app::wallet::Wallet>,
+    ) -> iced::Task<view::Message> {
+        let daemon = daemon.expect("Daemon must be available for BuySell panel");
+        let (data_dir, wallet) = (cache.datadir_path.clone(), wallet.clone());
+        iced::Task::perform(
+            async move {
+                crate::app::state::vault::receive::vault_receive_address(data_dir, &wallet, daemon)
+                    .await
+            },
+            |res| match res {
+                Ok(new) => view::Message::BuySell(view::BuySellMessage::Meld(
+                    MeldMessage::NewAddressCreated(new),
+                )),
+                Err(err) => view::Message::BuySell(view::BuySellMessage::SessionError(
+                    "Error while creating new address",
+                    err.to_string(),
+                )),
+            },
+        )
+    }
+
+    fn get_quotes(&mut self, client: &CoincubeClient) -> Option<iced::Task<view::Message>> {
+        let (source_amount, deposit_address, processing) = match self.steps.last_mut() {
+            Some(MeldFlowStep::AddressSelection {
+                amount,
+                processing_request,
+                deposit_address: Some((address, _)),
+                ..
+            }) => (*amount, Some(address.clone()), processing_request),
+            Some(MeldFlowStep::AmountInputForm {
+                amount,
+                processing_request,
+                ..
+            }) => (amount.parse().unwrap(), None, processing_request),
+            _ => {
+                log::warn!("[MELD] Ignoring `GetQuotes` message, not in a valid state",);
+                return None;
+            }
+        };
+
+        *processing = true;
+
+        let client = client.clone();
+
+        let buy_or_sell = self.buy_or_sell;
+        let country = self.country;
+        let state_code = self.get_region().map(|r| r.region_code.clone());
+
+        let task = iced::Task::perform(
+            async move {
+                let req = match buy_or_sell {
+                    BuyOrSell::Sell => meld::api::GetQuotesRequest {
+                        session_type: meld::api::SessionType::Sell,
+                        country_code: country.code,
+                        state_code: state_code.as_deref(),
+                        destination_currency: country.currency.code,
+                        source_currency: "BTC",
+                        source_amount,
+                        wallet_address: None,
+                    },
+                    BuyOrSell::Buy => meld::api::GetQuotesRequest {
+                        session_type: meld::api::SessionType::Buy,
+                        country_code: country.code,
+                        state_code: state_code.as_deref(),
+                        destination_currency: "BTC",
+                        source_currency: country.currency.code,
+                        source_amount,
+                        wallet_address: deposit_address.as_deref(),
+                    },
+                };
+
+                let meld_client = meld::MeldClient(&client);
+                meld_client.get_quotes(req).await
+            },
+            |res| match res {
+                Ok(meld::api::GetQuoteResponse {
+                    quotes,
+                    message,
+                    error,
+                }) => {
+                    if let Some(e) = error {
+                        log::error!("[MELD] Encountered an issue while getting quotes: {}", e)
+                    }
+                    if let Some(msg) = message {
+                        log::info!("[MELD] {}", msg)
+                    }
+
+                    MeldMessage::ReceivedQuotes(quotes)
+                }
+                Err(e) => MeldMessage::SessionError(e.to_string(), "QUOTE_ACQUISITION_FAILED"),
+            },
+        )
+        .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)));
+
+        Some(task)
+    }
+
+    fn received_quotes(
+        &mut self,
+        mut quotes: Vec<meld::api::Quote>,
+    ) -> Option<iced::Task<view::Message>> {
+        match self.steps.last_mut() {
+            Some(MeldFlowStep::AmountInputForm {
+                processing_request, ..
+            })
+            | Some(MeldFlowStep::AddressSelection {
+                processing_request, ..
+            }) => *processing_request = false,
+            _ => {
+                log::warn!("[MELD] Ignoring `GetQuotes` message, not in a valid state",);
+                return None;
+            }
+        }
+
+        log::trace!("[MELD] Successfully received quotes: {}", quotes.len(),);
+
+        match quotes.as_slice() {
+            [] => {
+                let msg = format!("[MELD] No quotes available for {}", self.country);
+
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::Meld(MeldMessage::SessionError(
+                        msg,
+                        "Please set your transaction amount within the expected limits",
+                    )),
+                )));
+            }
+            [quote] => {
+                // skip directly to create session without picking a quote
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(quote.clone()))),
+                )));
+            }
+            _ => {
+                // TODO: Use Meld's recommended quote ranking
+                quotes.sort_by(|a, b| b.customer_score.total_cmp(&a.customer_score));
+                self.steps.push(MeldFlowStep::QuoteSelection {
+                    quotes,
+                    selected: None,
+                    webview_pending: false,
+                });
+            }
+        }
+        None
+    }
+
+    fn select_quote(&mut self, idx: usize) {
+        if let Some(MeldFlowStep::QuoteSelection { selected, .. }) = self.steps.last_mut() {
+            if *selected == Some(idx) {
+                *selected = None
+            } else {
+                *selected = Some(idx)
+            }
+        }
+    }
+
+    fn confirm_selected_quote(&mut self, selected: usize) -> Option<iced::Task<view::Message>> {
+        if let Some(MeldFlowStep::QuoteSelection {
+            webview_pending,
+            quotes,
+            ..
+        }) = self.steps.last_mut()
+        {
+            *webview_pending = true;
+
+            if let Some(quote) = quotes.get(selected).cloned() {
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::Meld(MeldMessage::CreateSession(Box::new(quote))),
+                )));
+            }
+        }
+        None
+    }
+
+    fn create_session(
+        &self,
+        quote: Box<meld::api::Quote>,
+        client: &CoincubeClient,
+    ) -> iced::Task<view::Message> {
+        log::info!(
+            "[MELD] Starting session for provider: {:?}",
+            quote.service_provider
+        );
+
+        // setup request
+        let coincube_client = client.clone();
+        let country = self.country;
+        let buy_or_sell = self.buy_or_sell;
+
+        let deposit_address = self.get_deposit_address();
+        let region_code = self.get_region().map(|r| r.region_code.clone());
+
+        iced::Task::perform(
+            async move {
+                let req = meld::api::CreateSessionRequest {
+                    session_type: match buy_or_sell {
+                        BuyOrSell::Sell => meld::api::SessionType::Sell,
+                        BuyOrSell::Buy => meld::api::SessionType::Buy,
+                    },
+                    quote_provider: &quote.service_provider,
+                    source_amount: quote.source_amount,
+                    source_currency: &quote.source_currency_code,
+                    destination_currency: &quote.destination_currency_code,
+                    country_code: country.code,
+                    state_code: region_code.as_deref(),
+                    wallet_address: deposit_address.as_deref(),
+                };
+
+                let client = meld::MeldClient(&coincube_client);
+                client.create_session(req).await
+            },
+            |res| match res {
+                Ok(s) => MeldMessage::SessionCreated(s),
+                Err(e) => MeldMessage::SessionError(e.to_string(), "WEBVIEW_INIT_FAILURE"),
+            },
+        )
+        .map(|msg| view::Message::BuySell(view::BuySellMessage::Meld(msg)))
+    }
+
+    fn create_webview_session(
+        &mut self,
+        id: iced_wry::ExtractedWindowId,
+        session: meld::api::CreateSessionResponse,
+    ) -> Option<iced::Task<view::Message>> {
+        let url = session
+            .service_provider_widget_url
+            .as_deref()
+            .unwrap_or(session.widget_url.as_str());
+
+        let attrs = iced_wry::wry::WebViewAttributes {
+            url: Some(url.to_owned()),
+            devtools: cfg!(debug_assertions),
+            incognito: true,
+            ..Default::default()
+        };
+
+        match self.webview_manager.new_webview(attrs, id) {
+            Some(active) => {
+                log::info!(
+                    "[MELD] Successfully created Webview Session with ID: {}",
+                    session.session_id
+                );
+
+                // reset webview loading state
+                if let Some(MeldFlowStep::QuoteSelection {
+                    webview_pending, ..
+                }) = self.steps.last_mut()
+                {
+                    *webview_pending = false;
+                }
+
+                self.steps.push(MeldFlowStep::ActiveSession {
+                    event_idempotency_set: std::collections::BTreeSet::new(),
+                    deposit_address: self.get_deposit_address(),
+                    session,
+                    active,
+                })
+            }
+            None => {
+                return Some(iced::Task::done(view::Message::BuySell(
+                    view::BuySellMessage::Meld(MeldMessage::SessionError(
+                        "Unable to start ActiveSession: webview failed to initialize, check logs for specific details".into(),
+                        "WEBVIEW_INIT_FAILURE",
+                    )),
+                )));
+            }
+        }
+        None
+    }
+
+    fn event_source_disconnected(&mut self, msg: String) {
+        log::warn!("[MELD] EventSource has disconnected: {}", msg);
+
+        if let Some(MeldFlowStep::ActiveSession {
+            event_idempotency_set,
+            ..
+        }) = self.steps.last_mut()
+        {
+            // incrementing sse_retries updates the data hash for the subscription, thus recreating it
+            self.sse_retries += 1;
+            event_idempotency_set.clear();
+        }
+    }
+
+    fn sse_event(&mut self, event: reqwest_sse::Event) -> Option<iced::Task<view::Message>> {
+        match serde_json::from_str::<meld::api::MeldEvent>(&event.data) {
+            Ok(ev) => {
+                // ensure event belongs to current session
+                let Some(MeldFlowStep::ActiveSession {
+                    session,
+                    event_idempotency_set,
+                    ..
+                }) = self.steps.last_mut()
+                else {
+                    // no session is active (e.g. it was navigated away from),
+                    // so never schedule a reset or error for a stale event
+                    log::debug!(
+                        "[MELD] Ignoring event received without an active session: {:?}",
+                        ev.meld_session_id
+                    );
+                    return None;
+                };
+
+                if ev.meld_session_id != session.session_id {
+                    log::debug!(
+                        "[MELD] Ignoring event received for previous session: {:?}",
+                        ev.meld_session_id
+                    );
+
+                    return None;
+                }
+
+                // check for duplicate events
+                let hash = {
+                    use std::hash::Hasher;
+
+                    let mut hash = std::hash::DefaultHasher::new();
+                    hash.write(ev.event_id.as_bytes());
+                    hash.finish()
+                };
+
+                if !event_idempotency_set.insert(hash) {
+                    log::trace!("[MELD] Received duplicate SSE Event: {:?}", event);
+                    return None;
+                }
+
+                // check if event was a success
+                match ev.status {
+                    meld::api::TransactionStatus::Settled => {
+                        // wait a few seconds before resetting widget
+                        let task = iced::Task::perform(
+                            async move { tokio::time::sleep(std::time::Duration::from_secs(5)).await },
+                            |_| view::Message::BuySell(view::BuySellMessage::ResetWidget),
+                        );
+
+                        return Some(task);
+                    }
+                    meld::api::TransactionStatus::Error => {
+                        let task = iced::Task::done(view::Message::BuySell(
+                            view::BuySellMessage::Meld(MeldMessage::SessionError(
+                                "Unable to complete transaction".to_string(),
+                                "Unable to settle transaction",
+                            )),
+                        ));
+
+                        return Some(task);
+                    }
+                    meld::api::TransactionStatus::Pending
+                    | meld::api::TransactionStatus::Settling => {
+                        log::info!("[MELD] Transaction is currently in flight");
+                    }
+                }
+            }
+            Err(er) => {
+                log::error!(
+                    "[MELD] Event data from SSE was malformed: {:?}\n{:?}",
+                    er,
+                    event
+                )
+            }
+        }
         None
     }
 
