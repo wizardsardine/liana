@@ -129,12 +129,48 @@ const BACK_ID: &str = "tenshu.vault.send.back";
 const CLEAR_ID: &str = "tenshu.vault.send.clear";
 const PREPARE_ID: &str = "tenshu.vault.send.prepare";
 const CHOOSE_COINS_ID: &str = "tenshu.vault.send.choose-coins";
+const AUTOMATIC_COINS_ID: &str = "tenshu.vault.send.automatic-coins";
+
+/// The Coins radio: Automatic (the draft picks) or Choose coins (the list).
+fn coin_mode_choice<'a>(coins_shown: bool) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::segmented::{radio_list, segment};
+    Column::new()
+        .spacing(4)
+        .push(section_label(coincube_ui::locale::copy("Coins")))
+        .push(
+            radio_list(
+                [
+                    segment(
+                        AUTOMATIC_COINS_ID,
+                        false,
+                        coincube_ui::locale::copy("Automatic"),
+                    )
+                    .description(localized_copy(AUTOMATIC_COINS)),
+                    segment(
+                        CHOOSE_COINS_ID,
+                        true,
+                        coincube_ui::locale::copy("Choose coins"),
+                    )
+                    .description(localized_copy("Pick the coins this payment spends.")),
+                ],
+                Some(coins_shown),
+                Message::FocusAction,
+            )
+            .on_select(|choose| {
+                Message::CreateSpend(if choose {
+                    CreateSpendMessage::ChooseCoins
+                } else {
+                    CreateSpendMessage::AutomaticCoins
+                })
+            }),
+        )
+        .into()
+}
 
 /// What the collapsed Coins section says. Automatic selection keeps the fee
 /// and the change low (branch and bound over the confirmed coins); it does
 /// not order coins by their recovery dates, so the copy doesn't claim to.
-pub(crate) const AUTOMATIC_COINS: &str =
-    "Automatic: COINCUBE Desktop picks the coins for this payment.";
+pub(crate) const AUTOMATIC_COINS: &str = "COINCUBE Desktop picks the coins for this payment.";
 
 /// Fee presets in display order, each with the block target whose estimate it
 /// fetches. The target, never the label or position, is the preset's identity.
@@ -489,6 +525,7 @@ pub fn create_spend_tx<'a>(
     batch_label: &form::Value<String>,
     amount_left: Option<&Amount>,
     draft_warning: Option<String>,
+    drafting: bool,
     blocking_warning: Option<String>,
     feerate: &form::Value<String>,
     fee_amount: Option<&Amount>,
@@ -539,6 +576,8 @@ pub fn create_spend_tx<'a>(
             recovery_timelock,
             amount_left,
             draft_warning,
+            drafting,
+            loading_fee_estimate.is_some(),
         )
     };
 
@@ -606,36 +645,24 @@ pub fn create_spend_tx<'a>(
         fiat_converter,
     );
 
-    // Until the user chooses coins, the draft picks them: the section says
-    // so and offers Choose coins, which opens the list below.
-    let automatic_coins = Column::new()
+    // A payment can pick its coins automatically or from the list: a radio
+    // chooses, and Choose coins opens the list below it. A self-transfer or
+    // a recovery has no automatic selection, so it shows the list alone.
+    let automatic_available = !is_self_send && recovery_timelock.is_none();
+    let coin_list = Column::new()
         .spacing(10)
         .push(
             Row::new()
                 .spacing(12)
                 .align_y(Alignment::Center)
-                .push(section_label(coincube_ui::locale::copy("Coins")).width(Length::Fill))
-                .push(quiet_action(
-                    CHOOSE_COINS_ID,
-                    None,
-                    coincube_ui::locale::copy("Choose coins"),
-                    Message::CreateSpend(CreateSpendMessage::ChooseCoins),
-                )),
-        )
-        .push(
-            text(AUTOMATIC_COINS)
-                .size(P2_SIZE)
-                .style(theme::text::secondary),
-        );
-    let coins_section = Column::new()
-        .spacing(10)
-        .push(
-            Row::new()
-                .spacing(12)
-                .align_y(Alignment::Center)
-                .push(
-                    section_label(coincube_ui::locale::copy("Coin selection")).width(Length::Fill),
-                )
+                // Under the radio the status stands alone; the radio heads it.
+                .push(if automatic_available {
+                    Element::from(Space::new().width(Length::Fill))
+                } else {
+                    section_label(coincube_ui::locale::copy("Coin selection"))
+                        .width(Length::Fill)
+                        .into()
+                })
                 .push(spend_coin_selection_status(
                     is_self_send,
                     recovery_timelock,
@@ -653,6 +680,15 @@ pub fn create_spend_tx<'a>(
             cache,
             bitcoin_unit,
         ));
+    let coins_section: Element<'a, Message> = if automatic_available {
+        Column::new()
+            .spacing(10)
+            .push(coin_mode_choice(coins_shown))
+            .push_maybe(coins_shown.then_some(coin_list))
+            .into()
+    } else {
+        coin_list.into()
+    };
 
     let footer = spend_compose_footer(
         disabled_hint,
@@ -669,11 +705,7 @@ pub fn create_spend_tx<'a>(
             .push(compose_divider())
             .push(compose_section(fee_section))
             .push(compose_divider())
-            .push(if coins_shown {
-                compose_section(coins_section)
-            } else {
-                compose_section(automatic_coins)
-            })
+            .push(compose_section(coins_section))
             .push(compose_divider())
             .push(footer),
     )
@@ -1023,6 +1055,7 @@ fn spend_review_warnings<'a>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn incomplete_spend_hint(
     feerate: &form::Value<String>,
     duplicate: bool,
@@ -1031,13 +1064,23 @@ fn incomplete_spend_hint(
     recovery_timelock: Option<u16>,
     amount_left: Option<&Amount>,
     draft_warning: Option<String>,
+    drafting: bool,
+    loading_fee_estimate: bool,
 ) -> Option<String> {
-    if feerate.value.is_empty() {
+    if feerate.value.is_empty() && loading_fee_estimate {
+        // A preset's estimate is on its way (a new or cleared form starts on
+        // Normal): nothing for the user to set.
+        Some(FETCHING_FEE_HINT.to_string())
+    } else if feerate.value.is_empty() {
         Some("Please set a feerate.".to_string())
     } else if !feerate.valid {
         Some("Invalid feerate.".to_string())
     } else if duplicate {
         Some("Duplicate recipient address.".to_string())
+    } else if drafting {
+        // The form is complete and its draft is still being built: neither
+        // "select a coin" nor "enter recipient and amount" is true yet.
+        Some(CALCULATING_HINT.to_string())
     } else if coins.iter().all(|(_, selected)| !selected) {
         Some("Please select at least one coin.".to_string())
     } else if !is_self_send && recovery_timelock.is_none() {
@@ -1585,6 +1628,11 @@ fn spend_coin_scroll<'a>(
     .max_height(300)
 }
 
+/// Footer hints that report progress rather than a problem: drawn quiet,
+/// without the warning icon.
+const CALCULATING_HINT: &str = "Calculating…";
+const FETCHING_FEE_HINT: &str = "Fetching the fee estimate…";
+
 fn spend_compose_footer<'a>(
     disabled_hint: Option<String>,
     generating: bool,
@@ -1592,7 +1640,17 @@ fn spend_compose_footer<'a>(
     is_first_step: bool,
     can_proceed: bool,
 ) -> coincube_ui::widget::Container<'a, Message> {
-    let hint: Element<'a, Message> = if let Some(hint) = disabled_hint {
+    let progress: Option<&'static str> = match disabled_hint.as_deref() {
+        Some(CALCULATING_HINT) => Some(CALCULATING_HINT),
+        Some(FETCHING_FEE_HINT) => Some(FETCHING_FEE_HINT),
+        _ => None,
+    };
+    let hint: Element<'a, Message> = if let Some(progress) = progress {
+        text(localized_copy(progress))
+            .size(P2_SIZE)
+            .style(theme::text::secondary)
+            .into()
+    } else if let Some(hint) = disabled_hint {
         Row::new()
             .spacing(6)
             .align_y(Alignment::Center)
@@ -1808,6 +1866,7 @@ mod tests {
         max_selected: bool,
         max_estimated: Option<u64>,
         insufficient: bool,
+        drafting: bool,
     }
 
     impl Scenario {
@@ -1837,6 +1896,7 @@ mod tests {
                 max_selected: false,
                 max_estimated: None,
                 insufficient: false,
+                drafting: false,
             }
         }
     }
@@ -1888,6 +1948,7 @@ mod tests {
             &fixture.batch_label,
             amount_left.as_ref(),
             s.draft_warning.map(String::from),
+            s.drafting,
             s.blocking_warning.map(String::from),
             &feerate,
             s.fee.then_some(&fixture.fee),
@@ -2387,7 +2448,7 @@ mod tests {
                     "Payment details",
                     "Recipients",
                     "Fee rate (sat/vB)",
-                    "Coin selection",
+                    "Choose coins",
                     "Builds an unsigned transaction to review.",
                 ],
                 absent: &["Self-transfer", "Transfer details", "Recovery details"],
@@ -2464,6 +2525,18 @@ mod tests {
                     "Select or add more funds.",
                 ],
                 absent: &[],
+                prepare_enabled: false,
+                add_shown: true,
+            },
+            Case {
+                name: "drafting",
+                scenario: Scenario {
+                    amount_left: None,
+                    drafting: true,
+                    ..base.clone()
+                },
+                present: &["Calculating…"],
+                absent: &["Enter recipient address and amount."],
                 prepare_enabled: false,
                 add_shown: true,
             },
@@ -2639,10 +2712,16 @@ mod tests {
                 Some("5"),
                 "Tab reaches the fee form"
             );
-            for expected in [BACK_ID, CLEAR_ID, PREPARE_ID] {
+            for expected in [
+                AUTOMATIC_COINS_ID,
+                CHOOSE_COINS_ID,
+                BACK_ID,
+                CLEAR_ID,
+                PREPARE_ID,
+            ] {
                 assert_eq!(harness.tab().id, Some(Id::new(expected)), "{outer:?}");
             }
-            for expected in [CLEAR_ID, BACK_ID] {
+            for expected in [CLEAR_ID, BACK_ID, CHOOSE_COINS_ID, AUTOMATIC_COINS_ID] {
                 assert_eq!(harness.shift_tab().id, Some(Id::new(expected)), "{outer:?}");
             }
             assert_eq!(harness.shift_tab().input.as_deref(), Some("5"));
@@ -2793,10 +2872,10 @@ mod tests {
         }
     }
 
-    /// Until coins are chosen the section says the draft picks them, and
-    /// Choose coins opens the existing list.
+    /// The Coins radio: Automatic says the draft picks the coins; Choose
+    /// coins opens the list, and Automatic hands the choice back.
     #[test]
-    fn choose_coins_opens_the_inline_coin_list() {
+    fn coins_radio_switches_between_automatic_and_the_coin_list() {
         let fixture = Fixture::new(ThemeMode::Dark, 3);
         let automatic = Scenario {
             coins_shown: false,
@@ -2804,28 +2883,57 @@ mod tests {
         };
         let mut harness = Harness::new(compose(&fixture, &automatic), TALL);
         let probe = harness.probe();
+        assert!(probe.contains("Automatic"));
         assert!(probe.contains(AUTOMATIC_COINS));
-        assert!(!probe.contains("Coin selection"));
+        assert!(probe.contains("Choose coins"));
         let messages = harness.click(&Id::new(CHOOSE_COINS_ID));
         assert!(
-            matches!(
-                messages.as_slice(),
-                [
-                    Message::FocusAction(_),
-                    Message::CreateSpend(CreateSpendMessage::ChooseCoins)
-                ]
-            ),
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::CreateSpend(CreateSpendMessage::ChooseCoins))),
             "{:?}",
             messages
         );
 
-        let probe = Harness::new(compose(&fixture, &Scenario::valid_send()), TALL).probe();
+        // Choosing keeps both options, so the user can go back to Automatic.
+        let mut harness = Harness::new(compose(&fixture, &Scenario::valid_send()), TALL);
+        let probe = harness.probe();
+        assert!(probe.contains(AUTOMATIC_COINS));
+        assert!(!probe.contains("Coin selection"));
+        let messages = harness.click(&Id::new(AUTOMATIC_COINS_ID));
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::CreateSpend(CreateSpendMessage::AutomaticCoins))),
+            "{:?}",
+            messages
+        );
+
+        // A self-transfer has no automatic selection: the list alone.
+        let self_send = Scenario {
+            recipients: 0,
+            ..Scenario::valid_send()
+        };
+        let probe = Harness::new(compose(&fixture, &self_send), TALL).probe();
         assert!(probe.contains("Coin selection"));
         assert!(!probe.contains(AUTOMATIC_COINS));
-        assert!(!probe
-            .focus
-            .iter()
-            .any(|entry| entry.id == Some(Id::new(CHOOSE_COINS_ID))));
+    }
+
+    /// While a preset's estimate is on its way (a new or cleared form), the
+    /// footer says so instead of asking the user to set a feerate.
+    #[test]
+    fn a_loading_fee_estimate_is_not_asked_for() {
+        let empty = value("", true);
+        assert_eq!(
+            incomplete_spend_hint(&empty, false, &[], false, None, None, None, false, true)
+                .as_deref(),
+            Some(FETCHING_FEE_HINT)
+        );
+        assert_eq!(
+            incomplete_spend_hint(&empty, false, &[], false, None, None, None, false, false)
+                .as_deref(),
+            Some("Please set a feerate.")
+        );
     }
 
     #[test]
@@ -3232,7 +3340,8 @@ mod tests {
             for name in tall {
                 let (fixture, scenario) = r07c_case(mode, name);
                 let mut harness = Harness::new(compose(&fixture, &scenario), TALL);
-                assert!(harness.probe().contains("Coin selection"));
+                let probe = harness.probe();
+                assert!(probe.contains("Coin selection") || probe.contains("Choose coins"));
                 harness.capture_r07c(name, appearance, &theme);
             }
         }
@@ -3713,10 +3822,16 @@ mod tests {
         );
         harness.focus(Id::new(FEERATE_CUSTOM_ID));
         assert_eq!(harness.tab().input.as_deref(), Some("5"));
-        for expected in [BACK_ID, CLEAR_ID, PREPARE_ID] {
+        for expected in [
+            AUTOMATIC_COINS_ID,
+            CHOOSE_COINS_ID,
+            BACK_ID,
+            CLEAR_ID,
+            PREPARE_ID,
+        ] {
             assert_eq!(harness.tab().id, Some(Id::new(expected)));
         }
-        for _ in 0..2 {
+        for _ in 0..4 {
             harness.shift_tab();
         }
         assert_eq!(harness.shift_tab().input.as_deref(), Some("5"));

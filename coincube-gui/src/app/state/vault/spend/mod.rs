@@ -347,7 +347,7 @@ impl State for CreateSpendPanel {
             if self.draft.is_recovery() && !self.initial_feerate_requested && self.current == 1 {
                 self.initial_feerate_requested = true;
                 Task::done(Message::View(view::Message::CreateSpend(
-                    view::CreateSpendMessage::FetchFeeEstimate(6),
+                    view::CreateSpendMessage::FetchFeeEstimate(step::NORMAL_FEE_TARGET),
                 )))
             } else {
                 Task::none()
@@ -440,7 +440,7 @@ impl State for CreateSpendPanel {
         if !self.initial_feerate_requested && !self.draft.is_recovery() {
             self.initial_feerate_requested = true;
             tasks.push(Task::done(Message::View(view::Message::CreateSpend(
-                view::CreateSpendMessage::FetchFeeEstimate(6),
+                view::CreateSpendMessage::FetchFeeEstimate(step::NORMAL_FEE_TARGET),
             ))));
         }
         Task::batch(tasks)
