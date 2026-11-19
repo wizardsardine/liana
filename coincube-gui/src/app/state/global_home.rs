@@ -1653,214 +1653,23 @@ impl State for GlobalHome {
                     HomeMessage::PickOtherCubeWallet(cube_id, kind) => {
                         self.pick_other_cube_wallet(&daemon, cache, cube_id, kind)
                     }
-                    HomeMessage::OtherCubePin(message) => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                        {
-                            return Task::none();
-                        }
-                        if matches!(message, crate::pin_input::Message::Submit) {
-                            return Task::done(Message::View(view::Message::Home(
-                                HomeMessage::UnlockOtherCube,
-                            )));
-                        }
-                        self.other_pin.update(message).map(|message| {
-                            Message::View(view::Message::Home(HomeMessage::OtherCubePin(message)))
-                        })
-                    }
-                    HomeMessage::UnlockOtherCube => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                            || !self.other_pin.is_complete()
-                        {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let pin = self.other_pin.value();
-                        self.other_pin.clear();
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        match scope.begin_pin(&source, pin) {
-                            Ok(request) => {
-                                self.other_phase = UnlockPhase::Credential { busy: true };
-                                self.other_error = None;
-                                Task::perform(request.run_blocking(), |check| {
-                                    Message::View(view::Message::Home(
-                                        HomeMessage::OtherCubePinChecked(check),
-                                    ))
-                                })
-                            }
-                            Err(refusal) => {
-                                self.other_error = Some(refusal.reason());
-                                Task::none()
-                            }
-                        }
-                    }
+                    HomeMessage::OtherCubePin(message) => self.update_other_cube_pin(message),
+                    HomeMessage::UnlockOtherCube => self.begin_other_cube_pin(cache),
                     HomeMessage::OtherCubePinChecked(check) => {
-                        // A duress PIN is the same emergency here as at the
-                        // Launcher, whatever changed meanwhile: lock the other
-                        // Cube, leave the flow and hand the one-use proof to
-                        // the tab, which runs the existing duress activation.
-                        if let Some(proof) = check.duress_proof() {
-                            let reset = self.update(
-                                daemon.clone(),
-                                cache,
-                                Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                            );
-                            return Task::batch([
-                                reset,
-                                Task::done(Message::View(view::Message::DuressActivateLocal(
-                                    proof,
-                                ))),
-                            ]);
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        let result = scope.accept_pin(&source, check);
-                        self.after_other_credential(&source, result)
+                        self.on_other_cube_pin_checked(&daemon, cache, check)
                     }
-                    HomeMessage::UnlockOtherCubePasskey => {
-                        if self.transfer_page != TransferPage::Unlock
-                            || self.other_phase != (UnlockPhase::Credential { busy: false })
-                        {
-                            return Task::none();
-                        }
-                        #[cfg(target_os = "macos")]
-                        {
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            let Some(scope) = self.other_scope.as_mut() else {
-                                return Task::none();
-                            };
-                            match scope.begin_passkey(&source) {
-                                Ok(()) => {
-                                    self.other_phase = UnlockPhase::Credential { busy: true };
-                                    self.other_error = None;
-                                }
-                                Err(refusal) => self.other_error = Some(refusal.reason()),
-                            }
-                        }
-                        #[cfg(not(target_os = "macos"))]
-                        {
-                            self.other_error = Some(
-                                coincube_ui::locale::copy(
-                                    "Passkey unlock is available on macOS only.",
-                                )
-                                .into(),
-                            );
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::OtherCubePasskeyPoll => {
-                        #[cfg(target_os = "macos")]
-                        {
-                            if self.other_phase != (UnlockPhase::Credential { busy: true }) {
-                                return Task::none();
-                            }
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            let Some(scope) = self.other_scope.as_mut() else {
-                                return Task::none();
-                            };
-                            if let Some(result) = scope.poll_passkey(&source) {
-                                return self.after_other_credential(&source, result);
-                            }
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::UnlockOtherCubePasskey => self.begin_other_cube_passkey(cache),
+                    HomeMessage::OtherCubePasskeyPoll => self.poll_other_cube_passkey(cache),
                     HomeMessage::OtherCubeBackendBound(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(1) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_mut() else {
-                            return Task::none();
-                        };
-                        match scope
-                            .accept_backend_reply(&source, reply)
-                            .and_then(|()| scope.request_address(&source))
-                        {
-                            Ok(request) => {
-                                self.other_phase = UnlockPhase::Checks(2);
-                                Task::perform(request.run(), |reply| {
-                                    Message::View(view::Message::Home(
-                                        HomeMessage::OtherCubeAddress(reply),
-                                    ))
-                                })
-                            }
-                            Err(refusal) => {
-                                self.other_error = Some(refusal.reason());
-                                Task::none()
-                            }
-                        }
+                        self.on_other_cube_backend_bound(cache, reply)
                     }
                     HomeMessage::OtherCubeAddress(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(2) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_ref() else {
-                            return Task::none();
-                        };
-                        match scope.accept_address(&source, reply) {
-                            Ok(address) => {
-                                self.other_address = Some(OtherReceiveAddress::Bitcoin(address));
-                                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
-                                self.other_error = None;
-                                if self.transfer_page == TransferPage::Unlock {
-                                    self.transfer_page = TransferPage::Amount;
-                                }
-                            }
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
+                        self.on_other_cube_address(cache, reply)
                     }
                     HomeMessage::OtherCubeSparkAddress(reply) => {
-                        if self.other_phase != UnlockPhase::Checks(1) {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(scope) = self.other_scope.as_ref() else {
-                            return Task::none();
-                        };
-                        match scope.accept_spark_address(&source, reply) {
-                            Ok(address) => {
-                                self.other_address = Some(address);
-                                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
-                                self.other_error = None;
-                                if self.transfer_page == TransferPage::Unlock {
-                                    self.transfer_page = TransferPage::Amount;
-                                }
-                            }
-                            Err(ScopeRefusal::Stale) => {}
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
+                        self.on_other_cube_spark_address(cache, reply)
                     }
-                    HomeMessage::ContinueFromUnlock => {
-                        if self.transfer_page == TransferPage::Unlock
-                            && self.other_phase == UnlockPhase::Checks(UNLOCK_CHECKS)
-                            && self.other_address.is_some()
-                        {
-                            self.transfer_page = TransferPage::Amount;
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::ContinueFromUnlock => self.continue_after_other_cube_unlock(),
                     HomeMessage::LeaveTransfer => self.leave_transfer(&daemon, cache),
                     // A wallet page's Transfer is routed by the App, which
                     // switches to the Overview first (`start_transfer_from`).
@@ -2792,6 +2601,231 @@ impl State for GlobalHome {
 }
 
 impl GlobalHome {
+    fn update_other_cube_pin(&mut self, message: crate::pin_input::Message) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+        {
+            return Task::none();
+        }
+        if matches!(message, crate::pin_input::Message::Submit) {
+            return Task::done(Message::View(view::Message::Home(
+                HomeMessage::UnlockOtherCube,
+            )));
+        }
+        self.other_pin
+            .update(message)
+            .map(|message| Message::View(view::Message::Home(HomeMessage::OtherCubePin(message))))
+    }
+
+    fn begin_other_cube_pin(&mut self, cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+            || !self.other_pin.is_complete()
+        {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let pin = self.other_pin.value();
+        self.other_pin.clear();
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        match scope.begin_pin(&source, pin) {
+            Ok(request) => {
+                self.other_phase = UnlockPhase::Credential { busy: true };
+                self.other_error = None;
+                Task::perform(request.run_blocking(), |check| {
+                    Message::View(view::Message::Home(HomeMessage::OtherCubePinChecked(check)))
+                })
+            }
+            Err(refusal) => {
+                self.other_error = Some(refusal.reason());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_other_cube_pin_checked(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        check: crate::app::transfer_destination_loader::PinCheck,
+    ) -> Task<Message> {
+        // A duress PIN is the same emergency here as at the
+        // Launcher, whatever changed meanwhile: lock the other
+        // Cube, leave the flow and hand the one-use proof to
+        // the tab, which runs the existing duress activation.
+        if let Some(proof) = check.duress_proof() {
+            let reset = self.update(
+                daemon.clone(),
+                cache,
+                Message::View(view::Message::Home(HomeMessage::BackToHome)),
+            );
+            return Task::batch([
+                reset,
+                Task::done(Message::View(view::Message::DuressActivateLocal(proof))),
+            ]);
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        let result = scope.accept_pin(&source, check);
+        self.after_other_credential(&source, result)
+    }
+
+    fn begin_other_cube_passkey(&mut self, _cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::Unlock
+            || self.other_phase != (UnlockPhase::Credential { busy: false })
+        {
+            return Task::none();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let Some(source) = self.transfer_source(_cache) else {
+                return Task::none();
+            };
+            let Some(scope) = self.other_scope.as_mut() else {
+                return Task::none();
+            };
+            match scope.begin_passkey(&source) {
+                Ok(()) => {
+                    self.other_phase = UnlockPhase::Credential { busy: true };
+                    self.other_error = None;
+                }
+                Err(refusal) => self.other_error = Some(refusal.reason()),
+            }
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.other_error = Some(
+                coincube_ui::locale::copy("Passkey unlock is available on macOS only.").into(),
+            );
+        }
+        Task::none()
+    }
+
+    fn poll_other_cube_passkey(&mut self, _cache: &Cache) -> Task<Message> {
+        #[cfg(target_os = "macos")]
+        {
+            if self.other_phase != (UnlockPhase::Credential { busy: true }) {
+                return Task::none();
+            }
+            let Some(source) = self.transfer_source(_cache) else {
+                return Task::none();
+            };
+            let Some(scope) = self.other_scope.as_mut() else {
+                return Task::none();
+            };
+            if let Some(result) = scope.poll_passkey(&source) {
+                return self.after_other_credential(&source, result);
+            }
+        }
+        Task::none()
+    }
+
+    fn on_other_cube_backend_bound(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::BackendReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(1) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_mut() else {
+            return Task::none();
+        };
+        match scope
+            .accept_backend_reply(&source, reply)
+            .and_then(|()| scope.request_address(&source))
+        {
+            Ok(request) => {
+                self.other_phase = UnlockPhase::Checks(2);
+                Task::perform(request.run(), |reply| {
+                    Message::View(view::Message::Home(HomeMessage::OtherCubeAddress(reply)))
+                })
+            }
+            Err(refusal) => {
+                self.other_error = Some(refusal.reason());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_other_cube_address(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::AddressReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(2) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_ref() else {
+            return Task::none();
+        };
+        match scope.accept_address(&source, reply) {
+            Ok(address) => {
+                self.other_address = Some(OtherReceiveAddress::Bitcoin(address));
+                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
+                self.other_error = None;
+                if self.transfer_page == TransferPage::Unlock {
+                    self.transfer_page = TransferPage::Amount;
+                }
+            }
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn on_other_cube_spark_address(
+        &mut self,
+        cache: &Cache,
+        reply: crate::app::transfer_destination_loader::SparkAddressReply,
+    ) -> Task<Message> {
+        if self.other_phase != UnlockPhase::Checks(1) {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(scope) = self.other_scope.as_ref() else {
+            return Task::none();
+        };
+        match scope.accept_spark_address(&source, reply) {
+            Ok(address) => {
+                self.other_address = Some(address);
+                self.other_phase = UnlockPhase::Checks(UNLOCK_CHECKS);
+                self.other_error = None;
+                if self.transfer_page == TransferPage::Unlock {
+                    self.transfer_page = TransferPage::Amount;
+                }
+            }
+            Err(ScopeRefusal::Stale) => {}
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn continue_after_other_cube_unlock(&mut self) -> Task<Message> {
+        if self.transfer_page == TransferPage::Unlock
+            && self.other_phase == UnlockPhase::Checks(UNLOCK_CHECKS)
+            && self.other_address.is_some()
+        {
+            self.transfer_page = TransferPage::Amount;
+        }
+        Task::none()
+    }
+
     fn previous_transfer_substep(&mut self) -> Task<Message> {
         let other = self
             .transfer_direction
