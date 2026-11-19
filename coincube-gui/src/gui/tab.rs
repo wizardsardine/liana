@@ -1430,24 +1430,9 @@ impl Tab {
         let mut replacement = None;
         match &mut self.state {
             State::App(app) if app.cube_settings().network.is_blake2b() => {
-                let cube = app.cube_settings().clone();
-                let datadir = app.datadir().clone();
-                app.invalidate_fork_session();
-                app::session::close_cube(&cube.id);
-                // Dropping the fork App drops signing/export panels and its
-                // wallet. EmbeddedDaemon Drop uses fork-scoped safe cleanup;
-                // App::stop would also stop unrelated globally managed Tor.
-                let (mut home, startup) = Home::new_for_chain(datadir, Some(cube.network));
-                let adopted = match &change {
-                    AuthChange::SignIn { token, .. } if !capability_revoked && !originated => {
-                        home.adopt_connect_session(token)
-                    }
-                    _ => Task::none(),
-                };
-                home.set_error(if capability_revoked {
-                    "Bitcoin Blake2b is disabled or its availability could not be verified. Check Global Settings before reopening this Cube."
-                } else { "Connect session changed. Reopen this Cube after the account check finishes." });
-                command = Task::batch([startup, adopted]).map(Message::Launch);
+                let (home, task) =
+                    Self::invalidate_fork_app(app, &change, originated, capability_revoked);
+                command = task;
                 replacement = Some(State::Home(home));
             }
             // A Bitcoin App stays open across a Connect change — its wallet
@@ -1455,18 +1440,9 @@ impl Tab {
             // The App decides from the kind of change and who made it: see
             // `App::on_global_auth_change`.
             State::App(app) => app.on_global_auth_change(change.clone(), originated),
-            State::Home(home) => match &change {
-                AuthChange::SignIn { token, .. } if !originated => {
-                    command = home.adopt_connect_session(token).map(Message::Launch);
-                }
-                AuthChange::LogOut if !originated => {
-                    command = home.on_global_connect_logout().map(Message::Launch);
-                }
-                AuthChange::LogOut => {
-                    home.connect_account.invalidate_auth();
-                }
-                _ => {}
-            },
+            State::Home(home) => {
+                command = Self::apply_launcher_auth_change(home, &change, originated);
+            }
             State::Loader(loader) if loader.cube_settings.network.is_blake2b() => {
                 loader.invalidate_fork_session();
                 if capability_revoked {
@@ -1488,20 +1464,8 @@ impl Tab {
                 unlock.fail_open(if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before reopening this Cube." } else { "Connect session changed. Return Home and sign in again." }.into());
             }
             State::Installer(installer) if installer.context.bitcoin_config.chain.is_blake2b() => {
-                installer.stop();
-                // A Vault being built inside an open Cube leaves that Cube
-                // here: its session must not outlive it on Home.
-                if let Some(cube) = &installer.cube_settings {
-                    app::session::close_cube(&cube.id);
-                }
-                let (mut home, startup) = Home::new_for_chain(
-                    installer.datadir.clone(),
-                    Some(installer.context.bitcoin_config.chain),
-                );
-                home.set_error(
-                    if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before restarting this installation." } else { "Connect session changed; restart this Cube's installation after signing in" },
-                );
-                command = startup.map(Message::Launch);
+                let (home, task) = Self::invalidate_fork_installer(installer, capability_revoked);
+                command = task;
                 replacement = Some(State::Home(home));
             }
             _ => {}
@@ -1513,6 +1477,72 @@ impl Tab {
             self.state = state;
         }
         command
+    }
+
+    fn invalidate_fork_app(
+        app: &mut app::App,
+        change: &AuthChange,
+        originated: bool,
+        capability_revoked: bool,
+    ) -> (Home, Task<Message>) {
+        let cube = app.cube_settings().clone();
+        let datadir = app.datadir().clone();
+        app.invalidate_fork_session();
+        app::session::close_cube(&cube.id);
+        // Dropping the fork App drops signing/export panels and its
+        // wallet. EmbeddedDaemon Drop uses fork-scoped safe cleanup;
+        // App::stop would also stop unrelated globally managed Tor.
+        let (mut home, startup) = Home::new_for_chain(datadir, Some(cube.network));
+        let adopted = match change {
+            AuthChange::SignIn { token, .. } if !capability_revoked && !originated => {
+                home.adopt_connect_session(token)
+            }
+            _ => Task::none(),
+        };
+        home.set_error(if capability_revoked {
+            "Bitcoin Blake2b is disabled or its availability could not be verified. Check Global Settings before reopening this Cube."
+        } else { "Connect session changed. Reopen this Cube after the account check finishes." });
+        (home, Task::batch([startup, adopted]).map(Message::Launch))
+    }
+
+    fn apply_launcher_auth_change(
+        home: &mut Home,
+        change: &AuthChange,
+        originated: bool,
+    ) -> Task<Message> {
+        match change {
+            AuthChange::SignIn { token, .. } if !originated => {
+                home.adopt_connect_session(token).map(Message::Launch)
+            }
+            AuthChange::LogOut if !originated => {
+                home.on_global_connect_logout().map(Message::Launch)
+            }
+            AuthChange::LogOut => {
+                home.connect_account.invalidate_auth();
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn invalidate_fork_installer(
+        installer: &mut Installer,
+        capability_revoked: bool,
+    ) -> (Home, Task<Message>) {
+        installer.stop();
+        // A Vault being built inside an open Cube leaves that Cube
+        // here: its session must not outlive it on Home.
+        if let Some(cube) = &installer.cube_settings {
+            app::session::close_cube(&cube.id);
+        }
+        let (mut home, startup) = Home::new_for_chain(
+            installer.datadir.clone(),
+            Some(installer.context.bitcoin_config.chain),
+        );
+        home.set_error(
+            if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before restarting this installation." } else { "Connect session changed; restart this Cube's installation after signing in" },
+        );
+        (home, startup.map(Message::Launch))
     }
 
     fn clear_local_fork_auth(&mut self, originated: bool) -> bool {
