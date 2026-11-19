@@ -513,30 +513,8 @@ impl State for BitcoindSettingsState {
             tracing::warn!("BitcoindSettingsState::update called without daemon");
             return Task::none();
         };
-        if cache.chain().is_blake2b() {
-            match &message {
-                Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(
-                    msg,
-                ))) => {
-                    // The scan-discard confirmation belongs to the switch: without
-                    // it a mid-scan "Switch to local node" is a dead click here.
-                    if !matches!(
-                        msg,
-                        view::NodeSettingsMessage::SwitchToConnect
-                            | view::NodeSettingsMessage::SwitchToConnectFastPath(_)
-                            | view::NodeSettingsMessage::SwitchToBitcoind
-                            | view::NodeSettingsMessage::ConfirmSwitchDiscardingScan
-                            | view::NodeSettingsMessage::CancelSwitchDiscardingScan
-                    ) {
-                        return Task::none();
-                    }
-                }
-                Message::View(view::Message::Settings(
-                    view::SettingsMessage::BitcoindSettings(_)
-                    | view::SettingsMessage::EditBitcoindSettings,
-                )) => return Task::none(),
-                _ => {}
-            }
+        if cache.chain().is_blake2b() && !Self::supports_blake2b_settings_message(&message) {
+            return Task::none();
         }
         match message {
             Message::DaemonConfigLoaded(res) => {
@@ -564,30 +542,7 @@ impl State for BitcoindSettingsState {
             Message::View(view::Message::Settings(view::SettingsMessage::BitcoindSettings(
                 msg,
             ))) => {
-                // Intercept the node-card flavour dropdown before delegating to
-                // the sub-state: raise a confirmation instead of switching
-                // immediately (a switch restarts the shared node). Match by
-                // reference so `msg` stays available for delegation.
-                if let view::SettingsEditMessage::SwitchManagedFlavor(flavor) = &msg {
-                    let flavor = *flavor;
-                    // A provider of the wrong chain family never reaches the
-                    // confirmation, let alone the switch.
-                    if let Err(e) = provider_serves_network(flavor, cache.network) {
-                        self.warning = Some(Error::Unexpected(e));
-                        return Task::none();
-                    }
-                    let current = self
-                        .bitcoind_settings
-                        .as_ref()
-                        .and_then(|s| s.managed_flavor);
-                    if current != Some(flavor) {
-                        self.pending_flavor_switch = Some(flavor);
-                    }
-                    return Task::none();
-                }
-                if let Some(settings) = &mut self.bitcoind_settings {
-                    return settings.update(daemon, cache, msg);
-                }
+                return self.update_bitcoind_settings(daemon, cache, msg);
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ElectrumSettings(
                 msg,
@@ -700,77 +655,81 @@ struct NodeBackendStatus {
 }
 
 impl BitcoindSettingsState {
-    fn daemon_config_loaded(
+    fn supports_blake2b_settings_message(message: &Message) -> bool {
+        match message {
+            Message::View(view::Message::Settings(view::SettingsMessage::NodeSettings(msg))) => {
+                // The scan-discard confirmation belongs to the switch: without
+                // it a mid-scan "Switch to local node" is a dead click here.
+                matches!(
+                    msg,
+                    view::NodeSettingsMessage::SwitchToConnect
+                        | view::NodeSettingsMessage::SwitchToConnectFastPath(_)
+                        | view::NodeSettingsMessage::SwitchToBitcoind
+                        | view::NodeSettingsMessage::ConfirmSwitchDiscardingScan
+                        | view::NodeSettingsMessage::CancelSwitchDiscardingScan
+                )
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::BitcoindSettings(_)
+                | view::SettingsMessage::EditBitcoindSettings,
+            )) => false,
+            _ => true,
+        }
+    }
+
+    fn update_bitcoind_settings(
         &mut self,
-        daemon: &dyn Daemon,
-        result: Result<(), Error>,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        msg: view::SettingsEditMessage,
     ) -> Task<Message> {
-        match result {
-            Ok(()) => {
-                self.config_updated = true;
-                self.node_switch_processing = false;
-                self.pending_node_setup = None;
-                self.warning = None;
-                self.full_config = daemon.config().cloned();
-                if self.full_config.as_ref().is_some_and(|cfg| {
-                    matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
-                }) {
-                    // The App cleared its switch intent after promotion;
-                    // retire the open panel's copy as well.
-                    self.recovery_requested = false;
-                }
-                if self.cancel_node_setup_in_flight {
-                    self.cancel_node_setup_in_flight = false;
-                    if let Some(cfg) = daemon.config() {
-                        let mut rollback_cfg = cfg.clone();
-                        rollback_cfg.pending_bitcoind = None;
-                        // Keep the invariant: no pending node ⇒ nothing to
-                        // auto-switch to. Leaving the flag set would strand a
-                        // stale "auto-switch enabled" state with no target.
-                        rollback_cfg.auto_switch_to_pending = Some(false);
-                        return Task::done(Message::LoadDaemonConfig(Box::new(rollback_cfg)));
-                    }
-                }
-                if let Some(settings) = &mut self.bitcoind_settings {
-                    settings.edited(true);
-                    return Task::perform(async {}, |_| {
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::EditBitcoindSettings,
-                        ))
-                    });
-                }
-                if let Some(settings) = &mut self.electrum_settings {
-                    settings.edited(true);
-                    return Task::perform(async {}, |_| {
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::EditBitcoindSettings,
-                        ))
-                    });
-                }
+        // Intercept the node-card flavour dropdown before delegating to
+        // the sub-state: raise a confirmation instead of switching
+        // immediately (a switch restarts the shared node). Match by
+        // reference so `msg` stays available for delegation.
+        if let view::SettingsEditMessage::SwitchManagedFlavor(flavor) = &msg {
+            let flavor = *flavor;
+            // A provider of the wrong chain family never reaches the
+            // confirmation, let alone the switch.
+            if let Err(e) = provider_serves_network(flavor, cache.network) {
+                self.warning = Some(Error::Unexpected(e));
+                return Task::none();
             }
-            Err(e) => {
-                self.config_updated = false;
-                self.node_switch_processing = false;
-                self.pending_node_setup = None;
-                self.cancel_node_setup_in_flight = false;
-                let err_msg = crate::user_error::report(&e);
-                self.warning = Some(e);
-                if let Some(settings) = &mut self.bitcoind_settings {
-                    settings.edited(false);
-                }
-                if let Some(settings) = &mut self.electrum_settings {
-                    settings.edited(false);
-                }
-                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            let current = self
+                .bitcoind_settings
+                .as_ref()
+                .and_then(|s| s.managed_flavor);
+            if current != Some(flavor) {
+                self.pending_flavor_switch = Some(flavor);
             }
+            return Task::none();
+        }
+        if let Some(settings) = &mut self.bitcoind_settings {
+            return settings.update(daemon, cache, msg);
         }
         Task::none()
     }
 
-    fn update_node_settings(
+    fn rollback_cancelled_node_setup(&mut self, daemon: &dyn Daemon) -> Option<Task<Message>> {
+        if self.cancel_node_setup_in_flight {
+            self.cancel_node_setup_in_flight = false;
+            if let Some(cfg) = daemon.config() {
+                let mut rollback_cfg = cfg.clone();
+                rollback_cfg.pending_bitcoind = None;
+                // Keep the invariant: no pending node ⇒ nothing to
+                // auto-switch to. Leaving the flag set would strand a
+                // stale "auto-switch enabled" state with no target.
+                rollback_cfg.auto_switch_to_pending = Some(false);
+                return Some(Task::done(Message::LoadDaemonConfig(Box::new(
+                    rollback_cfg,
+                ))));
+            }
+        }
+        None
+    }
+
+    fn update_node_history_controls(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        cache: &Cache,
         message: view::NodeSettingsMessage,
     ) -> Task<Message> {
         use view::NodeSettingsMessage;
@@ -856,6 +815,95 @@ impl BitcoindSettingsState {
             NodeSettingsMessage::RetentionApply => {
                 return self.apply_node_retention();
             }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn daemon_config_loaded(
+        &mut self,
+        daemon: &dyn Daemon,
+        result: Result<(), Error>,
+    ) -> Task<Message> {
+        match result {
+            Ok(()) => {
+                self.config_updated = true;
+                self.node_switch_processing = false;
+                self.pending_node_setup = None;
+                self.warning = None;
+                self.full_config = daemon.config().cloned();
+                if self.full_config.as_ref().is_some_and(|cfg| {
+                    matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_)))
+                }) {
+                    // The App cleared its switch intent after promotion;
+                    // retire the open panel's copy as well.
+                    self.recovery_requested = false;
+                }
+                if let Some(task) = self.rollback_cancelled_node_setup(daemon) {
+                    return task;
+                }
+                if let Some(settings) = &mut self.bitcoind_settings {
+                    settings.edited(true);
+                    return Task::perform(async {}, |_| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::EditBitcoindSettings,
+                        ))
+                    });
+                }
+                if let Some(settings) = &mut self.electrum_settings {
+                    settings.edited(true);
+                    return Task::perform(async {}, |_| {
+                        Message::View(view::Message::Settings(
+                            view::SettingsMessage::EditBitcoindSettings,
+                        ))
+                    });
+                }
+            }
+            Err(e) => {
+                self.config_updated = false;
+                self.node_switch_processing = false;
+                self.pending_node_setup = None;
+                self.cancel_node_setup_in_flight = false;
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                if let Some(settings) = &mut self.bitcoind_settings {
+                    settings.edited(false);
+                }
+                if let Some(settings) = &mut self.electrum_settings {
+                    settings.edited(false);
+                }
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+        }
+        Task::none()
+    }
+
+    fn update_node_settings(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: view::NodeSettingsMessage,
+    ) -> Task<Message> {
+        use view::NodeSettingsMessage;
+        match message {
+            message @ (NodeSettingsMessage::RecoveryAdvancedToggled
+            | NodeSettingsMessage::RecoverySourceSelected(_)
+            | NodeSettingsMessage::NodeLogToggled
+            | NodeSettingsMessage::NodeAdvancedToggled
+            | NodeSettingsMessage::RecoveryDismiss
+            | NodeSettingsMessage::RecoveryStartEdited(_)
+            | NodeSettingsMessage::RecoveryDateOpen
+            | NodeSettingsMessage::RecoveryDateCancel
+            | NodeSettingsMessage::RecoveryDateSelected(_)
+            | NodeSettingsMessage::RetentionDaysEdited(_)
+            | NodeSettingsMessage::RecoveryStart
+            | NodeSettingsMessage::ImportConnectHistory
+            | NodeSettingsMessage::RecoveryResume
+            | NodeSettingsMessage::RecoveryPause
+            | NodeSettingsMessage::RecoveryCancel
+            | NodeSettingsMessage::RetentionApply) => {
+                return self.update_node_history_controls(message)
+            }
             NodeSettingsMessage::RetryBackgroundNodeSetup => {
                 // The App owns the background install and handles this
                 // before it reaches the panel.
@@ -869,66 +917,18 @@ impl BitcoindSettingsState {
             NodeSettingsMessage::SwitchToConnectFastPath(jwt) => {
                 return self.apply_connect_jwt(&daemon, cache, jwt.into_string());
             }
-            NodeSettingsMessage::SetupLocalNode => {
-                self.open_local_node_setup(cache);
-            }
-            NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
-                // Pick the managed flavour (Core or Knots) and begin the
-                // download/install in one step. The choice is relay
-                // policy only; both builds follow the same consensus
-                // rules.
-                if let Some(ref mut setup) = self.pending_node_setup {
-                    setup.flavor = flavor;
-                }
-                return self.start_internal_node_setup(cache);
-            }
-            NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
-                if use_internal {
-                    // Retry path: re-run with the already-chosen flavour.
-                    return self.start_internal_node_setup(cache);
-                } else if let Some(ref mut setup) = self.pending_node_setup {
-                    setup.mode = Some(false);
-                }
-            }
-            NodeSettingsMessage::SetupLocalNodeDownloadProgress(p) => {
-                if let Some(ref mut setup) = self.pending_node_setup {
-                    setup.download_progress = p;
-                }
-            }
-            NodeSettingsMessage::SetupLocalNodeDownloadComplete(result) => {
-                return self.complete_local_node_download(cache, result);
-            }
-            NodeSettingsMessage::SetupLocalNodeStartResult(result) => {
-                return self.apply_local_node_start_result(daemon, result);
-            }
-            NodeSettingsMessage::SetupLocalNodeCancel => {
-                if matches!(&self.pending_node_setup, Some(s) if s.processing) {
-                    self.cancel_node_setup_in_flight = true;
-                }
-                self.pending_node_setup = None;
-            }
-            NodeSettingsMessage::SetupLocalNodeAddrChanged(addr) => {
-                if let Some(ref mut setup) = self.pending_node_setup {
-                    setup.addr.value = addr;
-                }
-            }
-            NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(auth_type) => {
-                if let Some(ref mut setup) = self.pending_node_setup {
-                    setup.selected_auth_type = auth_type;
-                }
-            }
-            NodeSettingsMessage::SetupLocalNodeFieldEdited(field, value) => {
-                if let Some(ref mut setup) = self.pending_node_setup {
-                    match field {
-                        "cookie_file_path" => setup.rpc_auth_vals.cookie_path.value = value,
-                        "user" => setup.rpc_auth_vals.user.value = value,
-                        "password" => setup.rpc_auth_vals.password.value = value,
-                        _ => {}
-                    }
-                }
-            }
-            NodeSettingsMessage::SetupLocalNodeConfirm => {
-                return self.confirm_local_node_setup(daemon);
+            message @ (NodeSettingsMessage::SetupLocalNode
+            | NodeSettingsMessage::SetupLocalNodeManagedFlavor(_)
+            | NodeSettingsMessage::SetupLocalNodeModeSelected(_)
+            | NodeSettingsMessage::SetupLocalNodeDownloadProgress(_)
+            | NodeSettingsMessage::SetupLocalNodeDownloadComplete(_)
+            | NodeSettingsMessage::SetupLocalNodeStartResult(_)
+            | NodeSettingsMessage::SetupLocalNodeCancel
+            | NodeSettingsMessage::SetupLocalNodeAddrChanged(_)
+            | NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(_)
+            | NodeSettingsMessage::SetupLocalNodeFieldEdited(_, _)
+            | NodeSettingsMessage::SetupLocalNodeConfirm) => {
+                return self.update_local_node_setup(daemon, cache, message)
             }
             NodeSettingsMessage::SwitchToBitcoind => {
                 return self.request_switch_to_bitcoind(daemon, cache);
@@ -1006,6 +1006,89 @@ impl BitcoindSettingsState {
             }
         }
         Task::none()
+    }
+
+    fn update_local_node_setup(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        message: view::NodeSettingsMessage,
+    ) -> Task<Message> {
+        use view::NodeSettingsMessage;
+        match message {
+            NodeSettingsMessage::SetupLocalNode => {
+                self.open_local_node_setup(cache);
+            }
+            NodeSettingsMessage::SetupLocalNodeManagedFlavor(flavor) => {
+                // Pick the managed flavour (Core or Knots) and begin the
+                // download/install in one step. The choice is relay
+                // policy only; both builds follow the same consensus
+                // rules.
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.flavor = flavor;
+                }
+                return self.start_internal_node_setup(cache);
+            }
+            NodeSettingsMessage::SetupLocalNodeModeSelected(use_internal) => {
+                return self.select_local_node_setup_mode(cache, use_internal);
+            }
+            NodeSettingsMessage::SetupLocalNodeDownloadProgress(p) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.download_progress = p;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeDownloadComplete(result) => {
+                return self.complete_local_node_download(cache, result);
+            }
+            NodeSettingsMessage::SetupLocalNodeStartResult(result) => {
+                return self.apply_local_node_start_result(daemon, result);
+            }
+            NodeSettingsMessage::SetupLocalNodeCancel => {
+                if matches!(&self.pending_node_setup, Some(s) if s.processing) {
+                    self.cancel_node_setup_in_flight = true;
+                }
+                self.pending_node_setup = None;
+            }
+            NodeSettingsMessage::SetupLocalNodeAddrChanged(addr) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.addr.value = addr;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeAuthTypeSelected(auth_type) => {
+                if let Some(ref mut setup) = self.pending_node_setup {
+                    setup.selected_auth_type = auth_type;
+                }
+            }
+            NodeSettingsMessage::SetupLocalNodeFieldEdited(field, value) => {
+                self.edit_local_node_setup_field(field, value);
+            }
+            NodeSettingsMessage::SetupLocalNodeConfirm => {
+                return self.confirm_local_node_setup(daemon);
+            }
+            _ => {}
+        }
+        Task::none()
+    }
+
+    fn select_local_node_setup_mode(&mut self, cache: &Cache, use_internal: bool) -> Task<Message> {
+        if use_internal {
+            // Retry path: re-run with the already-chosen flavour.
+            return self.start_internal_node_setup(cache);
+        } else if let Some(ref mut setup) = self.pending_node_setup {
+            setup.mode = Some(false);
+        }
+        Task::none()
+    }
+
+    fn edit_local_node_setup_field(&mut self, field: &'static str, value: String) {
+        if let Some(ref mut setup) = self.pending_node_setup {
+            match field {
+                "cookie_file_path" => setup.rpc_auth_vals.cookie_path.value = value,
+                "user" => setup.rpc_auth_vals.user.value = value,
+                "password" => setup.rpc_auth_vals.password.value = value,
+                _ => {}
+            }
+        }
     }
 
     fn open_local_node_setup(&mut self, cache: &Cache) {
@@ -1142,57 +1225,58 @@ impl BitcoindSettingsState {
     }
 
     fn confirm_local_node_setup(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
-        if let Some(ref mut setup) = self.pending_node_setup {
-            if setup.processing {
-                return Task::none();
-            }
-            let new_addr = SocketAddr::from_str(&setup.addr.value);
-            setup.addr.valid = new_addr.is_ok();
-            let rpc_auth = match setup.selected_auth_type {
-                RpcAuthType::CookieFile => {
-                    if setup.rpc_auth_vals.cookie_path.value.is_empty() {
-                        setup.rpc_auth_vals.cookie_path.valid = false;
-                        None
-                    } else {
-                        let new_path = PathBuf::from_str(&setup.rpc_auth_vals.cookie_path.value);
-                        match new_path {
-                            Ok(path) => {
-                                setup.rpc_auth_vals.cookie_path.valid = true;
-                                Some(BitcoindRpcAuth::CookieFile(path))
-                            }
-                            Err(_) => {
-                                setup.rpc_auth_vals.cookie_path.valid = false;
-                                None
-                            }
+        let Some(setup) = self.pending_node_setup.as_mut() else {
+            return Task::none();
+        };
+        if setup.processing {
+            return Task::none();
+        }
+        let new_addr = SocketAddr::from_str(&setup.addr.value);
+        setup.addr.valid = new_addr.is_ok();
+        let rpc_auth = match setup.selected_auth_type {
+            RpcAuthType::CookieFile => {
+                if setup.rpc_auth_vals.cookie_path.value.is_empty() {
+                    setup.rpc_auth_vals.cookie_path.valid = false;
+                    None
+                } else {
+                    let new_path = PathBuf::from_str(&setup.rpc_auth_vals.cookie_path.value);
+                    match new_path {
+                        Ok(path) => {
+                            setup.rpc_auth_vals.cookie_path.valid = true;
+                            Some(BitcoindRpcAuth::CookieFile(path))
+                        }
+                        Err(_) => {
+                            setup.rpc_auth_vals.cookie_path.valid = false;
+                            None
                         }
                     }
                 }
-                RpcAuthType::UserPass => {
-                    let user_ok = !setup.rpc_auth_vals.user.value.is_empty();
-                    let pass_ok = !setup.rpc_auth_vals.password.value.is_empty();
-                    setup.rpc_auth_vals.user.valid = user_ok;
-                    setup.rpc_auth_vals.password.valid = pass_ok;
-                    if user_ok && pass_ok {
-                        Some(BitcoindRpcAuth::UserPass(
-                            setup.rpc_auth_vals.user.value.clone(),
-                            setup.rpc_auth_vals.password.value.clone(),
-                        ))
-                    } else {
-                        None
-                    }
+            }
+            RpcAuthType::UserPass => {
+                let user_ok = !setup.rpc_auth_vals.user.value.is_empty();
+                let pass_ok = !setup.rpc_auth_vals.password.value.is_empty();
+                setup.rpc_auth_vals.user.valid = user_ok;
+                setup.rpc_auth_vals.password.valid = pass_ok;
+                if user_ok && pass_ok {
+                    Some(BitcoindRpcAuth::UserPass(
+                        setup.rpc_auth_vals.user.value.clone(),
+                        setup.rpc_auth_vals.password.value.clone(),
+                    ))
+                } else {
+                    None
                 }
-            };
-            if let (Ok(addr), Some(rpc_auth)) = (new_addr, rpc_auth) {
-                if let Some(cfg) = daemon.config() {
-                    let mut new_cfg = cfg.clone();
-                    new_cfg.pending_bitcoind = Some(BitcoindConfig { rpc_auth, addr });
-                    new_cfg.pending_managed_node_install = None;
-                    // Adopted an existing/external node — switch to
-                    // it once it's reachable and synced.
-                    new_cfg.auto_switch_to_pending = Some(true);
-                    setup.processing = true;
-                    return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));
-                }
+            }
+        };
+        if let (Ok(addr), Some(rpc_auth)) = (new_addr, rpc_auth) {
+            if let Some(cfg) = daemon.config() {
+                let mut new_cfg = cfg.clone();
+                new_cfg.pending_bitcoind = Some(BitcoindConfig { rpc_auth, addr });
+                new_cfg.pending_managed_node_install = None;
+                // Adopted an existing/external node — switch to
+                // it once it's reachable and synced.
+                new_cfg.auto_switch_to_pending = Some(true);
+                setup.processing = true;
+                return Task::done(Message::LoadDaemonConfig(Box::new(new_cfg)));
             }
         }
         Task::none()
