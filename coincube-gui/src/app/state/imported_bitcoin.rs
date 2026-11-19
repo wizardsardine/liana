@@ -1752,163 +1752,24 @@ impl ImportedBitcoinPanel {
                 }
             },
             ImportEvent::Installed(generation, result) if generation == self.generation => {
-                self.busy = false;
-                match result {
-                    Ok(()) => {
-                        if let Some(wallet) = self.review.clone() {
-                            self.import.stage = BitcoinImportStage::Syncing { wallet };
-                        }
-                        let store = self.store_keys();
-                        let inventory = if self.keys_stored == KeysStored::Storing {
-                            Task::none()
-                        } else {
-                            // A device-only import: say what this device holds.
-                            self.load_key_inventory()
-                        };
-                        Task::batch([self.open_daemon(), store, inventory])
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        Task::none()
-                    }
-                }
+                self.apply_import_install(result)
             }
             ImportEvent::Resumed(generation, result) if generation == self.generation => {
-                self.busy = false;
-                match result {
-                    Ok(Some(_)) => {
-                        if let Some(wallet) = self.review.clone() {
-                            self.import.stage = BitcoinImportStage::Syncing { wallet };
-                        }
-                        // The words given before the interruption were not
-                        // kept; the inventory says whether any were stored.
-                        Task::batch([self.open_daemon(), self.load_key_inventory()])
-                    }
-                    Ok(None) => {
-                        self.error = Some(
-                            "Review the Bitcoin server and confirm this interrupted import again."
-                                .into(),
-                        );
-                        Task::none()
-                    }
-                    Err(error) => {
-                        self.error = Some(error);
-                        Task::none()
-                    }
-                }
+                self.apply_import_resume(result)
             }
             ImportEvent::Opened(generation, result) if generation == self.generation => {
-                self.busy = false;
-                match result {
-                    Ok(daemon) => {
-                        self.daemon = Some(daemon);
-                        self.owns_daemon = true;
-                        self.sync_failed = false;
-                        self.refresh()
-                    }
-                    Err(_) => {
-                        // Backend errors can contain an entire HTML error page, endpoint,
-                        // or authentication details. Keep those out of the wallet screen.
-                        log::warn!(
-                            "Imported Bitcoin daemon could not connect to its configured server"
-                        );
-                        self.sync_failed = true;
-                        self.error = Some("Could not connect to this wallet's Bitcoin server. Check the server and your connection, then retry synchronization.".into());
-                        Task::none()
-                    }
-                }
+                self.apply_daemon_open(result)
             }
             ImportEvent::Refreshed(generation, result) if generation == self.generation => {
-                self.busy = false;
-                match result {
-                    Ok((info, coins, stage)) => {
-                        self.snapshot_failed = false;
-                        self.address_state_stale = false;
-                        self.info_epoch = self.refresh_epoch;
-                        self.info = Some(info);
-                        self.coins = Some(coins);
-                        self.import.stage = stage;
-                        self.error = None;
-                        self.sync_failed = false;
-                    }
-                    Err(_) => {
-                        log::warn!("Imported Bitcoin synchronization failed");
-                        self.snapshot_failed = true;
-                        self.info = None;
-                        self.coins = None;
-                        self.address = None;
-                        self.sync_failed = true;
-                        self.error = Some("Could not synchronize this Bitcoin wallet. Check the Bitcoin server and your connection, then retry synchronization.".into());
-                    }
-                }
-                Task::none()
+                self.apply_import_refresh(result)
             }
             ImportEvent::SynchronizationRequested(generation, result)
                 if generation == self.generation =>
             {
-                self.sync_requesting = false;
-                match result {
-                    Ok(()) => self.poll_progress(),
-                    Err(_) => {
-                        self.snapshot_failed = true;
-                        self.sync_failed = true;
-                        self.error = Some("Could not retry this wallet's Bitcoin server. Check your connection and try again.".into());
-                        Task::none()
-                    }
-                }
+                self.apply_synchronization_request(result)
             }
             ImportEvent::ProgressChecked(generation, result) if generation == self.generation => {
-                self.progress_polling = false;
-                // A receive reservation deliberately clears the old address
-                // snapshot until its new high-water index is read back.
-                if self.is_ready() || self.address_reserving {
-                    return Task::none();
-                }
-                // A status-only response cannot reauthorize coins from an
-                // earlier scan. The full refresh must pair completed history
-                // with a fresh authoritative coin snapshot.
-                self.coins = None;
-                match result {
-                    Ok(info) => {
-                        if !self.info_matches_attachment(&info) {
-                            self.info = None;
-                            self.sync_failed = true;
-                            self.error = Some("This Bitcoin server reported a different wallet or chain. Check the wallet setup and retry synchronization.".into());
-                            return Task::none();
-                        }
-                        let history_complete = info
-                            .imported_wallet
-                            .as_ref()
-                            .is_some_and(|status| status.history_complete);
-                        self.info_epoch = self.progress_epoch;
-                        self.info = Some(info);
-                        if self.snapshot_failed {
-                            // Keep the full-snapshot error actionable until a
-                            // user retry or the normal 20-second refresh.
-                            return Task::none();
-                        }
-                        self.sync_failed = false;
-                        if self.error.as_deref().is_some_and(|error| {
-                            error.starts_with("Could not synchronize this Bitcoin wallet")
-                                || error
-                                    .starts_with("This Bitcoin server reported a different wallet")
-                        }) {
-                            self.error = None;
-                        }
-                        // Only the full refresh may mark the Cube ready: it also
-                        // obtains the authoritative coin and transaction snapshot.
-                        if history_complete && !self.busy && self.verified_address_state().is_some()
-                        {
-                            return self.refresh();
-                        }
-                    }
-                    Err(_) => {
-                        log::warn!("Imported Bitcoin scan status could not be refreshed");
-                        self.sync_failed = true;
-                        self.error = Some("Could not synchronize this Bitcoin wallet. Check the Bitcoin server and your connection, then retry synchronization.".into());
-                    }
-                }
-                Task::none()
+                self.apply_progress_check(result)
             }
             ImportEvent::Address(generation, result) if generation == self.generation => {
                 self.busy = false;
@@ -1949,19 +1810,7 @@ impl ImportedBitcoinPanel {
             | ImportEvent::DeviceVerified(generation, index, check, result)
                 if generation == self.generation =>
             {
-                if let Some(slot) = self.key_slot(index) {
-                    // Only the check this slot is waiting for may land: an
-                    // edit, a new source or a newer check makes it stale.
-                    if slot.status == KeyStatus::Checking && slot.check == check && check != 0 {
-                        slot.check = 0;
-                        slot.status = match result {
-                            Ok(()) => KeyStatus::Verified,
-                            Err(error) => KeyStatus::Failed(error),
-                        };
-                    }
-                }
-                // Another key's device may be waiting its turn.
-                self.auto_check_devices()
+                self.apply_key_verification(index, check, result)
             }
             ImportEvent::KeysInventory(epoch, result)
                 if epoch == self.keys_gate.load(Ordering::SeqCst) =>
@@ -1972,27 +1821,7 @@ impl ImportedBitcoinPanel {
             ImportEvent::KeysStored(epoch, result)
                 if epoch == self.keys_gate.load(Ordering::SeqCst) =>
             {
-                match result {
-                    Ok(count) => {
-                        self.keys_stored = KeysStored::Stored(count);
-                        self.stored_keys = Some(count);
-                        // The words now live only in the Cube's encrypted
-                        // key records.
-                        if let Some(keys) = &mut self.keys {
-                            for slot in &mut keys.slots {
-                                slot.words = zeroize::Zeroizing::new(String::new());
-                                slot.passphrase = zeroize::Zeroizing::new(String::new());
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        self.keys_stored = KeysStored::Failed(error);
-                        // Once the words are gone, Add recovery words is the
-                        // way back; it needs the current count.
-                        return self.load_key_inventory();
-                    }
-                }
-                Task::none()
+                self.apply_key_storage(result)
             }
             ImportEvent::Opened(_, Ok(daemon)) => Task::perform(
                 async move {
@@ -2004,6 +1833,218 @@ impl ImportedBitcoinPanel {
             ),
             _ => Task::none(),
         }
+    }
+
+    fn apply_import_install(&mut self, result: Result<(), String>) -> Task<Message> {
+        self.busy = false;
+        match result {
+            Ok(()) => {
+                if let Some(wallet) = self.review.clone() {
+                    self.import.stage = BitcoinImportStage::Syncing { wallet };
+                }
+                let store = self.store_keys();
+                let inventory = if self.keys_stored == KeysStored::Storing {
+                    Task::none()
+                } else {
+                    // A device-only import: say what this device holds.
+                    self.load_key_inventory()
+                };
+                Task::batch([self.open_daemon(), store, inventory])
+            }
+            Err(error) => {
+                self.error = Some(error);
+                Task::none()
+            }
+        }
+    }
+
+    fn apply_import_resume(
+        &mut self,
+        result: Result<Option<settings::WalletId>, String>,
+    ) -> Task<Message> {
+        self.busy = false;
+        match result {
+            Ok(Some(_)) => {
+                if let Some(wallet) = self.review.clone() {
+                    self.import.stage = BitcoinImportStage::Syncing { wallet };
+                }
+                // The words given before the interruption were not
+                // kept; the inventory says whether any were stored.
+                Task::batch([self.open_daemon(), self.load_key_inventory()])
+            }
+            Ok(None) => {
+                self.error = Some(
+                    "Review the Bitcoin server and confirm this interrupted import again.".into(),
+                );
+                Task::none()
+            }
+            Err(error) => {
+                self.error = Some(error);
+                Task::none()
+            }
+        }
+    }
+
+    fn apply_daemon_open(
+        &mut self,
+        result: Result<Arc<dyn Daemon + Send + Sync>, String>,
+    ) -> Task<Message> {
+        self.busy = false;
+        match result {
+            Ok(daemon) => {
+                self.daemon = Some(daemon);
+                self.owns_daemon = true;
+                self.sync_failed = false;
+                self.refresh()
+            }
+            Err(_) => {
+                // Backend errors can contain an entire HTML error page, endpoint,
+                // or authentication details. Keep those out of the wallet screen.
+                log::warn!("Imported Bitcoin daemon could not connect to its configured server");
+                self.sync_failed = true;
+                self.error = Some("Could not connect to this wallet's Bitcoin server. Check the server and your connection, then retry synchronization.".into());
+                Task::none()
+            }
+        }
+    }
+
+    fn apply_import_refresh(&mut self, result: Result<RefreshSnapshot, String>) -> Task<Message> {
+        self.busy = false;
+        match result {
+            Ok((info, coins, stage)) => {
+                self.snapshot_failed = false;
+                self.address_state_stale = false;
+                self.info_epoch = self.refresh_epoch;
+                self.info = Some(info);
+                self.coins = Some(coins);
+                self.import.stage = stage;
+                self.error = None;
+                self.sync_failed = false;
+            }
+            Err(_) => {
+                log::warn!("Imported Bitcoin synchronization failed");
+                self.snapshot_failed = true;
+                self.info = None;
+                self.coins = None;
+                self.address = None;
+                self.sync_failed = true;
+                self.error = Some("Could not synchronize this Bitcoin wallet. Check the Bitcoin server and your connection, then retry synchronization.".into());
+            }
+        }
+        Task::none()
+    }
+
+    fn apply_synchronization_request(&mut self, result: Result<(), String>) -> Task<Message> {
+        self.sync_requesting = false;
+        match result {
+            Ok(()) => self.poll_progress(),
+            Err(_) => {
+                self.snapshot_failed = true;
+                self.sync_failed = true;
+                self.error = Some("Could not retry this wallet's Bitcoin server. Check your connection and try again.".into());
+                Task::none()
+            }
+        }
+    }
+
+    fn apply_progress_check(
+        &mut self,
+        result: Result<model::GetInfoResult, String>,
+    ) -> Task<Message> {
+        self.progress_polling = false;
+        // A receive reservation deliberately clears the old address
+        // snapshot until its new high-water index is read back.
+        if self.is_ready() || self.address_reserving {
+            return Task::none();
+        }
+        // A status-only response cannot reauthorize coins from an
+        // earlier scan. The full refresh must pair completed history
+        // with a fresh authoritative coin snapshot.
+        self.coins = None;
+        match result {
+            Ok(info) => {
+                if !self.info_matches_attachment(&info) {
+                    self.info = None;
+                    self.sync_failed = true;
+                    self.error = Some("This Bitcoin server reported a different wallet or chain. Check the wallet setup and retry synchronization.".into());
+                    return Task::none();
+                }
+                let history_complete = info
+                    .imported_wallet
+                    .as_ref()
+                    .is_some_and(|status| status.history_complete);
+                self.info_epoch = self.progress_epoch;
+                self.info = Some(info);
+                if self.snapshot_failed {
+                    // Keep the full-snapshot error actionable until a
+                    // user retry or the normal 20-second refresh.
+                    return Task::none();
+                }
+                self.sync_failed = false;
+                if self.error.as_deref().is_some_and(|error| {
+                    error.starts_with("Could not synchronize this Bitcoin wallet")
+                        || error.starts_with("This Bitcoin server reported a different wallet")
+                }) {
+                    self.error = None;
+                }
+                // Only the full refresh may mark the Cube ready: it also
+                // obtains the authoritative coin and transaction snapshot.
+                if history_complete && !self.busy && self.verified_address_state().is_some() {
+                    return self.refresh();
+                }
+            }
+            Err(_) => {
+                log::warn!("Imported Bitcoin scan status could not be refreshed");
+                self.sync_failed = true;
+                self.error = Some("Could not synchronize this Bitcoin wallet. Check the Bitcoin server and your connection, then retry synchronization.".into());
+            }
+        }
+        Task::none()
+    }
+
+    fn apply_key_verification(
+        &mut self,
+        index: usize,
+        check: u64,
+        result: Result<(), String>,
+    ) -> Task<Message> {
+        if let Some(slot) = self.key_slot(index) {
+            // Only the check this slot is waiting for may land: an
+            // edit, a new source or a newer check makes it stale.
+            if slot.status == KeyStatus::Checking && slot.check == check && check != 0 {
+                slot.check = 0;
+                slot.status = match result {
+                    Ok(()) => KeyStatus::Verified,
+                    Err(error) => KeyStatus::Failed(error),
+                };
+            }
+        }
+        // Another key's device may be waiting its turn.
+        self.auto_check_devices()
+    }
+
+    fn apply_key_storage(&mut self, result: Result<usize, String>) -> Task<Message> {
+        match result {
+            Ok(count) => {
+                self.keys_stored = KeysStored::Stored(count);
+                self.stored_keys = Some(count);
+                // The words now live only in the Cube's encrypted
+                // key records.
+                if let Some(keys) = &mut self.keys {
+                    for slot in &mut keys.slots {
+                        slot.words = zeroize::Zeroizing::new(String::new());
+                        slot.passphrase = zeroize::Zeroizing::new(String::new());
+                    }
+                }
+            }
+            Err(error) => {
+                self.keys_stored = KeysStored::Failed(error);
+                // Once the words are gone, Add recovery words is the
+                // way back; it needs the current count.
+                return self.load_key_inventory();
+            }
+        }
+        Task::none()
     }
 
     fn open_daemon(&mut self) -> Task<Message> {
