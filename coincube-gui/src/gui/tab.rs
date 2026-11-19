@@ -1810,21 +1810,7 @@ impl Tab {
                 return Task::none();
             }
         }
-        if let State::App(app) = &self.state {
-            let origin = app.cache().app_generation;
-            if !self
-                .seed_export_origins
-                .iter()
-                .any(|(known, _, _, _)| *known == origin)
-            {
-                self.seed_export_origins.push((
-                    origin,
-                    app.datadir().path().to_path_buf(),
-                    app.cube_settings().id.clone(),
-                    app.cube_settings().network,
-                ));
-            }
-        }
+        self.remember_seed_export_origin();
         let message = match self.preprocess_update(message) {
             std::ops::ControlFlow::Continue(message) => message,
             std::ops::ControlFlow::Break(task) => return task,
@@ -1876,6 +1862,55 @@ impl Tab {
             self.pending_seed_export_trials += 1;
         }
         result = self.track_opening(pin_verified, result);
+        self.finish_update(was_app, was_fork_app, preserve_seed_export_trial, result)
+    }
+
+    fn remember_seed_export_origin(&mut self) {
+        if let State::App(app) = &self.state {
+            let origin = app.cache().app_generation;
+            if !self
+                .seed_export_origins
+                .iter()
+                .any(|(known, _, _, _)| *known == origin)
+            {
+                self.seed_export_origins.push((
+                    origin,
+                    app.datadir().path().to_path_buf(),
+                    app.cube_settings().id.clone(),
+                    app.cube_settings().network,
+                ));
+            }
+        }
+    }
+
+    fn route_pending_recovery(&mut self, result: Task<Message>) -> Task<Message> {
+        if let (Some((root, chain, cube_id)), State::App(app)) =
+            (self.pending_recovery_route.take(), &self.state)
+        {
+            if app.datadir() == &root
+                && app.cube_settings().network == chain
+                && app.cube_settings().id == cube_id
+            {
+                return Task::batch([
+                    result,
+                    Task::done(Message::Run(app::Message::View(app::view::Message::Menu(
+                        app::menu::Menu::Cube(app::menu::CubeSubMenu::Settings(
+                            app::menu::CubeSettingsOption::Recovery,
+                        )),
+                    )))),
+                ]);
+            }
+        }
+        result
+    }
+
+    fn finish_update(
+        &mut self,
+        was_app: bool,
+        was_fork_app: bool,
+        preserve_seed_export_trial: bool,
+        mut result: Task<Message>,
+    ) -> Task<Message> {
         if !matches!(self.state, State::PinEntry(_) | State::PasskeyUnlock(_))
             || matches!(&self.state, State::PasskeyUnlock(passkey) if passkey.is_opening())
             || self.opening.is_some()
@@ -1902,24 +1937,18 @@ impl Tab {
             return self.invalidate_fork_session(AuthChange::LogOut, true);
         }
         if !was_app && is_app {
-            if let (Some((root, chain, cube_id)), State::App(app)) =
-                (self.pending_recovery_route.take(), &self.state)
-            {
-                if app.datadir() == &root
-                    && app.cube_settings().network == chain
-                    && app.cube_settings().id == cube_id
-                {
-                    result = Task::batch([
-                        result,
-                        Task::done(Message::Run(app::Message::View(app::view::Message::Menu(
-                            app::menu::Menu::Cube(app::menu::CubeSubMenu::Settings(
-                                app::menu::CubeSettingsOption::Recovery,
-                            )),
-                        )))),
-                    ]);
-                }
-            }
+            result = self.route_pending_recovery(result);
         }
+        self.guard_update_tasks(was_fork_app, is_app, preserve_seed_export_trial, result)
+    }
+
+    fn guard_update_tasks(
+        &mut self,
+        was_fork_app: bool,
+        is_app: bool,
+        preserve_seed_export_trial: bool,
+        result: Task<Message>,
+    ) -> Task<Message> {
         if matches!(&self.state, State::App(app) if app.cube_settings().network.is_blake2b()) {
             if preserve_seed_export_trial {
                 // A confirmed duress marker is an emergency even when this
