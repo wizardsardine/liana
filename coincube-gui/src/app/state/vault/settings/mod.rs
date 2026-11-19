@@ -83,9 +83,18 @@ impl State for SettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        // A device registration started in Wallet settings finishes there
-        // even if the daemon stopped while the device answered.
-        if matches!(message, Message::DeviceRegistered { .. }) {
+        // A device registration started in Wallet settings finishes there,
+        // and its dialog still closes, even if the daemon stopped while the
+        // device answered.
+        if matches!(
+            message,
+            Message::DeviceRegistered { .. }
+                | Message::WalletUpdated(_)
+                | Message::View(view::Message::Close)
+        ) {
+            if let Message::WalletUpdated(Ok(wallet)) = &message {
+                self.wallet = wallet.clone();
+            }
             return self
                 .setting
                 .as_mut()
@@ -141,13 +150,6 @@ impl State for SettingsState {
                 self.setting
                     .as_mut()
                     .map(|s| s.reload(Some(daemon), Some(wallet)))
-                    .unwrap_or_else(Task::none)
-            }
-            Message::WalletUpdated(Ok(wallet)) => {
-                self.wallet = wallet.clone();
-                self.setting
-                    .as_mut()
-                    .map(|s| s.update(Some(daemon), cache, message))
                     .unwrap_or_else(Task::none)
             }
             _ => self

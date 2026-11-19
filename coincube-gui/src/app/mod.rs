@@ -7608,12 +7608,12 @@ impl App {
                     };
                 }
 
-                // Forward the message to the current panel
-                if let (Some(daemon), Some(panel)) =
-                    (self.daemon.clone(), self.panels.current_mut())
-                {
+                // Forward the message to the current panel, with or without
+                // a daemon: a Register dialog waiting on this result must
+                // finish even while the daemon is restarting.
+                if let Some(panel) = self.panels.current_mut() {
                     let panel_task = panel.update(
-                        Some(daemon),
+                        self.daemon.clone(),
                         &self.cache,
                         Message::WalletUpdated(Ok(wallet)),
                     );

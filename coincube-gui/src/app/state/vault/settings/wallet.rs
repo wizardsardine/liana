@@ -207,20 +207,29 @@ impl State for WalletSettingsState {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
-        // A registration result goes to its dialog with or without a daemon
-        // (see `RegisterWalletModal::update`).
-        if matches!(message, Message::DeviceRegistered { .. }) {
-            return match &mut self.modal {
-                Modal::RegisterWallet(modal) => modal.update(daemon, cache, message),
-                _ => Task::none(),
-            };
+        // A registration or save result, and closing the dialog, need no
+        // daemon. The daemon can be down when they land (a wider scan
+        // restarts it); dropping them would leave Register processing, or
+        // open with no way to close it.
+        match message {
+            Message::DeviceRegistered { .. } => {
+                return match &mut self.modal {
+                    Modal::RegisterWallet(modal) => modal.update(daemon, cache, message),
+                    _ => Task::none(),
+                };
+            }
+            Message::WalletUpdated(res) => return self.apply_wallet_update(daemon, cache, res),
+            Message::View(view::Message::Close) => {
+                self.modal = Modal::None;
+                return Task::none();
+            }
+            _ => {}
         }
         let Some(daemon) = daemon else {
             tracing::warn!("WalletSettingsState::update called without daemon");
             return Task::none();
         };
         match message {
-            Message::WalletUpdated(res) => self.apply_wallet_update(daemon, cache, res),
             Message::View(view::Message::Settings(view::SettingsMessage::WalletAliasEdited(
                 alias,
             ))) => {
@@ -263,10 +272,6 @@ impl State for WalletSettingsState {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ConfirmDescriptorCopy,
             )) => self.copy_reviewed_descriptor(),
-            Message::View(view::Message::Close) => {
-                self.modal = Modal::None;
-                Task::none()
-            }
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
                 // Every chain, Bitcoin Blake2b included (HW-1): a device
                 // registers the same descriptor string it did at creation.
@@ -351,7 +356,7 @@ impl State for WalletSettingsState {
 impl WalletSettingsState {
     fn apply_wallet_update(
         &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
         cache: &Cache,
         res: Result<Arc<Wallet>, Error>,
     ) -> Task<Message> {
@@ -374,7 +379,7 @@ impl WalletSettingsState {
             if let Ok(wallet) = &res {
                 self.wallet = wallet.clone();
             }
-            modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
+            modal.update(daemon, cache, Message::WalletUpdated(res))
         } else {
             match res {
                 Ok(wallet) => {
@@ -511,14 +516,16 @@ impl RegisterWalletModal {
     ) -> Task<Message> {
         // A registration result needs no daemon. It can land while the
         // daemon is down (a wider scan restarts it), and dropping it would
-        // leave the dialog processing with its attempt still claimed.
-        if let Message::DeviceRegistered {
-            attempt,
-            fingerprint,
-            result,
-        } = message
-        {
-            return self.apply_device_registration_result(attempt, fingerprint, result);
+        // leave the dialog processing (an imported Vault's attempt still
+        // claimed).
+        match message {
+            Message::DeviceRegistered {
+                attempt,
+                fingerprint,
+                result,
+            } => return self.apply_device_registration_result(attempt, fingerprint, result),
+            Message::WalletUpdated(res) => return self.apply_registration_wallet_update(res),
+            _ => {}
         }
         if daemon.is_none() {
             tracing::warn!("RegisterWalletModal::update called without daemon");
@@ -539,7 +546,6 @@ impl RegisterWalletModal {
                     Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
-            Message::WalletUpdated(res) => self.apply_registration_wallet_update(res),
             Message::View(view::Message::SelectHardwareWallet(i)) => self.select_hardware_wallet(i),
             _ => Task::none(),
         }
@@ -961,6 +967,77 @@ mod chain_tests {
         send(&mut state, Message::View(view::Message::Close));
         assert!(state.modal.is_none());
         assert_eq!(state.name_status().map(|(kind, _)| kind), Some(Status::Ok));
+        let _ = std::fs::remove_dir_all(dir.path());
+    }
+
+    /// An ordinary Vault's registration finishes with `WalletUpdated`. A
+    /// result that lands after the daemon stopped (a wider scan restarts it)
+    /// still settles the dialog, and the dialog still closes, both on the
+    /// Wallet settings panel and through the Vault settings wrapper.
+    #[tokio::test]
+    async fn an_ordinary_registration_finishes_and_closes_without_a_daemon() {
+        let descriptor = crate::app::state::vault::test_support::unified::fixture().descriptor;
+        let wallet = Arc::new(Wallet::new(descriptor).with_chain(ChainId::Bitcoin));
+        let dir = CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("coincube-reg-no-daemon-{}", uuid::Uuid::new_v4())),
+        );
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        // Opens Register and marks a registration in flight on device 0, as
+        // `select_hardware_wallet` does before the device answers.
+        let in_flight = || {
+            let mut state =
+                WalletSettingsState::new(dir.clone(), wallet.clone(), Arc::new(Config::new(false)));
+            drop(state.update(
+                Some(daemon.clone()),
+                &cache,
+                Message::View(view::Message::Settings(
+                    view::SettingsMessage::RegisterWallet,
+                )),
+            ));
+            let Modal::RegisterWallet(modal) = &mut state.modal else {
+                panic!("registration dialog did not open");
+            };
+            modal.processing = true;
+            modal.chosen_hw = Some(0);
+            state
+        };
+
+        let mut state = in_flight();
+        drop(state.update(None, &cache, Message::WalletUpdated(Ok(wallet.clone()))));
+        let Modal::RegisterWallet(modal) = &state.modal else {
+            panic!("registration dialog closed");
+        };
+        assert!(!modal.processing);
+        assert_eq!(modal.chosen_hw, None);
+        drop(state.update(None, &cache, Message::View(view::Message::Close)));
+        assert!(state.modal.is_none());
+
+        // Through the Vault settings wrapper, a failed registration is
+        // reported rather than dropped.
+        let mut settings = super::super::SettingsState::new(
+            dir.clone(),
+            wallet.clone(),
+            false,
+            Arc::new(Config::new(false)),
+        );
+        settings.setting = Some(in_flight().into());
+        let task = settings.update(
+            None,
+            &cache,
+            Message::WalletUpdated(Err(Error::HardwareWallet(
+                async_hwi::Error::UnimplementedMethod,
+            ))),
+        );
+        let mut stream = iced_runtime::task::into_stream(task).expect("an error report");
+        assert!(matches!(
+            stream.next().await,
+            Some(iced_runtime::Action::Output(Message::View(
+                view::Message::ShowError(_)
+            )))
+        ));
         let _ = std::fs::remove_dir_all(dir.path());
     }
 
