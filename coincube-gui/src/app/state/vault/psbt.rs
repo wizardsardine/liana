@@ -1960,6 +1960,68 @@ impl BorderWalletReconstructionState {
 
     /// Handle a reconstruction message. Returns `Some((fingerprint, mnemonic))`
     /// when reconstruction is complete and ready to sign.
+    fn advance_reconstruction(&mut self) -> Option<(Fingerprint, coincube_core::bip39::Mnemonic)> {
+        self.error = None;
+        match self.step {
+            ReconStep::RecoveryPhrase => {
+                let phrase_str = Zeroizing::new(
+                    self.phrase_words
+                        .iter()
+                        .map(|w| w.value.trim().to_lowercase())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                );
+                match GridRecoveryPhrase::from_phrase(&phrase_str) {
+                    Ok(rp) => {
+                        self.grid = Some(rp.generate_grid());
+                        self.pattern = OrderedPattern::new();
+                        self.step = ReconStep::Grid;
+                    }
+                    Err(_) => {
+                        self.error = Some(
+                            "Invalid recovery phrase. Please enter a valid 12-word BIP39 mnemonic."
+                                .to_string(),
+                        );
+                    }
+                }
+            }
+            ReconStep::Grid => {
+                if !self.pattern.is_complete() {
+                    self.error = Some(coincube_ui::localized_format!(
+                        "Please select exactly {} cells. Currently selected: {}",
+                        "Selecciona exactamente {} celdas. Seleccionadas: {}",
+                        PATTERN_LENGTH,
+                        self.pattern.len()
+                    ));
+                    return None;
+                }
+                if let Some(grid) = &self.grid {
+                    match build_mnemonic(grid, &self.pattern) {
+                        Ok((mnemonic, _checksum)) => {
+                            return Some((self.target_fingerprint, mnemonic));
+                        }
+                        Err(e) => {
+                            // The raw error names BIP39 internals the
+                            // user can do nothing with; what matters is
+                            // that the pattern doesn't reconstruct.
+                            log::error!(
+                                "[{}] border wallet mnemonic: {}",
+                                crate::user_error::CC_WALLET,
+                                e
+                            );
+                            self.error = Some(
+                                "That pattern doesn't rebuild this wallet's recovery phrase. \
+                                 Check the grid and your cell order, then try again."
+                                    .to_string(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn update(
         &mut self,
         msg: BorderWalletReconMessage,
@@ -1979,66 +2041,7 @@ impl BorderWalletReconstructionState {
                 // nothing, because the user reads it as confirmation.
                 self.phrase_prefilled = false;
             }
-            BorderWalletReconMessage::Next => {
-                self.error = None;
-                match self.step {
-                    ReconStep::RecoveryPhrase => {
-                        let phrase_str = Zeroizing::new(
-                            self.phrase_words
-                                .iter()
-                                .map(|w| w.value.trim().to_lowercase())
-                                .collect::<Vec<_>>()
-                                .join(" "),
-                        );
-                        match GridRecoveryPhrase::from_phrase(&phrase_str) {
-                            Ok(rp) => {
-                                self.grid = Some(rp.generate_grid());
-                                self.pattern = OrderedPattern::new();
-                                self.step = ReconStep::Grid;
-                            }
-                            Err(_) => {
-                                self.error = Some(
-                                    "Invalid recovery phrase. Please enter a valid 12-word BIP39 mnemonic."
-                                        .to_string(),
-                                );
-                            }
-                        }
-                    }
-                    ReconStep::Grid => {
-                        if !self.pattern.is_complete() {
-                            self.error = Some(coincube_ui::localized_format!(
-                                "Please select exactly {} cells. Currently selected: {}",
-                                "Selecciona exactamente {} celdas. Seleccionadas: {}",
-                                PATTERN_LENGTH,
-                                self.pattern.len()
-                            ));
-                            return None;
-                        }
-                        if let Some(grid) = &self.grid {
-                            match build_mnemonic(grid, &self.pattern) {
-                                Ok((mnemonic, _checksum)) => {
-                                    return Some((self.target_fingerprint, mnemonic));
-                                }
-                                Err(e) => {
-                                    // The raw error names BIP39 internals the
-                                    // user can do nothing with; what matters is
-                                    // that the pattern doesn't reconstruct.
-                                    log::error!(
-                                        "[{}] border wallet mnemonic: {}",
-                                        crate::user_error::CC_WALLET,
-                                        e
-                                    );
-                                    self.error = Some(
-                                        "That pattern doesn't rebuild this wallet's recovery phrase. \
-                                         Check the grid and your cell order, then try again."
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            BorderWalletReconMessage::Next => return self.advance_reconstruction(),
             BorderWalletReconMessage::Previous => {
                 self.error = None;
                 match self.step {
