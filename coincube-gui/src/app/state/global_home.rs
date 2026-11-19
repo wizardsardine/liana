@@ -1579,237 +1579,19 @@ impl State for GlobalHome {
                     HomeMessage::SwapSettledAwaitingArrival {
                         amount_sat,
                         deposit_seen,
-                    } => {
-                        // A SideShift swap just settled: bitcoin is en route to the
-                        // Spark wallet's static on-chain deposit address.
-                        // Structurally that's identical to a Vault→Spark transfer
-                        // arrival — an on-chain deposit that matures and must be
-                        // claimed — so register it exactly like one and let the
-                        // watcher below auto-claim it. `is_swap` makes the eventual
-                        // claim additionally fire the "bitcoin received" celebration.
-                        //
-                        // Don't clobber an in-flight transfer: if we're already
-                        // tracking a pending incoming deposit, skip global tracking
-                        // (the swap stays claimable from the Receive panel's
-                        // pending-deposits card) rather than corrupting the
-                        // transfer's reconciliation.
-                        if self.pending_spark_incoming.is_some() {
-                            return Task::none();
-                        }
-                        self.pending_spark_incoming = Some(PendingTransfer {
-                            amount: Amount::from_sat(amount_sat),
-                            stage: TransferStage::PendingDeposit,
-                        });
-                        // A restored shift saw its deposit unclaimed just now; if
-                        // the SDK claims it before the list below is read, an
-                        // empty list must still read as claimed.
-                        self.pending_spark_deposit_seen = deposit_seen;
-                        self.pending_spark_incoming_is_swap = true;
-                        self.auto_claiming_spark_deposit = None;
-                        // Reconcile immediately — the deposit may already be in the
-                        // unclaimed list (it can land before we register here), and
-                        // otherwise we'd wait for the next bridge event.
-                        Task::done(Message::View(view::Message::Home(
-                            HomeMessage::SparkDepositsChanged,
-                        )))
-                    }
+                    } => self.on_swap_settled_awaiting_arrival(amount_sat, deposit_seen),
                     HomeMessage::SwapClaimObserved { amount_sat } => {
-                        // Only a swap's tracker is ours to retire: a
-                        // Vault→Spark transfer's tracker belongs to
-                        // that transfer. Already completed by our own claim
-                        // (`complete_spark_auto_claim` clears `is_swap`), it
-                        // has celebrated, so this is a no-op then.
-                        if !self.pending_spark_incoming_is_swap {
-                            return Task::none();
-                        }
-                        self.pending_spark_incoming = None;
-                        self.pending_spark_deposit_seen = false;
-                        self.pending_spark_incoming_is_swap = false;
-                        self.auto_claiming_spark_deposit = None;
-                        self.spark_claim_awaiting_settlement = false;
-                        Task::done(Message::ShowReceivedCelebration {
-                            context: "spark-receive".to_string(),
-                            amount_sat,
-                            payment_id: None,
-                        })
+                        self.on_swap_claim_observed(amount_sat)
                     }
-                    HomeMessage::SparkDepositsChanged => {
-                        // The Spark bridge signalled a change to the unclaimed-deposit
-                        // list — could be a new deposit appearing, one maturing, or one
-                        // being claimed. Re-query the list; the `SparkDepositsLoaded`
-                        // handler decides what to do with it.
-                        let Some(spark) = self.spark_backend.clone() else {
-                            return Task::none();
-                        };
-                        // Only act if we have a pending inbound Spark transfer to
-                        // correlate against. Without one there's nothing for us to
-                        // auto-claim or clear — the Spark Receive panel handles the
-                        // user-facing pending-deposit card independently.
-                        if self.pending_spark_incoming.is_none() {
-                            return Task::none();
-                        }
-                        Task::perform(
-                            async move { spark.list_unclaimed_deposits().await },
-                            |result| match result {
-                                Ok(ok) => Message::View(view::Message::Home(
-                                    HomeMessage::SparkDepositsLoaded(ok.deposits),
-                                )),
-                                Err(e) => {
-                                    log::warn!("list_unclaimed_deposits failed: {e:?}");
-                                    Message::CacheUpdated
-                                }
-                            },
-                        )
-                    }
+                    HomeMessage::SparkDepositsChanged => self.on_spark_deposits_changed(),
                     HomeMessage::SparkDepositsLoaded(deposits) => {
-                        // No pending transfer → nothing to reconcile.
-                        if self.pending_spark_incoming.is_none() {
-                            return Task::none();
-                        }
-                        // Empty list → whatever was pending got claimed (either by
-                        // us or by the user from the Spark Receive panel). Only
-                        // interpret it that way once we've previously observed
-                        // our deposit in the list: the inbound tx (the Bitcoin
-                        // broadcast for VaultToSpark) doesn't appear until it lands on-chain, so an unrelated
-                        // `SparkDepositsChanged` firing during that window (e.g.
-                        // a prior deposit being claimed from the Receive panel)
-                        // would otherwise clear the badge while our transfer is
-                        // still in flight.
-                        if deposits.is_empty() {
-                            if !self.pending_spark_deposit_seen {
-                                return Task::none();
-                            }
-                            // The deposit was claimed by someone other than our own
-                            // auto-claim below — the Spark SDK auto-claims static
-                            // deposits, and the user can claim from the Receive
-                            // panel — so `AutoClaimSparkResult` (which advances the
-                            // cross-network Receive flow off "Bitcoin arriving")
-                            // never ran. Nudge the flow to its arrived state here so
-                            // it doesn't hang. This is the *only* signal for an
-                            // SDK-silent claim; it's idempotent (the flow transitions
-                            // once and ignores it otherwise), so it can't double up
-                            // with a claim path that already fired. Non-swap
-                            // transfers (Vault→Spark) don't touch it.
-                            let was_swap = self.pending_spark_incoming_is_swap;
-                            let amount_sat = self
-                                .pending_spark_incoming
-                                .as_ref()
-                                .map(|p| p.amount.to_sat())
-                                .unwrap_or(0);
-                            self.pending_spark_incoming = None;
-                            self.pending_spark_deposit_seen = false;
-                            self.pending_spark_incoming_is_swap = false;
-                            self.auto_claiming_spark_deposit = None;
-                            self.spark_claim_awaiting_settlement = false;
-                            if was_swap {
-                                return Task::done(Message::View(
-                                    view::Message::SparkSideshiftReceive(
-                                        view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
-                                    ),
-                                ));
-                            }
-                            return Task::none();
-                        }
-                        // We've now observed at least one deposit in the list
-                        // while our transfer is pending — remember this so a
-                        // later empty list can be interpreted as "claimed"
-                        // rather than "never arrived" (see above).
-                        self.pending_spark_deposit_seen = true;
-                        // One auto-claim at a time: if a claim is in flight,
-                        // wait for its `DepositsChanged` follow-up before
-                        // picking the next candidate. This covers both the
-                        // "same deposit re-firing" and "different mature
-                        // deposit arrived" cases in one check.
-                        if self.auto_claiming_spark_deposit.is_some() {
-                            return Task::none();
-                        }
-                        // Pick the first mature, error-free deposit and
-                        // auto-claim it. The bridge fires `DepositsChanged`
-                        // again on success, which re-enters this handler and
-                        // clears the indicator.
-                        let Some(candidate) = deposits
-                            .iter()
-                            .find(|d| d.is_mature && d.claim_error.is_none())
-                        else {
-                            return Task::none();
-                        };
-                        let Some(spark) = self.spark_backend.clone() else {
-                            return Task::none();
-                        };
-                        let txid = candidate.txid.clone();
-                        let vout = candidate.vout;
-                        self.auto_claiming_spark_deposit = Some((txid.clone(), vout));
-                        let txid_for_msg = txid.clone();
-                        Task::perform(
-                            async move { spark.claim_deposit(txid, vout).await },
-                            move |result| {
-                                Message::View(view::Message::Home(
-                                    HomeMessage::AutoClaimSparkResult {
-                                        txid: txid_for_msg.clone(),
-                                        vout,
-                                        // `amount_sat` is `None` for a pre-maturity
-                                        // claim (SDK 0.25.0+): the transfer settles
-                                        // asynchronously and only `PaymentSucceeded`
-                                        // knows what actually landed. Keep it unknown
-                                        // rather than showing the pre-fee deposit.
-                                        // A deferral (SDK 0.28.0+) claimed nothing:
-                                        // logged like a failure, and the indicator
-                                        // stays pending until the SDK's own claim
-                                        // fires `DepositsChanged`.
-                                        result: match result {
-                                            Ok(ok) => match &ok.deferred {
-                                                Some(deferral) => Err(
-                                                    crate::app::state::spark::receive::claim_deferral_notice(
-                                                        deferral,
-                                                    ),
-                                                ),
-                                                None => Ok(ok.amount_sat),
-                                            },
-                                            Err(e) => Err(e.to_string()),
-                                        },
-                                    },
-                                ))
-                            },
-                        )
+                        self.on_spark_deposits_loaded(deposits)
                     }
                     HomeMessage::AutoClaimSparkResult { txid, vout, result } => {
-                        // Stale result guard: if the tracker no longer matches
-                        // this (txid, vout) it belongs to a previous transfer —
-                        // e.g. a second Spark-destined transfer broadcast while
-                        // this claim was in flight. Stamping Completed on the
-                        // now-current `pending_spark_incoming` would prematurely
-                        // hide the new badge.
-                        if self.auto_claiming_spark_deposit.as_ref() != Some(&(txid, vout)) {
-                            return Task::none();
-                        }
-                        // Success: mark the indicator Completed so the view hides
-                        // it immediately and `BackToHome` can reap it. The bridge's follow-up
-                        // `DepositsChanged` will still re-enter the watcher and
-                        // clear the field outright. Failure: log and surface so
-                        // the user can retry from the Receive panel.
-                        self.auto_claiming_spark_deposit = None;
-                        match result {
-                            Ok(None) => {
-                                // Accepted before maturity: nothing has landed
-                                // yet and the settled amount is unknown. Leave
-                                // the indicator pending and let
-                                // `SparkPaymentSucceeded` finish the job.
-                                self.spark_claim_awaiting_settlement = true;
-                                Task::none()
-                            }
-                            Ok(Some(amount)) => self.complete_spark_auto_claim(amount),
-                            Err(e) => {
-                                log::warn!("Auto-claim of Spark deposit failed: {e}");
-                                Task::none()
-                            }
-                        }
+                        self.on_auto_claim_spark_result(txid, vout, result)
                     }
                     HomeMessage::SparkPaymentSucceeded { amount_sat } => {
-                        if !self.spark_claim_awaiting_settlement {
-                            return Task::none();
-                        }
-                        self.spark_claim_awaiting_settlement = false;
-                        self.complete_spark_auto_claim(amount_sat)
+                        self.on_spark_payment_succeeded(amount_sat)
                     }
 
                     HomeMessage::TransferSuccessful => self.on_transfer_successful(),
@@ -2125,6 +1907,254 @@ impl State for GlobalHome {
 }
 
 impl GlobalHome {
+    fn on_swap_settled_awaiting_arrival(
+        &mut self,
+        amount_sat: u64,
+        deposit_seen: bool,
+    ) -> Task<Message> {
+        // A SideShift swap just settled: bitcoin is en route to the
+        // Spark wallet's static on-chain deposit address.
+        // Structurally that's identical to a Vault→Spark transfer
+        // arrival — an on-chain deposit that matures and must be
+        // claimed — so register it exactly like one and let the
+        // watcher below auto-claim it. `is_swap` makes the eventual
+        // claim additionally fire the "bitcoin received" celebration.
+        //
+        // Don't clobber an in-flight transfer: if we're already
+        // tracking a pending incoming deposit, skip global tracking
+        // (the swap stays claimable from the Receive panel's
+        // pending-deposits card) rather than corrupting the
+        // transfer's reconciliation.
+        if self.pending_spark_incoming.is_some() {
+            return Task::none();
+        }
+        self.pending_spark_incoming = Some(PendingTransfer {
+            amount: Amount::from_sat(amount_sat),
+            stage: TransferStage::PendingDeposit,
+        });
+        // A restored shift saw its deposit unclaimed just now; if
+        // the SDK claims it before the list below is read, an
+        // empty list must still read as claimed.
+        self.pending_spark_deposit_seen = deposit_seen;
+        self.pending_spark_incoming_is_swap = true;
+        self.auto_claiming_spark_deposit = None;
+        // Reconcile immediately — the deposit may already be in the
+        // unclaimed list (it can land before we register here), and
+        // otherwise we'd wait for the next bridge event.
+        Task::done(Message::View(view::Message::Home(
+            HomeMessage::SparkDepositsChanged,
+        )))
+    }
+
+    fn on_swap_claim_observed(&mut self, amount_sat: u64) -> Task<Message> {
+        // Only a swap's tracker is ours to retire: a
+        // Vault→Spark transfer's tracker belongs to
+        // that transfer. Already completed by our own claim
+        // (`complete_spark_auto_claim` clears `is_swap`), it
+        // has celebrated, so this is a no-op then.
+        if !self.pending_spark_incoming_is_swap {
+            return Task::none();
+        }
+        self.pending_spark_incoming = None;
+        self.pending_spark_deposit_seen = false;
+        self.pending_spark_incoming_is_swap = false;
+        self.auto_claiming_spark_deposit = None;
+        self.spark_claim_awaiting_settlement = false;
+        Task::done(Message::ShowReceivedCelebration {
+            context: "spark-receive".to_string(),
+            amount_sat,
+            payment_id: None,
+        })
+    }
+
+    fn on_spark_deposits_changed(&mut self) -> Task<Message> {
+        // The Spark bridge signalled a change to the unclaimed-deposit
+        // list — could be a new deposit appearing, one maturing, or one
+        // being claimed. Re-query the list; the `SparkDepositsLoaded`
+        // handler decides what to do with it.
+        let Some(spark) = self.spark_backend.clone() else {
+            return Task::none();
+        };
+        // Only act if we have a pending inbound Spark transfer to
+        // correlate against. Without one there's nothing for us to
+        // auto-claim or clear — the Spark Receive panel handles the
+        // user-facing pending-deposit card independently.
+        if self.pending_spark_incoming.is_none() {
+            return Task::none();
+        }
+        Task::perform(
+            async move { spark.list_unclaimed_deposits().await },
+            |result| match result {
+                Ok(ok) => Message::View(view::Message::Home(HomeMessage::SparkDepositsLoaded(
+                    ok.deposits,
+                ))),
+                Err(e) => {
+                    log::warn!("list_unclaimed_deposits failed: {e:?}");
+                    Message::CacheUpdated
+                }
+            },
+        )
+    }
+
+    fn on_spark_deposits_loaded(
+        &mut self,
+        deposits: Vec<coincube_spark_protocol::DepositInfo>,
+    ) -> Task<Message> {
+        // No pending transfer → nothing to reconcile.
+        if self.pending_spark_incoming.is_none() {
+            return Task::none();
+        }
+        // Empty list → whatever was pending got claimed (either by
+        // us or by the user from the Spark Receive panel). Only
+        // interpret it that way once we've previously observed
+        // our deposit in the list: the inbound tx (the Bitcoin
+        // broadcast for VaultToSpark) doesn't appear until it lands on-chain, so an unrelated
+        // `SparkDepositsChanged` firing during that window (e.g.
+        // a prior deposit being claimed from the Receive panel)
+        // would otherwise clear the badge while our transfer is
+        // still in flight.
+        if deposits.is_empty() {
+            return self.reconcile_empty_spark_deposit_list();
+        }
+        // We've now observed at least one deposit in the list
+        // while our transfer is pending — remember this so a
+        // later empty list can be interpreted as "claimed"
+        // rather than "never arrived" (see above).
+        self.pending_spark_deposit_seen = true;
+        // One auto-claim at a time: if a claim is in flight,
+        // wait for its `DepositsChanged` follow-up before
+        // picking the next candidate. This covers both the
+        // "same deposit re-firing" and "different mature
+        // deposit arrived" cases in one check.
+        if self.auto_claiming_spark_deposit.is_some() {
+            return Task::none();
+        }
+        // Pick the first mature, error-free deposit and
+        // auto-claim it. The bridge fires `DepositsChanged`
+        // again on success, which re-enters this handler and
+        // clears the indicator.
+        let Some(candidate) = deposits
+            .iter()
+            .find(|d| d.is_mature && d.claim_error.is_none())
+        else {
+            return Task::none();
+        };
+        let Some(spark) = self.spark_backend.clone() else {
+            return Task::none();
+        };
+        let txid = candidate.txid.clone();
+        let vout = candidate.vout;
+        self.auto_claiming_spark_deposit = Some((txid.clone(), vout));
+        let txid_for_msg = txid.clone();
+        Task::perform(
+            async move { spark.claim_deposit(txid, vout).await },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::AutoClaimSparkResult {
+                    txid: txid_for_msg.clone(),
+                    vout,
+                    // `amount_sat` is `None` for a pre-maturity
+                    // claim (SDK 0.25.0+): the transfer settles
+                    // asynchronously and only `PaymentSucceeded`
+                    // knows what actually landed. Keep it unknown
+                    // rather than showing the pre-fee deposit.
+                    // A deferral (SDK 0.28.0+) claimed nothing:
+                    // logged like a failure, and the indicator
+                    // stays pending until the SDK's own claim
+                    // fires `DepositsChanged`.
+                    result: match result {
+                        Ok(ok) => match &ok.deferred {
+                            Some(deferral) => Err(
+                                crate::app::state::spark::receive::claim_deferral_notice(deferral),
+                            ),
+                            None => Ok(ok.amount_sat),
+                        },
+                        Err(e) => Err(e.to_string()),
+                    },
+                }))
+            },
+        )
+    }
+
+    fn reconcile_empty_spark_deposit_list(&mut self) -> Task<Message> {
+        if !self.pending_spark_deposit_seen {
+            return Task::none();
+        }
+        // The deposit was claimed by someone other than our own
+        // auto-claim below — the Spark SDK auto-claims static
+        // deposits, and the user can claim from the Receive
+        // panel — so `AutoClaimSparkResult` (which advances the
+        // cross-network Receive flow off "Bitcoin arriving")
+        // never ran. Nudge the flow to its arrived state here so
+        // it doesn't hang. This is the *only* signal for an
+        // SDK-silent claim; it's idempotent (the flow transitions
+        // once and ignores it otherwise), so it can't double up
+        // with a claim path that already fired. Non-swap
+        // transfers (Vault→Spark) don't touch it.
+        let was_swap = self.pending_spark_incoming_is_swap;
+        let amount_sat = self
+            .pending_spark_incoming
+            .as_ref()
+            .map(|p| p.amount.to_sat())
+            .unwrap_or(0);
+        self.pending_spark_incoming = None;
+        self.pending_spark_deposit_seen = false;
+        self.pending_spark_incoming_is_swap = false;
+        self.auto_claiming_spark_deposit = None;
+        self.spark_claim_awaiting_settlement = false;
+        if was_swap {
+            return Task::done(Message::View(view::Message::SparkSideshiftReceive(
+                view::SparkSideshiftReceiveMessage::Arrived { amount_sat },
+            )));
+        }
+        Task::none()
+    }
+
+    fn on_auto_claim_spark_result(
+        &mut self,
+        txid: String,
+        vout: u32,
+        result: Result<Option<u64>, String>,
+    ) -> Task<Message> {
+        // Stale result guard: if the tracker no longer matches
+        // this (txid, vout) it belongs to a previous transfer —
+        // e.g. a second Spark-destined transfer broadcast while
+        // this claim was in flight. Stamping Completed on the
+        // now-current `pending_spark_incoming` would prematurely
+        // hide the new badge.
+        if self.auto_claiming_spark_deposit.as_ref() != Some(&(txid, vout)) {
+            return Task::none();
+        }
+        // Success: mark the indicator Completed so the view hides
+        // it immediately and `BackToHome` can reap it. The bridge's follow-up
+        // `DepositsChanged` will still re-enter the watcher and
+        // clear the field outright. Failure: log and surface so
+        // the user can retry from the Receive panel.
+        self.auto_claiming_spark_deposit = None;
+        match result {
+            Ok(None) => {
+                // Accepted before maturity: nothing has landed
+                // yet and the settled amount is unknown. Leave
+                // the indicator pending and let
+                // `SparkPaymentSucceeded` finish the job.
+                self.spark_claim_awaiting_settlement = true;
+                Task::none()
+            }
+            Ok(Some(amount)) => self.complete_spark_auto_claim(amount),
+            Err(e) => {
+                log::warn!("Auto-claim of Spark deposit failed: {e}");
+                Task::none()
+            }
+        }
+    }
+
+    fn on_spark_payment_succeeded(&mut self, amount_sat: u64) -> Task<Message> {
+        if !self.spark_claim_awaiting_settlement {
+            return Task::none();
+        }
+        self.spark_claim_awaiting_settlement = false;
+        self.complete_spark_auto_claim(amount_sat)
+    }
+
     fn confirm_spark_send(&mut self, cache: &Cache) -> Task<Message> {
         let Some(direction) = self.transfer_direction else {
             return Task::none();
