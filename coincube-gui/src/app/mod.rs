@@ -1629,6 +1629,109 @@ pub(crate) fn describe_rollback(
     msg
 }
 
+fn arm_duress_marker(
+    root: &std::path::Path,
+    cube: &settings::CubeSettings,
+    duress_pin: &str,
+) -> Result<ArmedMarker, String> {
+    let secret = crate::services::unlock::device_secret::load_optional(&cube.id).map_err(|e| {
+        format!(
+            "Couldn't reach your system keychain to arm duress on Cube '{}': {e}",
+            cube.name
+        )
+    })?;
+    // Reuse the name already recorded for this Cube when re-enrolling,
+    // so a second enrolment replaces the marker in place instead of
+    // leaving the first one orphaned and unfindable. Otherwise mint a
+    // fresh unpredictable name stamped with this Cube's *seed file's*
+    // timestamp, so the two files agree (X7).
+    let reused_slot = cube.duress_slot_file.is_some();
+    let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
+        crate::services::unlock::marker::new_file_name(
+            crate::services::unlock::marker::seed_timestamp(
+                root,
+                cube.network,
+                cube.master_signer_fingerprint,
+                cube.created_at,
+            ),
+        )
+    });
+    // The marker must use the *same* wire version and key material as
+    // this Cube's seed file, or the pair stops being indistinguishable.
+    crate::services::unlock::marker::write(
+        root,
+        cube.network,
+        &cube.id,
+        &file_name,
+        duress_pin,
+        secret.as_ref(),
+    )
+    .map_err(|e| format!("Couldn't arm the duress PIN on Cube '{}' ({e}).", cube.name))?;
+    Ok(ArmedMarker {
+        root: root.to_path_buf(),
+        cube_id: cube.id.clone(),
+        cube_name: cube.name.clone(),
+        network: cube.network,
+        file_name,
+        reused_slot,
+    })
+}
+
+async fn persist_duress_marker_names(
+    network_dirs: &[crate::dir::NetworkDirectory],
+    prior_settings: &[settings::Settings],
+    armed_cubes: &[ArmedMarker],
+) -> Result<(), String> {
+    for (i, network_dir) in network_dirs.iter().enumerate() {
+        let names: Vec<(String, String)> = armed_cubes
+            .iter()
+            .filter(|m| prior_settings[i].cubes.iter().any(|c| c.id == m.cube_id))
+            .map(|m| (m.cube_id.clone(), m.file_name.clone()))
+            .collect();
+        if names.is_empty() {
+            continue;
+        }
+        let written = crate::app::settings::update_settings_file(network_dir, |mut s| {
+            for cube in s.cubes.iter_mut() {
+                if let Some((_, name)) = names.iter().find(|(id, _)| *id == cube.id) {
+                    cube.duress_slot_file = Some(name.clone());
+                }
+            }
+            Some(s)
+        })
+        .await;
+        written.map_err(|e| format!("Couldn't save the duress settings for your Cubes ({e})."))?;
+    }
+    Ok(())
+}
+
+fn persist_duress_local_state(
+    root: &std::path::Path,
+    duress_code: &str,
+    account_id: Option<String>,
+) -> Result<(), String> {
+    // load() already maps a missing file to Ok(default); a real parse/IO
+    // error must NOT be papered over with a default that save() then writes
+    // back, clobbering valid state. Propagate it (rolling back step 1).
+    let mut st = crate::services::duress::DuressLocalState::load(root)
+        .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
+    st.enrolled = true;
+    // Enrollment is now fully recorded, so the orphan breadcrumb has done
+    // its job. Cleared in the same write that sets `enrolled`, so the two
+    // can never disagree.
+    st.arming = false;
+    // A pending "migration turned duress off" notice is false from here
+    // on: the user has just turned it back on.
+    st.migration_disarm_notice = false;
+    st.account_id = account_id;
+    if !duress_code.is_empty() {
+        let key = crate::services::duress::cipher::DeviceKey::load_or_create(root)
+            .map_err(|e| e.to_string())?;
+        st.duress_code = Some(key.encrypt(duress_code)?);
+    }
+    st.save(root).map_err(|e| e.to_string())
+}
+
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     duress_pin: zeroize::Zeroizing<String>,
@@ -1703,60 +1806,16 @@ pub(crate) async fn persist_duress_enrollment(
     let mut armed_cubes: Vec<ArmedMarker> = Vec::new();
     let mut arm_failure: Option<String> = None;
 
-    'arming: for (i, network_dir) in network_dirs.iter().enumerate() {
-        for cube in &prior_settings[i].cubes {
-            let secret = match crate::services::unlock::device_secret::load_optional(&cube.id) {
-                Ok(s) => s,
-                Err(e) => {
-                    arm_failure = Some(format!(
-                        "Couldn't reach your system keychain to arm duress on Cube '{}': {e}",
-                        cube.name
-                    ));
+    'arming: for settings in &prior_settings {
+        for cube in &settings.cubes {
+            match arm_duress_marker(&root, cube, &duress_pin) {
+                Ok(marker) => armed_cubes.push(marker),
+                Err(err) => {
+                    arm_failure = Some(err);
                     break 'arming;
                 }
-            };
-            // Reuse the name already recorded for this Cube when re-enrolling,
-            // so a second enrolment replaces the marker in place instead of
-            // leaving the first one orphaned and unfindable. Otherwise mint a
-            // fresh unpredictable name stamped with this Cube's *seed file's*
-            // timestamp, so the two files agree (X7).
-            let reused_slot = cube.duress_slot_file.is_some();
-            let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
-                crate::services::unlock::marker::new_file_name(
-                    crate::services::unlock::marker::seed_timestamp(
-                        &root,
-                        cube.network,
-                        cube.master_signer_fingerprint,
-                        cube.created_at,
-                    ),
-                )
-            });
-            // The marker must use the *same* wire version and key material as
-            // this Cube's seed file, or the pair stops being indistinguishable.
-            if let Err(e) = crate::services::unlock::marker::write(
-                &root,
-                cube.network,
-                &cube.id,
-                &file_name,
-                &duress_pin,
-                secret.as_ref(),
-            ) {
-                arm_failure = Some(format!(
-                    "Couldn't arm the duress PIN on Cube '{}' ({e}).",
-                    cube.name
-                ));
-                break 'arming;
             }
-            armed_cubes.push(ArmedMarker {
-                root: root.clone(),
-                cube_id: cube.id.clone(),
-                cube_name: cube.name.clone(),
-                network: cube.network,
-                file_name,
-                reused_slot,
-            });
         }
-        let _ = network_dir;
     }
 
     if let Some(msg) = arm_failure {
@@ -1782,33 +1841,12 @@ pub(crate) async fn persist_duress_enrollment(
     //     duress as unarmed while the file sat there. Persist before declaring
     //     success, and roll the markers back if it fails, exactly as step 2
     //     does.
-    for (i, network_dir) in network_dirs.iter().enumerate() {
-        let names: Vec<(String, String)> = armed_cubes
-            .iter()
-            .filter(|m| prior_settings[i].cubes.iter().any(|c| c.id == m.cube_id))
-            .map(|m| (m.cube_id.clone(), m.file_name.clone()))
-            .collect();
-        if names.is_empty() {
-            continue;
-        }
-        let written = crate::app::settings::update_settings_file(network_dir, |mut s| {
-            for cube in s.cubes.iter_mut() {
-                if let Some((_, name)) = names.iter().find(|(id, _)| *id == cube.id) {
-                    cube.duress_slot_file = Some(name.clone());
-                }
-            }
-            Some(s)
-        })
-        .await;
-        if let Err(e) = written {
-            let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
-            let still_armed = rollback_duress_markers(&armed_cubes);
-            return Err(describe_rollback(
-                format!("Couldn't save the duress settings for your Cubes ({e})."),
-                still_armed,
-                lost,
-            ));
-        }
+    if let Err(error) =
+        persist_duress_marker_names(&network_dirs, &prior_settings, &armed_cubes).await
+    {
+        let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
+        let still_armed = rollback_duress_markers(&armed_cubes);
+        return Err(describe_rollback(error, still_armed, lost));
     }
 
     // 2. Encrypted device code + account id → DuressLocalState. The encrypted
@@ -1821,29 +1859,7 @@ pub(crate) async fn persist_duress_enrollment(
     //    encryption are fail-loud. If this fails AFTER step 1 armed the PIN
     //    hashes, roll those back too — otherwise Cubes stay armed (and would
     //    wipe on the duress PIN) while the matching enrollment state is missing.
-    let local: Result<(), String> = (|| {
-        // load() already maps a missing file to Ok(default); a real parse/IO
-        // error must NOT be papered over with a default that save() then writes
-        // back, clobbering valid state. Propagate it (rolling back step 1).
-        let mut st = crate::services::duress::DuressLocalState::load(&root)
-            .map_err(|e| format!("Couldn't read existing duress state: {e}"))?;
-        st.enrolled = true;
-        // Enrollment is now fully recorded, so the orphan breadcrumb has done
-        // its job. Cleared in the same write that sets `enrolled`, so the two
-        // can never disagree.
-        st.arming = false;
-        // A pending "migration turned duress off" notice is false from here
-        // on: the user has just turned it back on.
-        st.migration_disarm_notice = false;
-        st.account_id = account_id;
-        if !duress_code.is_empty() {
-            let key = crate::services::duress::cipher::DeviceKey::load_or_create(&root)
-                .map_err(|e| e.to_string())?;
-            st.duress_code = Some(key.encrypt(&duress_code)?);
-        }
-        st.save(&root).map_err(|e| e.to_string())
-    })();
-    if let Err(e) = local {
+    if let Err(e) = persist_duress_local_state(&root, &duress_code, account_id) {
         let lost = prior_pin_deactivated(was_enrolled, &armed_cubes);
         let still_armed = rollback_duress_markers(&armed_cubes);
         return Err(describe_rollback(e, still_armed, lost));
@@ -2369,6 +2385,41 @@ struct VaultHistoryProbe {
 }
 
 impl VaultHistoryProbe {
+    async fn verify_full_recovery(
+        &self,
+        node: &coincubed::config::BitcoindConfig,
+        wallet_path: &str,
+        job: &crate::node::history::Recovery,
+    ) -> Option<()> {
+        let binding = crate::node::retention::managed_binding(
+            &self.data_dir,
+            self.chain.bitcoin_network(),
+            self.chain,
+            node,
+            wallet_path,
+            &self.wallet.inheritance_descriptor()?.to_string(),
+        )
+        .ok()?;
+        job.validate(&binding).ok()?;
+        let rpc = crate::node::history::NodeRpc::new(node, wallet_path, self.chain)
+            .await
+            .ok()?;
+        rpc.check_chain(self.chain.bitcoin_network()).await.ok()?;
+        if rpc.block_hash(job.target).await.ok()? != job.target_hash {
+            return None;
+        }
+        if rpc
+            .call(true, "getwalletinfo", serde_json::json!([]))
+            .await
+            .ok()?["scanning"]
+            .as_bool()
+            != Some(false)
+        {
+            return None;
+        }
+        Some(())
+    }
+
     /// How far back this Vault's history reaches, or `None` if the daemon
     /// could not say.
     ///
@@ -2424,32 +2475,7 @@ impl VaultHistoryProbe {
                 Ok(Some(job))
                     if job.phase == crate::node::history::Phase::Complete && job.start == 0 =>
                 {
-                    let binding = crate::node::retention::managed_binding(
-                        &self.data_dir,
-                        self.chain.bitcoin_network(),
-                        self.chain,
-                        node,
-                        &wallet_path,
-                        &self.wallet.inheritance_descriptor()?.to_string(),
-                    )
-                    .ok()?;
-                    job.validate(&binding).ok()?;
-                    let rpc = crate::node::history::NodeRpc::new(node, &wallet_path, self.chain)
-                        .await
-                        .ok()?;
-                    rpc.check_chain(self.chain.bitcoin_network()).await.ok()?;
-                    if rpc.block_hash(job.target).await.ok()? != job.target_hash {
-                        return None;
-                    }
-                    if rpc
-                        .call(true, "getwalletinfo", serde_json::json!([]))
-                        .await
-                        .ok()?["scanning"]
-                        .as_bool()
-                        != Some(false)
-                    {
-                        return None;
-                    }
+                    self.verify_full_recovery(node, &wallet_path, &job).await?;
                     // A full Core scan permits handoff. Its durable records are
                     // replayed by local daemon startup before retiring the marker.
                     rescan_owed = false;
@@ -5400,43 +5426,10 @@ impl App {
         Task::batch([reload, recent])
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = vec![];
-
-        // Subscribe to Spark bridge events when a Spark backend is
-        // active. The backend is optional (cubes without a Spark signer
-        // run with `wallet_registry.spark() == None`), so we only wire
-        // the subscription when there's actually a bridge to listen to.
-        // The subscription identity is keyed on the `Arc<SparkClient>`
-        // pointer inside the backend, so reconnecting produces a fresh
-        // subscription instead of stale wiring.
-        if let Some(spark_backend) = self.wallet_registry.spark() {
-            subscriptions.push(spark_backend.event_subscription().map(Message::SparkEvent));
-        }
-
+    fn subscribe_to_vault_sync(&self, subscriptions: &mut Vec<Subscription<Message>>) {
         // Only create tick subscription if we have a vault (daemon exists)
         if self.daemon.is_some() {
-            subscriptions.push(
-                time::every(Duration::from_secs(
-                    match sync_status(
-                        self.daemon_backend(),
-                        self.cache.blockheight(),
-                        self.cache.sync_progress(),
-                        self.cache.last_poll_timestamp(),
-                        self.cache.last_poll_at_startup,
-                        self.cache.history_sync(),
-                    ) {
-                        SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
-                        SyncStatus::WalletFullScan { .. } | SyncStatus::LatestWalletSync => 3,
-                        // Polls are being retried; refresh often enough to notice recovery.
-                        SyncStatus::SyncFailing { .. } => 5,
-                        // For the rescan feature, we refresh often enough to give
-                        // user an up-to-date view of the rescan progress.
-                        SyncStatus::Synced => 10,
-                    },
-                ))
-                .map(|_| Message::Tick),
-            );
+            subscriptions.push(time::every(self.daemon_poll_interval()).map(|_| Message::Tick));
         }
 
         // Poll pending or active local Bitcoind progress on a fixed interval,
@@ -5455,6 +5448,56 @@ impl App {
                     .map(|_| Message::NodeHistory(node_history::Action::Poll)),
             );
         }
+    }
+
+    fn subscribe_to_bitcoind_log(&self, subscriptions: &mut Vec<Subscription<Message>>) {
+        // Stream the internal bitcoind's debug.log for UpdateTip lines.
+        //
+        // Prefer a pending node (one being set up or switched to), but fall back to
+        // the active managed node, so sync progress on a node that is already live,
+        // with nothing pending, is visible too.
+        if let Some(pending_cfg) = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+            c.pending_bitcoind.clone().or_else(|| {
+                match c.bitcoin_backend.as_ref() {
+                    Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) => Some(cfg.clone()),
+                    // Electrum/Esplora backends have no debug.log to tail.
+                    _ => None,
+                }
+            })
+        }) {
+            let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
+            let is_internal = match &pending_cfg.rpc_auth {
+                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
+                _ => false,
+            };
+            if is_internal {
+                let log_path =
+                    internal_bitcoind_debug_log_path(&self.cache.datadir_path, self.cache.network);
+                subscriptions.push(
+                    iced::Subscription::run_with(log_path, |p| {
+                        crate::loader::get_bitcoind_log(p.clone())
+                    })
+                    .map(Message::PendingBitcoindLog),
+                );
+            }
+        }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        let mut subscriptions = vec![];
+
+        // Subscribe to Spark bridge events when a Spark backend is
+        // active. The backend is optional (cubes without a Spark signer
+        // run with `wallet_registry.spark() == None`), so we only wire
+        // the subscription when there's actually a bridge to listen to.
+        // The subscription identity is keyed on the `Arc<SparkClient>`
+        // pointer inside the backend, so reconnecting produces a fresh
+        // subscription instead of stale wiring.
+        if let Some(spark_backend) = self.wallet_registry.spark() {
+            subscriptions.push(spark_backend.event_subscription().map(Message::SparkEvent));
+        }
+
+        self.subscribe_to_vault_sync(&mut subscriptions);
 
         // Current panel's subscription
         let current_subscription = self
@@ -5495,36 +5538,7 @@ impl App {
             subscriptions.push(self.panels.spark_receive.sideshift_poll_subscription());
         }
 
-        // Stream the internal bitcoind's debug.log for UpdateTip lines.
-        //
-        // Prefer a pending node (one being set up or switched to), but fall back to
-        // the active managed node, so sync progress on a node that is already live,
-        // with nothing pending, is visible too.
-        if let Some(pending_cfg) = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-            c.pending_bitcoind.clone().or_else(|| {
-                match c.bitcoin_backend.as_ref() {
-                    Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) => Some(cfg.clone()),
-                    // Electrum/Esplora backends have no debug.log to tail.
-                    _ => None,
-                }
-            })
-        }) {
-            let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
-            let is_internal = match &pending_cfg.rpc_auth {
-                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
-                _ => false,
-            };
-            if is_internal {
-                let log_path =
-                    internal_bitcoind_debug_log_path(&self.cache.datadir_path, self.cache.network);
-                subscriptions.push(
-                    iced::Subscription::run_with(log_path, |p| {
-                        crate::loader::get_bitcoind_log(p.clone())
-                    })
-                    .map(Message::PendingBitcoindLog),
-                );
-            }
-        }
+        self.subscribe_to_bitcoind_log(&mut subscriptions);
 
         // Connect realtime gRPC stream. Active once `Message::ConnectStreamReady`
         // has populated `connect_stream_config`. The subscription identity is
@@ -5685,65 +5699,8 @@ impl App {
         }
     }
 
-    pub fn on_tick(&mut self) -> Task<Message> {
-        let local_feature_task = if self.cache.chain().is_blake2b()
-            && !self.requires_connect()
-            && self.local_feature_check.is_none()
-            && self
-                .local_feature_checked_at
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
-        {
-            self.fork_feature_check()
-        } else {
-            Task::none()
-        };
-        let price_task = self.btcb2_price_task();
-        // Skip tick processing if no vault is configured
-        if self.daemon.is_none() {
-            tracing::debug!("Skipping tick - no vault configured");
-            return Task::batch([price_task, local_feature_task]);
-        }
-        // Skip while a backend switch is in flight: `self.daemon` still points at
-        // the daemon the off-thread switch is stopping, so polling it here would
-        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
-        // the new daemon resumes normally.
-        if self.daemon_switch_in_progress {
-            return Task::batch([price_task, local_feature_task]);
-        }
-
-        let tick = std::time::Instant::now();
-        let mut tasks = if let Some(daemon) = &self.daemon {
-            if let Some(panel) = self.panels.current_mut() {
-                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        };
-
-        tasks.push(price_task);
-        tasks.push(local_feature_task);
-
-        // While an imported Vault's history scan runs, its import panel owns
-        // the snapshot (scan progress, discovery coverage, the Cube
-        // attachment). Once the scan is complete it polls like any Vault; the
-        // panel's own slower refresh still watches for a new scan.
-        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
-            let client = self.authenticated_coincube_client();
-            let epoch = self.panels.connect.account.session_generation();
-            if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
-                tasks.push(panel.update_view(
-                    state::imported_bitcoin::ImportMessage::Refresh,
-                    client,
-                    epoch,
-                ));
-            }
-            return Task::batch(tasks);
-        }
-
-        // Check if we need to update the daemon cache.
-        let duration = Duration::from_secs(
+    fn daemon_poll_interval(&self) -> Duration {
+        Duration::from_secs(
             match sync_status(
                 self.daemon_backend(),
                 self.cache.blockheight(),
@@ -5760,8 +5717,11 @@ impl App {
                 // up-to-date view of the rescan progress.
                 SyncStatus::Synced => 10,
             },
-        );
-        if self.cache.daemon_cache.last_tick + duration <= tick {
+        )
+    }
+
+    fn schedule_daemon_poll(&mut self, tick: std::time::Instant, tasks: &mut Vec<Task<Message>>) {
+        if self.cache.daemon_cache.last_tick + self.daemon_poll_interval() <= tick {
             // We have to update here the last_tick to prevent that during a burst of events
             // there is a race condition with the Task and too much tasks are triggered.
             self.cache.daemon_cache.last_tick = tick;
@@ -5820,6 +5780,66 @@ impl App {
                 }
             }
         }
+    }
+
+    pub fn on_tick(&mut self) -> Task<Message> {
+        let local_feature_task = if self.cache.chain().is_blake2b()
+            && !self.requires_connect()
+            && self.local_feature_check.is_none()
+            && self
+                .local_feature_checked_at
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
+        {
+            self.fork_feature_check()
+        } else {
+            Task::none()
+        };
+        let price_task = self.btcb2_price_task();
+        // Skip tick processing if no vault is configured
+        if self.daemon.is_none() {
+            tracing::debug!("Skipping tick - no vault configured");
+            return Task::batch([price_task, local_feature_task]);
+        }
+        // Skip while a backend switch is in flight: `self.daemon` still points at
+        // the daemon the off-thread switch is stopping, so polling it here would
+        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
+        // the new daemon resumes normally.
+        if self.daemon_switch_in_progress {
+            return Task::batch([price_task, local_feature_task]);
+        }
+
+        let tick = std::time::Instant::now();
+        let mut tasks = if let Some(daemon) = &self.daemon {
+            if let Some(panel) = self.panels.current_mut() {
+                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        tasks.push(price_task);
+        tasks.push(local_feature_task);
+
+        // While an imported Vault's history scan runs, its import panel owns
+        // the snapshot (scan progress, discovery coverage, the Cube
+        // attachment). Once the scan is complete it polls like any Vault; the
+        // panel's own slower refresh still watches for a new scan.
+        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
+            let client = self.authenticated_coincube_client();
+            let epoch = self.panels.connect.account.session_generation();
+            if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
+                tasks.push(panel.update_view(
+                    state::imported_bitcoin::ImportMessage::Refresh,
+                    client,
+                    epoch,
+                ));
+            }
+            return Task::batch(tasks);
+        }
+
+        self.schedule_daemon_poll(tick, &mut tasks);
 
         Task::batch(tasks)
     }
@@ -6213,55 +6233,71 @@ impl App {
             );
         }
         if ready {
-            tasks.push(Task::done(Message::CacheUpdated));
-            // Until the scan completes the runtime sends no
-            // `UpdateDaemonCache`: the Overview's Vault rows follow it here
-            // when its history comes in or the runtime changes. After that
-            // the normal poll refreshes them.
-            if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
-                && (first_load
-                    || !was_ready
-                    || runtime_changed
-                    || overview_activity_vault_changed(&before, &self.cache.daemon_cache))
-            {
-                tasks.push(self.panels.activity.refresh_wallet(
-                    view::activity::WalletFilter::Vault,
-                    Some(daemon.clone()),
-                    Some(wallet.clone()),
-                ));
-            }
-            // While the scan ran, Vault Settings › Node was the import
-            // panel's, so the Node section was never installed. Install it as
-            // the route passes back, once: a normal poll must not reset an
-            // edit in progress.
-            if !was_ready
-                && matches!(
-                    self.panels.current,
-                    Menu::Vault(menu::VaultSubMenu::Settings(Some(
-                        menu::SettingsOption::Node
-                    )))
-                )
-            {
-                if let Some(settings) = self.panels.vault_settings.as_mut() {
-                    tasks.push(settings.update(
-                        Some(daemon.clone()),
-                        &self.cache,
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::EditBitcoindSettings,
-                        )),
-                    ));
-                }
-            }
-            if first_load || !was_ready || runtime_changed {
-                if let Some(overview) = self.panels.vault_overview.as_mut() {
-                    tasks.push(overview.reload(Some(daemon.clone()), Some(wallet.clone())));
-                }
-                if let Some(transactions) = self.panels.transactions.as_mut() {
-                    tasks.push(transactions.reload(Some(daemon), Some(wallet)));
-                }
-            }
+            self.refresh_imported_runtime_panels(
+                &mut tasks,
+                &before,
+                daemon,
+                wallet,
+                was_ready,
+                first_load || !was_ready || runtime_changed,
+            );
         }
         Task::batch(tasks)
+    }
+
+    fn refresh_imported_runtime_panels(
+        &mut self,
+        tasks: &mut Vec<Task<Message>>,
+        before: &DaemonCache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+        was_ready: bool,
+        changed: bool,
+    ) {
+        tasks.push(Task::done(Message::CacheUpdated));
+        // Until the scan completes the runtime sends no
+        // `UpdateDaemonCache`: the Overview's Vault rows follow it here
+        // when its history comes in or the runtime changes. After that
+        // the normal poll refreshes them.
+        if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
+            && (changed || overview_activity_vault_changed(before, &self.cache.daemon_cache))
+        {
+            tasks.push(self.panels.activity.refresh_wallet(
+                view::activity::WalletFilter::Vault,
+                Some(daemon.clone()),
+                Some(wallet.clone()),
+            ));
+        }
+        // While the scan ran, Vault Settings › Node was the import
+        // panel's, so the Node section was never installed. Install it as
+        // the route passes back, once: a normal poll must not reset an
+        // edit in progress.
+        if !was_ready
+            && matches!(
+                self.panels.current,
+                Menu::Vault(menu::VaultSubMenu::Settings(Some(
+                    menu::SettingsOption::Node
+                )))
+            )
+        {
+            if let Some(settings) = self.panels.vault_settings.as_mut() {
+                tasks.push(settings.update(
+                    Some(daemon.clone()),
+                    &self.cache,
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::EditBitcoindSettings,
+                    )),
+                ));
+            }
+        }
+        if changed {
+            if let Some(overview) = self.panels.vault_overview.as_mut() {
+                tasks.push(overview.reload(Some(daemon.clone()), Some(wallet.clone())));
+            }
+            if let Some(transactions) = self.panels.transactions.as_mut() {
+                tasks.push(transactions.reload(Some(daemon), Some(wallet)));
+            }
+        }
     }
 
     fn update_dispatch(&mut self, message: Message) -> Task<Message> {
@@ -9374,13 +9410,13 @@ impl App {
             .map(move |(id, _, level, content)| (*id, *level, content.display(unit, masked)))
     }
 
-    pub fn view(&self) -> Element<'_, Message> {
+    fn active_panel_view(&self) -> Element<'_, view::Message> {
         let journey = self
             .panels
             .imported_bitcoin
             .as_ref()
             .filter(|panel| panel.journey_open());
-        let view = if let Some(panel) = journey {
+        if let Some(panel) = journey {
             // Import or restore holds the window from the imported wallet's
             // Source step until the user leaves Done.
             panel.journey_view(&self.cache, self.cube_settings.passkey_metadata.is_some())
@@ -9549,8 +9585,11 @@ impl App {
                 .current()
                 .unwrap_or(&self.panels.global_home)
                 .view(&self.panels.current, &self.cache)
-        };
+        }
+    }
 
+    pub fn view(&self) -> Element<'_, Message> {
+        let view = self.active_panel_view();
         let view: Element<'_, view::Message> = if self.cache.network != bitcoin::Network::Bitcoin {
             iced::widget::column![network_banner(self.cache.network), view].into()
         } else {
@@ -9784,6 +9823,65 @@ pub enum DaemonRestart {
     Panicked(Error),
 }
 
+fn start_daemon_for_restart(
+    config: DaemonConfig,
+    connect_client: Option<&crate::services::coincube::CoincubeClient>,
+    local_root: Option<&CoincubeDirectory>,
+) -> Result<EmbeddedDaemon, DaemonError> {
+    if !config.bitcoin_config.chain.is_blake2b() {
+        EmbeddedDaemon::start(config)
+    } else if matches!(
+        config.bitcoin_backend,
+        Some(coincubed::config::BitcoinBackend::Bitcoind(_))
+    ) {
+        let root = local_root
+            .ok_or_else(|| DaemonError::Unexpected("Managed local node required".into()))?;
+        if !crate::chain::is_managed_local_fork(&config, root) {
+            return Err(DaemonError::Unexpected(
+                "Managed local node required".into(),
+            ));
+        }
+        Handle::current()
+            .block_on(crate::chain::require_local_feature(
+                config.bitcoin_config.chain,
+                connect_client.cloned(),
+                root,
+            ))
+            .map_err(DaemonError::Unexpected)?;
+        EmbeddedDaemon::start_local_fork(config)
+    } else {
+        Handle::current().block_on(EmbeddedDaemon::start_authenticated(
+            config,
+            connect_client.cloned().expect("fork session checked"),
+        ))
+    }
+}
+
+fn verify_daemon_restart_backend(
+    cfg: &DaemonConfig,
+    connect_client: Option<&crate::services::coincube::CoincubeClient>,
+    local_root: Option<&CoincubeDirectory>,
+) -> Result<(), String> {
+    if cfg.bitcoin_config.chain.is_blake2b()
+        && matches!(
+            cfg.bitcoin_backend,
+            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
+        )
+    {
+        let admitted = local_root.filter(|root| crate::chain::is_managed_local_fork(cfg, root));
+        let check = match admitted {
+            Some(root) => Handle::current().block_on(crate::chain::require_local_feature(
+                cfg.bitcoin_config.chain,
+                connect_client.cloned(),
+                root,
+            )),
+            None => Err("Reopen this Cube through its managed local node".into()),
+        };
+        check?;
+    }
+    Ok(())
+}
+
 /// Stop `old_daemon`, start a new one for `cfg`, then persist `daemon.toml`.
 ///
 /// This is the blocking half of a backend switch, factored out of the App so it
@@ -9816,60 +9914,16 @@ fn restart_daemon_blocking_guarded(
             recovered: old_daemon,
         };
     }
-    if cfg.bitcoin_config.chain.is_blake2b()
-        && matches!(
-            cfg.bitcoin_backend,
-            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
-        )
+    if let Err(error) =
+        verify_daemon_restart_backend(&cfg, connect_client.as_ref(), local_root.as_ref())
     {
-        let admitted = local_root
-            .as_ref()
-            .filter(|root| crate::chain::is_managed_local_fork(&cfg, root));
-        let check = match admitted {
-            Some(root) => Handle::current().block_on(crate::chain::require_local_feature(
-                cfg.bitcoin_config.chain,
-                connect_client.clone(),
-                root,
-            )),
-            None => Err("Reopen this Cube through its managed local node".into()),
+        return DaemonRestart::Failed {
+            error: Error::Daemon(DaemonError::Unexpected(error)),
+            recovered: old_daemon,
         };
-        if let Err(error) = check {
-            return DaemonRestart::Failed {
-                error: Error::Daemon(DaemonError::Unexpected(error)),
-                recovered: old_daemon,
-            };
-        }
     }
-    let start = |config: DaemonConfig| {
-        if !config.bitcoin_config.chain.is_blake2b() {
-            EmbeddedDaemon::start(config)
-        } else if matches!(
-            config.bitcoin_backend,
-            Some(coincubed::config::BitcoinBackend::Bitcoind(_))
-        ) {
-            let root = local_root
-                .as_ref()
-                .ok_or_else(|| DaemonError::Unexpected("Managed local node required".into()))?;
-            if !crate::chain::is_managed_local_fork(&config, root) {
-                return Err(DaemonError::Unexpected(
-                    "Managed local node required".into(),
-                ));
-            }
-            Handle::current()
-                .block_on(crate::chain::require_local_feature(
-                    config.bitcoin_config.chain,
-                    connect_client.clone(),
-                    root,
-                ))
-                .map_err(DaemonError::Unexpected)?;
-            EmbeddedDaemon::start_local_fork(config)
-        } else {
-            Handle::current().block_on(EmbeddedDaemon::start_authenticated(
-                config,
-                connect_client.clone().expect("fork session checked"),
-            ))
-        }
-    };
+    let start =
+        |config| start_daemon_for_restart(config, connect_client.as_ref(), local_root.as_ref());
 
     if let Some(daemon) = &old_daemon {
         if let Err(e) = Handle::current().block_on(async { daemon.stop().await }) {
