@@ -8853,47 +8853,7 @@ impl DeleteRemoteCubeModal {
             .push(consequences);
 
         if holds_backup {
-            // Only where this build can restore the Cube is there anything to
-            // restore instead.
-            let restore_btn = restorable.then(|| {
-                button::secondary_compact_action(
-                    DELETE_REMOTE_RESTORE_ID,
-                    None,
-                    "Restore instead",
-                    delete_modal_focus,
-                )
-                .on_press_maybe((!self.deleting).then(|| {
-                    ViewMessage::DeleteCube(DeleteCubeMessage::RestoreInstead(
-                        self.cube.uuid.clone(),
-                    ))
-                }))
-            });
-            col = col.push(Space::new().height(18.0)).push(
-                Container::new(
-                    Row::new()
-                        .spacing(12)
-                        .align_y(Alignment::Center)
-                        .push(icon::warning_icon().style(delete_modal_warn_icon))
-                        .push(
-                            Column::new()
-                                .width(Length::Fill)
-                                .spacing(2)
-                                .push(p1_bold(localized_copy("Is Connect its only backup?")))
-                                .push(p2_regular(localized_copy(if restorable {
-                                    "Without its recovery phrase or another device, any funds \
-                                     in this Cube will be lost. Restore it first if you\u{2019}re \
-                                     not sure."
-                                } else {
-                                    "Without its recovery phrase or another device, any funds \
-                                     in this Cube will be lost."
-                                }))),
-                        )
-                        .push(restore_btn),
-                )
-                .padding([12, 14])
-                .width(Length::Fill)
-                .style(delete_modal_callout),
-            );
+            col = self.add_backup_warning(col, restorable);
         }
 
         col = col.push(Space::new().height(12.0)).push(
@@ -8988,6 +8948,52 @@ impl DeleteRemoteCubeModal {
                 .style(delete_modal_card),
         )
         .map(Message::View)
+    }
+
+    fn add_backup_warning<'a>(
+        &self,
+        col: Column<'a, ViewMessage>,
+        restorable: bool,
+    ) -> Column<'a, ViewMessage> {
+        // Only where this build can restore the Cube is there anything to
+        // restore instead.
+        let restore_btn = restorable.then(|| {
+            button::secondary_compact_action(
+                DELETE_REMOTE_RESTORE_ID,
+                None,
+                "Restore instead",
+                delete_modal_focus,
+            )
+            .on_press_maybe((!self.deleting).then(|| {
+                ViewMessage::DeleteCube(DeleteCubeMessage::RestoreInstead(self.cube.uuid.clone()))
+            }))
+        });
+        col.push(Space::new().height(18.0)).push(
+            Container::new(
+                Row::new()
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push(icon::warning_icon().style(delete_modal_warn_icon))
+                    .push(
+                        Column::new()
+                            .width(Length::Fill)
+                            .spacing(2)
+                            .push(p1_bold(localized_copy("Is Connect its only backup?")))
+                            .push(p2_regular(localized_copy(if restorable {
+                                "Without its recovery phrase or another device, any funds \
+                                 in this Cube will be lost. Restore it first if you\u{2019}re \
+                                 not sure."
+                            } else {
+                                "Without its recovery phrase or another device, any funds \
+                                 in this Cube will be lost."
+                            }))),
+                    )
+                    .push(restore_btn),
+            )
+            .padding([12, 14])
+            .width(Length::Fill)
+            .style(delete_modal_callout),
+        )
     }
 }
 
@@ -9136,25 +9142,7 @@ impl DeleteCubeModal {
         // the ownership-checked removal path rather than the generic
         // wallet deletion below.
         if self.cube.bitcoin_import.is_some() {
-            if let Err(error) =
-                Handle::current().block_on(crate::services::bitcoin_import::remove_cube_import(
-                    &self.network_directory,
-                    &self.cube,
-                ))
-            {
-                if error == crate::daemon::stopping::STILL_STOPPING {
-                    self.stop_refused = true;
-                } else {
-                    self.warning = Some(DeleteError::Settings(
-                        settings::SettingsError::WritingFile(error),
-                    ));
-                }
-                return Task::none();
-            }
-            self.deleted = true;
-            return Task::perform(async {}, |_| {
-                Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted))
-            });
+            return self.delete_imported_cube();
         }
 
         // Delete vault if it exists
@@ -9171,6 +9159,10 @@ impl DeleteCubeModal {
             }
         }
 
+        self.delete_cube_settings()
+    }
+
+    fn delete_cube_settings(&mut self) -> Task<Message> {
         // Delete the cube from settings
         let network_dir = self.network_directory.clone();
         let cube_id = self.cube.id.clone();
@@ -9196,99 +9188,32 @@ impl DeleteCubeModal {
         Task::none()
     }
 
+    fn delete_imported_cube(&mut self) -> Task<Message> {
+        if let Err(error) =
+            Handle::current().block_on(crate::services::bitcoin_import::remove_cube_import(
+                &self.network_directory,
+                &self.cube,
+            ))
+        {
+            if error == crate::daemon::stopping::STILL_STOPPING {
+                self.stop_refused = true;
+            } else {
+                self.warning = Some(DeleteError::Settings(settings::SettingsError::WritingFile(
+                    error,
+                )));
+            }
+            return Task::none();
+        }
+        self.deleted = true;
+        Task::perform(async {}, |_| {
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Deleted))
+        })
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::Confirm(cube_id))) => {
-                if cube_id != self.cube.id {
-                    return Task::none();
-                }
-
-                // Verify the PIN before proceeding with deletion. There is no
-                // stored PIN hash any more: the check is a trial decryption of
-                // this Cube's seed file, which costs ~831 ms. That is a
-                // blocking call on the UI thread, consistent with the
-                // `block_on(delete_wallet(...))` in `delete` below — this modal
-                // has always been synchronous. A confirm dialog that takes a
-                // beat to answer is acceptable; a cheap verifier next to an
-                // expensive one is not (I1).
-                if self.cube.has_pin(&self.datadir_root) {
-                    let pin = self.pin_input.value();
-                    let loc =
-                        crate::services::unlock::CubeLocation::new(&self.datadir_root, &self.cube);
-                    // The generic unlock refuses a Bitcoin Blake2b Cube before
-                    // it reads the PIN (the chain is dormant to it), which
-                    // left these Cubes undeletable behind an "update Tenshu"
-                    // notice. Check their PIN with the fork's own trial, as
-                    // the PIN screen does. Deleting runs nothing on the fork,
-                    // so the PIN is the whole admission; the fork trial has no
-                    // duress outcome, so a duress PIN is a wrong PIN here too.
-                    let attempt = if self.cube.network.is_blake2b() {
-                        crate::services::unlock::throttle::classify_connect_fork(
-                            &self.datadir_root,
-                            &loc,
-                            &pin,
-                        )
-                    } else {
-                        crate::services::unlock::throttle::classify_regular_pin(
-                            &self.datadir_root,
-                            &loc,
-                            &pin,
-                        )
-                    };
-                    match attempt {
-                        Ok(crate::services::unlock::throttle::PinAttempt::Classified(
-                            crate::services::unlock::PinOutcome::Unlock(_),
-                        )) => {}
-                        Ok(crate::services::unlock::throttle::PinAttempt::Locked(remaining)) => {
-                            self.pin_error = Some(
-                                crate::services::unlock::throttle::lockout_message(remaining),
-                            );
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                        // A duress PIN must not delete the Cube here — that
-                        // would be a quieter, unlogged wipe than the duress
-                        // path itself, and would confirm to an observer that
-                        // the PIN meant something. Treat it as a wrong PIN.
-                        Ok(_) => {
-                            self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                        Err(e) => {
-                            // Keystore failures are not wrong PINs (I7).
-                            self.pin_error = Some(e.to_string());
-                            self.pin_input.clear();
-                            return Task::none();
-                        }
-                    }
-                }
-
-                // Deleting a Cube right after locking it: its daemon may still
-                // be stopping in the directories removed below. Wait for that in
-                // a task, not in `delete_wallet` on the UI thread.
-                self.stop_refused = false;
-                let directories = self.daemon_directories();
-                if crate::daemon::stopping::any_stopping(&directories) {
-                    self.waiting_for_stop = true;
-                    return Task::perform(
-                        async move {
-                            // A wait that runs out is caught by `delete`,
-                            // which refuses while the stop is registered.
-                            for dir in directories {
-                                if !crate::daemon::stopping::wait_for_async(dir).await {
-                                    break;
-                                }
-                            }
-                        },
-                        move |_| {
-                            Message::View(ViewMessage::DeleteCube(
-                                DeleteCubeMessage::DaemonStopped(cube_id),
-                            ))
-                        },
-                    );
-                }
-                return self.delete();
+                return self.confirm_delete(cube_id);
             }
             Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DaemonStopped(cube_id))) => {
                 if cube_id == self.cube.id && self.waiting_for_stop {
@@ -9310,6 +9235,98 @@ impl DeleteCubeModal {
             _ => {}
         }
         Task::none()
+    }
+
+    fn confirm_delete(&mut self, cube_id: String) -> Task<Message> {
+        if cube_id != self.cube.id {
+            return Task::none();
+        }
+
+        // Verify the PIN before proceeding with deletion. There is no
+        // stored PIN hash any more: the check is a trial decryption of
+        // this Cube's seed file, which costs ~831 ms. That is a
+        // blocking call on the UI thread, consistent with the
+        // `block_on(delete_wallet(...))` in `delete` below — this modal
+        // has always been synchronous. A confirm dialog that takes a
+        // beat to answer is acceptable; a cheap verifier next to an
+        // expensive one is not (I1).
+        if self.cube.has_pin(&self.datadir_root) {
+            let pin = self.pin_input.value();
+            let loc = crate::services::unlock::CubeLocation::new(&self.datadir_root, &self.cube);
+            // The generic unlock refuses a Bitcoin Blake2b Cube before
+            // it reads the PIN (the chain is dormant to it), which
+            // left these Cubes undeletable behind an "update Tenshu"
+            // notice. Check their PIN with the fork's own trial, as
+            // the PIN screen does. Deleting runs nothing on the fork,
+            // so the PIN is the whole admission; the fork trial has no
+            // duress outcome, so a duress PIN is a wrong PIN here too.
+            let attempt = if self.cube.network.is_blake2b() {
+                crate::services::unlock::throttle::classify_connect_fork(
+                    &self.datadir_root,
+                    &loc,
+                    &pin,
+                )
+            } else {
+                crate::services::unlock::throttle::classify_regular_pin(
+                    &self.datadir_root,
+                    &loc,
+                    &pin,
+                )
+            };
+            match attempt {
+                Ok(crate::services::unlock::throttle::PinAttempt::Classified(
+                    crate::services::unlock::PinOutcome::Unlock(_),
+                )) => {}
+                Ok(crate::services::unlock::throttle::PinAttempt::Locked(remaining)) => {
+                    self.pin_error = Some(crate::services::unlock::throttle::lockout_message(
+                        remaining,
+                    ));
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+                // A duress PIN must not delete the Cube here — that
+                // would be a quieter, unlogged wipe than the duress
+                // path itself, and would confirm to an observer that
+                // the PIN meant something. Treat it as a wrong PIN.
+                Ok(_) => {
+                    self.pin_error = Some("Incorrect PIN. Please try again.".to_string());
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+                Err(e) => {
+                    // Keystore failures are not wrong PINs (I7).
+                    self.pin_error = Some(e.to_string());
+                    self.pin_input.clear();
+                    return Task::none();
+                }
+            }
+        }
+
+        // Deleting a Cube right after locking it: its daemon may still
+        // be stopping in the directories removed below. Wait for that in
+        // a task, not in `delete_wallet` on the UI thread.
+        self.stop_refused = false;
+        let directories = self.daemon_directories();
+        if crate::daemon::stopping::any_stopping(&directories) {
+            self.waiting_for_stop = true;
+            return Task::perform(
+                async move {
+                    // A wait that runs out is caught by `delete`,
+                    // which refuses while the stop is registered.
+                    for dir in directories {
+                        if !crate::daemon::stopping::wait_for_async(dir).await {
+                            break;
+                        }
+                    }
+                },
+                move |_| {
+                    Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::DaemonStopped(
+                        cube_id,
+                    )))
+                },
+            );
+        }
+        self.delete()
     }
 
     fn view(&self) -> Element<Message> {
@@ -9385,26 +9402,7 @@ impl DeleteCubeModal {
             .push(Row::new().push(text(help_text_3)));
 
         // Option to also delete the Connect API backup (only when relevant)
-        if self.can_delete_backup {
-            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
-                CheckBox::new(self.delete_connect_backup)
-                    .label(localized_copy(
-                        "Also delete Connect backup (frees a Cube slot)",
-                    ))
-                    .on_toggle(|checked| {
-                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
-                    }),
-            );
-            if self.delete_connect_backup {
-                col = col.push(
-                    p1_regular(localized_copy(
-                        "The Connect backup will be permanently deleted. \
-                         This frees a Cube slot on your account.",
-                    ))
-                    .style(theme::text::warning),
-                );
-            }
-        }
+        col = self.add_connect_backup_option(col);
 
         // PIN entry section
         if self.cube.has_pin(&self.datadir_root) {
@@ -9494,6 +9492,33 @@ impl DeleteCubeModal {
                 .style(delete_modal_card),
         )
         .map(Message::View)
+    }
+
+    fn add_connect_backup_option<'a>(
+        &self,
+        mut col: Column<'a, ViewMessage>,
+    ) -> Column<'a, ViewMessage> {
+        if self.can_delete_backup {
+            col = col.push(Space::new().height(Length::Fixed(5.0))).push(
+                CheckBox::new(self.delete_connect_backup)
+                    .label(localized_copy(
+                        "Also delete Connect backup (frees a Cube slot)",
+                    ))
+                    .on_toggle(|checked| {
+                        ViewMessage::DeleteCube(DeleteCubeMessage::DeleteConnectBackup(checked))
+                    }),
+            );
+            if self.delete_connect_backup {
+                col = col.push(
+                    p1_regular(localized_copy(
+                        "The Connect backup will be permanently deleted. \
+                         This frees a Cube slot on your account.",
+                    ))
+                    .style(theme::text::warning),
+                );
+            }
+        }
+        col
     }
 }
 
