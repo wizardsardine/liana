@@ -1344,24 +1344,9 @@ impl Tab {
             // Once closed, `idle_for()` is `None`, so this does not repeat.
             #[cfg(feature = "mcp-proposals")]
             State::Installer(installer) if installer.context.mcp_proposal.is_some() => {
-                if idle_expired
-                    || installer
-                        .context
-                        .mcp_proposal
-                        .as_ref()
-                        .is_some_and(|p| !p.unlocked())
-                {
-                    installer.expire_mcp_proposal();
-                    if !installer.proposal_install_dispatched || installer.proposal_finished {
-                        let root = installer.datadir.clone();
-                        let chain = installer.context.bitcoin_config.chain;
-                        let failure = installer.proposal_failure.clone();
-                        installer.stop();
-                        let (mut home, task) = Home::new_for_chain(root, Some(chain));
-                        home.set_error(failure.unwrap_or_else(|| "Proposal setup locked. Reopen the Cube and approve a new client to continue.".into()));
-                        self.state = State::Home(home);
-                        return task.map(Message::Launch);
-                    }
+                if let Some((home, task)) = Self::expire_idle_proposal(installer, idle_expired) {
+                    self.state = State::Home(home);
+                    return task.map(Message::Launch);
                 }
                 Task::none()
             }
@@ -1374,16 +1359,45 @@ impl Tab {
             }
             _ => Task::none(),
         };
-        if matches!(&self.state, State::App(app) if app.cube_settings().network.is_blake2b()) {
-            self.guard_fork_task(task)
-        } else {
-            if matches!(self.state, State::App(_)) {
+        match &self.state {
+            State::App(app) if app.cube_settings().network.is_blake2b() => {
+                self.guard_fork_task(task)
+            }
+            State::App(_) => {
                 let generation = self.app_generation;
                 task.map(move |message| Message::AppAsync(generation, Box::new(message)))
-            } else {
-                task
             }
+            _ => task,
         }
+    }
+
+    #[cfg(feature = "mcp-proposals")]
+    fn expire_idle_proposal(
+        installer: &mut Installer,
+        idle_expired: bool,
+    ) -> Option<(Home, Task<crate::home::Message>)> {
+        if !idle_expired
+            && installer
+                .context
+                .mcp_proposal
+                .as_ref()
+                .is_none_or(|p| p.unlocked())
+        {
+            return None;
+        }
+        installer.expire_mcp_proposal();
+        if installer.proposal_install_dispatched && !installer.proposal_finished {
+            return None;
+        }
+        let root = installer.datadir.clone();
+        let chain = installer.context.bitcoin_config.chain;
+        let failure = installer.proposal_failure.clone();
+        installer.stop();
+        let (mut home, task) = Home::new_for_chain(root, Some(chain));
+        home.set_error(failure.unwrap_or_else(|| {
+            "Proposal setup locked. Reopen the Cube and approve a new client to continue.".into()
+        }));
+        Some((home, task))
     }
 
     /// The global Connect auth boundary, broadcast by `GUI::update` to every
@@ -1406,46 +1420,8 @@ impl Tab {
         originated: bool,
         capability_revoked: bool,
     ) -> Task<Message> {
-        if !capability_revoked {
-            match &mut self.state {
-                State::App(app)
-                    if app.cube_settings().network.is_blake2b() && !app.requires_connect() =>
-                {
-                    app.on_local_auth_change(originated);
-                    return Task::none();
-                }
-                State::Loader(loader)
-                    if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
-                {
-                    loader.connect_client = None;
-                    return Task::none();
-                }
-                State::PinEntry(pin)
-                    if pin.cube().network.is_blake2b() && !pin.requires_connect() =>
-                {
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &mut pin.on_success;
-                    *connect_client = None;
-                    return Task::none();
-                }
-                State::PasskeyUnlock(unlock)
-                    if unlock.cube().network.is_blake2b() && !unlock.requires_connect() =>
-                {
-                    let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
-                        &mut unlock.on_success;
-                    *connect_client = None;
-                    return Task::none();
-                }
-                State::Installer(installer)
-                    if installer.context.fork_local_vault_allowed()
-                        && !installer.context.use_coincube_connect =>
-                {
-                    installer.context.coincube_client = None;
-                    installer.context.connect_jwt = None;
-                    return Task::none();
-                }
-                _ => {}
-            }
+        if !capability_revoked && self.clear_local_fork_auth(originated) {
+            return Task::none();
         }
         self.fork_session_generation = self.fork_session_generation.wrapping_add(1);
         self.fork_save_task.take();
@@ -1454,24 +1430,9 @@ impl Tab {
         let mut replacement = None;
         match &mut self.state {
             State::App(app) if app.cube_settings().network.is_blake2b() => {
-                let cube = app.cube_settings().clone();
-                let datadir = app.datadir().clone();
-                app.invalidate_fork_session();
-                app::session::close_cube(&cube.id);
-                // Dropping the fork App drops signing/export panels and its
-                // wallet. EmbeddedDaemon Drop uses fork-scoped safe cleanup;
-                // App::stop would also stop unrelated globally managed Tor.
-                let (mut home, startup) = Home::new_for_chain(datadir, Some(cube.network));
-                let adopted = match &change {
-                    AuthChange::SignIn { token, .. } if !capability_revoked && !originated => {
-                        home.adopt_connect_session(token)
-                    }
-                    _ => Task::none(),
-                };
-                home.set_error(if capability_revoked {
-                    "Bitcoin Blake2b is disabled or its availability could not be verified. Check Global Settings before reopening this Cube."
-                } else { "Connect session changed. Reopen this Cube after the account check finishes." });
-                command = Task::batch([startup, adopted]).map(Message::Launch);
+                let (home, task) =
+                    Self::invalidate_fork_app(app, &change, originated, capability_revoked);
+                command = task;
                 replacement = Some(State::Home(home));
             }
             // A Bitcoin App stays open across a Connect change — its wallet
@@ -1479,18 +1440,9 @@ impl Tab {
             // The App decides from the kind of change and who made it: see
             // `App::on_global_auth_change`.
             State::App(app) => app.on_global_auth_change(change.clone(), originated),
-            State::Home(home) => match &change {
-                AuthChange::SignIn { token, .. } if !originated => {
-                    command = home.adopt_connect_session(token).map(Message::Launch);
-                }
-                AuthChange::LogOut if !originated => {
-                    command = home.on_global_connect_logout().map(Message::Launch);
-                }
-                AuthChange::LogOut => {
-                    home.connect_account.invalidate_auth();
-                }
-                _ => {}
-            },
+            State::Home(home) => {
+                command = Self::apply_launcher_auth_change(home, &change, originated);
+            }
             State::Loader(loader) if loader.cube_settings.network.is_blake2b() => {
                 loader.invalidate_fork_session();
                 if capability_revoked {
@@ -1512,20 +1464,8 @@ impl Tab {
                 unlock.fail_open(if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before reopening this Cube." } else { "Connect session changed. Return Home and sign in again." }.into());
             }
             State::Installer(installer) if installer.context.bitcoin_config.chain.is_blake2b() => {
-                installer.stop();
-                // A Vault being built inside an open Cube leaves that Cube
-                // here: its session must not outlive it on Home.
-                if let Some(cube) = &installer.cube_settings {
-                    app::session::close_cube(&cube.id);
-                }
-                let (mut home, startup) = Home::new_for_chain(
-                    installer.datadir.clone(),
-                    Some(installer.context.bitcoin_config.chain),
-                );
-                home.set_error(
-                    if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before restarting this installation." } else { "Connect session changed; restart this Cube's installation after signing in" },
-                );
-                command = startup.map(Message::Launch);
+                let (home, task) = Self::invalidate_fork_installer(installer, capability_revoked);
+                command = task;
                 replacement = Some(State::Home(home));
             }
             _ => {}
@@ -1537,6 +1477,112 @@ impl Tab {
             self.state = state;
         }
         command
+    }
+
+    fn invalidate_fork_app(
+        app: &mut app::App,
+        change: &AuthChange,
+        originated: bool,
+        capability_revoked: bool,
+    ) -> (Home, Task<Message>) {
+        let cube = app.cube_settings().clone();
+        let datadir = app.datadir().clone();
+        app.invalidate_fork_session();
+        app::session::close_cube(&cube.id);
+        // Dropping the fork App drops signing/export panels and its
+        // wallet. EmbeddedDaemon Drop uses fork-scoped safe cleanup;
+        // App::stop would also stop unrelated globally managed Tor.
+        let (mut home, startup) = Home::new_for_chain(datadir, Some(cube.network));
+        let adopted = match change {
+            AuthChange::SignIn { token, .. } if !capability_revoked && !originated => {
+                home.adopt_connect_session(token)
+            }
+            _ => Task::none(),
+        };
+        home.set_error(if capability_revoked {
+            "Bitcoin Blake2b is disabled or its availability could not be verified. Check Global Settings before reopening this Cube."
+        } else { "Connect session changed. Reopen this Cube after the account check finishes." });
+        (home, Task::batch([startup, adopted]).map(Message::Launch))
+    }
+
+    fn apply_launcher_auth_change(
+        home: &mut Home,
+        change: &AuthChange,
+        originated: bool,
+    ) -> Task<Message> {
+        match change {
+            AuthChange::SignIn { token, .. } if !originated => {
+                home.adopt_connect_session(token).map(Message::Launch)
+            }
+            AuthChange::LogOut if !originated => {
+                home.on_global_connect_logout().map(Message::Launch)
+            }
+            AuthChange::LogOut => {
+                home.connect_account.invalidate_auth();
+                Task::none()
+            }
+            _ => Task::none(),
+        }
+    }
+
+    fn invalidate_fork_installer(
+        installer: &mut Installer,
+        capability_revoked: bool,
+    ) -> (Home, Task<Message>) {
+        installer.stop();
+        // A Vault being built inside an open Cube leaves that Cube
+        // here: its session must not outlive it on Home.
+        if let Some(cube) = &installer.cube_settings {
+            app::session::close_cube(&cube.id);
+        }
+        let (mut home, startup) = Home::new_for_chain(
+            installer.datadir.clone(),
+            Some(installer.context.bitcoin_config.chain),
+        );
+        home.set_error(
+            if capability_revoked { "Bitcoin Blake2b is disabled. Check Global Settings before restarting this installation." } else { "Connect session changed; restart this Cube's installation after signing in" },
+        );
+        (home, startup.map(Message::Launch))
+    }
+
+    fn clear_local_fork_auth(&mut self, originated: bool) -> bool {
+        match &mut self.state {
+            State::App(app)
+                if app.cube_settings().network.is_blake2b() && !app.requires_connect() =>
+            {
+                app.on_local_auth_change(originated);
+                true
+            }
+            State::Loader(loader)
+                if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
+            {
+                loader.connect_client = None;
+                true
+            }
+            State::PinEntry(pin) if pin.cube().network.is_blake2b() && !pin.requires_connect() => {
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &mut pin.on_success;
+                *connect_client = None;
+                true
+            }
+            State::PasskeyUnlock(unlock)
+                if unlock.cube().network.is_blake2b() && !unlock.requires_connect() =>
+            {
+                let crate::pin_entry::PinEntrySuccess::LoadApp { connect_client, .. } =
+                    &mut unlock.on_success;
+                *connect_client = None;
+                true
+            }
+            State::Installer(installer)
+                if installer.context.fork_local_vault_allowed()
+                    && !installer.context.use_coincube_connect =>
+            {
+                installer.context.coincube_client = None;
+                installer.context.connect_jwt = None;
+                true
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn accepts_fork_generation(&self, generation: u64) -> bool {
@@ -1621,42 +1667,7 @@ impl Tab {
                         return Err("This Cube changed while opening. Select it again to use the current details.".into());
                     }
                 }
-                if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
-                    return Err("The selected Cube belongs to another data directory.".into());
-                }
-                if cube.network != *chain {
-                    return Err(format!(
-                        "This Cube's settings say it lives on {}, but it was found in the {} folder. COINCUBE Desktop won't open it until the two agree.",
-                        cube.network.label(),
-                        chain.label(),
-                    ));
-                }
-                if let Some(reason) = home.chain_availability(cube.network).reason() {
-                    return Err(reason.to_string());
-                }
-                if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
-                    crate::services::unlock::creation_gate::evaluate_for_cube(cube, None)
-                {
-                    return Err(format!(
-                        "{reason}\n\n{}",
-                        crate::services::unlock::creation_gate::not_a_backup_copy(
-                            cube.is_passkey_cube()
-                        )
-                    ));
-                }
-                if cube.is_passkey_cube() && !crate::feature_flags::PASSKEY_ENABLED {
-                    return Err("This Cube is unlocked with a passkey, and passkey unlock is turned off in this build. Restore it from your Recovery Kit and its recovery password, or use a build with COINCUBE_ENABLE_PASSKEY set.".into());
-                }
-                if cube
-                    .bitcoin_import
-                    .as_deref()
-                    .and_then(app::settings::BitcoinImport::active_attachment)
-                    .is_some()
-                    && bitcoin_wallet_settings_for_cube(root, *chain, cube).is_none()
-                {
-                    return Err("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.".into());
-                }
-                Ok(())
+                Self::validate_launcher_cube(home, root, *chain, cube)
             }
             home::Message::Install(root, chain, flow, _) => {
                 if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
@@ -1675,6 +1686,48 @@ impl Tab {
         }
     }
 
+    fn validate_launcher_cube(
+        home: &Home,
+        root: &CoincubeDirectory,
+        chain: crate::chain::ChainId,
+        cube: &app::settings::CubeSettings,
+    ) -> Result<(), String> {
+        if !crate::chain::same_path(root.path(), home.datadir_path.path()) {
+            return Err("The selected Cube belongs to another data directory.".into());
+        }
+        if cube.network != chain {
+            return Err(format!(
+                "This Cube's settings say it lives on {}, but it was found in the {} folder. COINCUBE Desktop won't open it until the two agree.",
+                cube.network.label(),
+                chain.label(),
+            ));
+        }
+        if let Some(reason) = home.chain_availability(cube.network).reason() {
+            return Err(reason.to_string());
+        }
+        if let crate::services::unlock::creation_gate::CreationGate::Blocked(reason) =
+            crate::services::unlock::creation_gate::evaluate_for_cube(cube, None)
+        {
+            return Err(format!(
+                "{reason}\n\n{}",
+                crate::services::unlock::creation_gate::not_a_backup_copy(cube.is_passkey_cube())
+            ));
+        }
+        if cube.is_passkey_cube() && !crate::feature_flags::PASSKEY_ENABLED {
+            return Err("This Cube is unlocked with a passkey, and passkey unlock is turned off in this build. Restore it from your Recovery Kit and its recovery password, or use a build with COINCUBE_ENABLE_PASSKEY set.".into());
+        }
+        if cube
+            .bitcoin_import
+            .as_deref()
+            .and_then(app::settings::BitcoinImport::active_attachment)
+            .is_some()
+            && bitcoin_wallet_settings_for_cube(root, chain, cube).is_none()
+        {
+            return Err("This Cube's imported wallet registration is missing or inconsistent. Restore the wallet from its Recovery Kit before opening it.".into());
+        }
+        Ok(())
+    }
+
     fn guard_fork_task(&mut self, task: Task<Message>) -> Task<Message> {
         if task.units() == 0 {
             return task;
@@ -1690,49 +1743,34 @@ impl Tab {
         task
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        if let (State::Home(home), Message::Launch(launch)) = (&self.state, &message) {
-            if !home.accepts_launcher_message(launch) {
-                return Task::none();
-            }
-        }
-        if let State::App(app) = &self.state {
-            let origin = app.cache().app_generation;
-            if !self
-                .seed_export_origins
-                .iter()
-                .any(|(known, _, _, _)| *known == origin)
-            {
-                self.seed_export_origins.push((
-                    origin,
-                    app.datadir().path().to_path_buf(),
-                    app.cube_settings().id.clone(),
-                    app.cube_settings().network,
-                ));
-            }
-        }
-        let message = match message {
-            Message::LocalDuress(proof) => return self.activate_verified_seed_export_duress(proof),
+    fn preprocess_update(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        match message {
+            Message::LocalDuress(proof) => Break(self.activate_verified_seed_export_duress(proof)),
             Message::Run(app::Message::View(app::view::Message::DuressActivateLocal(proof))) => {
-                return self.activate_verified_seed_export_duress(proof);
+                Break(self.activate_verified_seed_export_duress(proof))
             }
             Message::OpeningTick(now) => {
                 self.sync_opening(now);
-                return Task::none();
+                Break(Task::none())
             }
-            Message::CancelOpening => return self.cancel_opening(),
+            Message::CancelOpening => Break(self.cancel_opening()),
             Message::OpenWithoutSpark => {
                 if let Some(opening) = self.opening.as_mut() {
                     opening.without_spark = true;
                 }
                 self.sync_opening(Instant::now());
-                return Task::none();
+                Break(Task::none())
             }
             message @ Message::WalletsLoadedAfterUnlock { .. } if self.opening_cancelled => {
                 // A load the user cancelled finished anyway: drop it and
                 // stop anything it started, as for a closed loader.
                 discard_closed_loader_result(message);
-                return Task::none();
+                Break(Task::none())
             }
             Message::UnlockMotionTick(now) => {
                 if self.unlock_motion.is_some_and(|started| {
@@ -1740,29 +1778,42 @@ impl Tab {
                 }) {
                     self.unlock_motion = None;
                 }
-                return Task::none();
+                Break(Task::none())
             }
             Message::AppAsync(generation, message) => {
                 if !self.accepts_app_generation(generation) {
                     discard_closed_loader_result(*message);
-                    return Task::none();
+                    return Break(Task::none());
                 }
-                *message
+                Continue(*message)
             }
             Message::ForkAsync(generation, message) => {
                 if generation != self.fork_session_generation {
                     discard_closed_loader_result(*message);
-                    return Task::none();
+                    return Break(Task::none());
                 }
-                *message
+                Continue(*message)
             }
             Message::ForkTaskFinished(generation, id) => {
                 if generation == self.fork_session_generation {
                     self.fork_tasks.remove(&id);
                 }
+                Break(Task::none())
+            }
+            message => Continue(message),
+        }
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        if let (State::Home(home), Message::Launch(launch)) = (&self.state, &message) {
+            if !home.accepts_launcher_message(launch) {
                 return Task::none();
             }
-            message => message,
+        }
+        self.remember_seed_export_origin();
+        let message = match self.preprocess_update(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
         };
         if matches!(
             message,
@@ -1811,6 +1862,55 @@ impl Tab {
             self.pending_seed_export_trials += 1;
         }
         result = self.track_opening(pin_verified, result);
+        self.finish_update(was_app, was_fork_app, preserve_seed_export_trial, result)
+    }
+
+    fn remember_seed_export_origin(&mut self) {
+        if let State::App(app) = &self.state {
+            let origin = app.cache().app_generation;
+            if !self
+                .seed_export_origins
+                .iter()
+                .any(|(known, _, _, _)| *known == origin)
+            {
+                self.seed_export_origins.push((
+                    origin,
+                    app.datadir().path().to_path_buf(),
+                    app.cube_settings().id.clone(),
+                    app.cube_settings().network,
+                ));
+            }
+        }
+    }
+
+    fn route_pending_recovery(&mut self, result: Task<Message>) -> Task<Message> {
+        if let (Some((root, chain, cube_id)), State::App(app)) =
+            (self.pending_recovery_route.take(), &self.state)
+        {
+            if app.datadir() == &root
+                && app.cube_settings().network == chain
+                && app.cube_settings().id == cube_id
+            {
+                return Task::batch([
+                    result,
+                    Task::done(Message::Run(app::Message::View(app::view::Message::Menu(
+                        app::menu::Menu::Cube(app::menu::CubeSubMenu::Settings(
+                            app::menu::CubeSettingsOption::Recovery,
+                        )),
+                    )))),
+                ]);
+            }
+        }
+        result
+    }
+
+    fn finish_update(
+        &mut self,
+        was_app: bool,
+        was_fork_app: bool,
+        preserve_seed_export_trial: bool,
+        mut result: Task<Message>,
+    ) -> Task<Message> {
         if !matches!(self.state, State::PinEntry(_) | State::PasskeyUnlock(_))
             || matches!(&self.state, State::PasskeyUnlock(passkey) if passkey.is_opening())
             || self.opening.is_some()
@@ -1837,24 +1937,18 @@ impl Tab {
             return self.invalidate_fork_session(AuthChange::LogOut, true);
         }
         if !was_app && is_app {
-            if let (Some((root, chain, cube_id)), State::App(app)) =
-                (self.pending_recovery_route.take(), &self.state)
-            {
-                if app.datadir() == &root
-                    && app.cube_settings().network == chain
-                    && app.cube_settings().id == cube_id
-                {
-                    result = Task::batch([
-                        result,
-                        Task::done(Message::Run(app::Message::View(app::view::Message::Menu(
-                            app::menu::Menu::Cube(app::menu::CubeSubMenu::Settings(
-                                app::menu::CubeSettingsOption::Recovery,
-                            )),
-                        )))),
-                    ]);
-                }
-            }
+            result = self.route_pending_recovery(result);
         }
+        self.guard_update_tasks(was_fork_app, is_app, preserve_seed_export_trial, result)
+    }
+
+    fn guard_update_tasks(
+        &mut self,
+        was_fork_app: bool,
+        is_app: bool,
+        preserve_seed_export_trial: bool,
+        result: Task<Message>,
+    ) -> Task<Message> {
         if matches!(&self.state, State::App(app) if app.cube_settings().network.is_blake2b()) {
             if preserve_seed_export_trial {
                 // A confirmed duress marker is an emergency even when this
