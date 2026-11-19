@@ -220,43 +220,7 @@ impl State for WalletSettingsState {
             return Task::none();
         };
         match message {
-            Message::WalletUpdated(res) => {
-                self.processing = false;
-                // Before the modal check: a Register opened while the save
-                // ran takes the result, and the field must not stay Saving.
-                if self.name_save == NameSave::Saving {
-                    self.name_save = if res.is_ok() {
-                        NameSave::Saved
-                    } else {
-                        NameSave::Failed
-                    };
-                }
-                if let Modal::RegisterWallet(modal) = &mut self.modal {
-                    // The modal takes the result, but this panel's wallet
-                    // must follow it too (as the Vault settings wrapper's
-                    // does): a name save that lands while Register is open
-                    // would otherwise still read as "Not saved yet" once it
-                    // closes. Signer fields keep what was typed.
-                    if let Ok(wallet) = &res {
-                        self.wallet = wallet.clone();
-                    }
-                    modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
-                } else {
-                    match res {
-                        Ok(wallet) => {
-                            self.keys_aliases = Self::keys_aliases(&wallet);
-                            self.wallet = wallet;
-                            self.updated = true;
-                            Task::none()
-                        }
-                        Err(e) => {
-                            let err_msg = crate::user_error::report(&e);
-                            self.warning = Some(e);
-                            Task::done(Message::View(view::Message::ShowError(err_msg)))
-                        }
-                    }
-                }
-            }
+            Message::WalletUpdated(res) => self.apply_wallet_update(daemon, cache, res),
             Message::View(view::Message::Settings(view::SettingsMessage::WalletAliasEdited(
                 alias,
             ))) => {
@@ -279,27 +243,7 @@ impl State for WalletSettingsState {
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::Save)) => {
-                self.modal = Modal::None;
-                self.processing = true;
-                self.updated = false;
-                let alias = self.changed_alias();
-                if alias.is_some() {
-                    self.name_save = NameSave::Saving;
-                } else {
-                    self.settle_failed_name();
-                }
-                Task::perform(
-                    update_aliases(
-                        self.data_dir.clone(),
-                        self.wallet.clone(),
-                        alias,
-                        self.keys_aliases
-                            .iter()
-                            .map(|(fg, name)| (*fg, name.value.to_owned()))
-                            .collect(),
-                    ),
-                    Message::WalletUpdated,
-                )
+                self.save_wallet_aliases()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ToggleWalletExpert)) => {
                 self.expert_open = !self.expert_open;
@@ -318,21 +262,7 @@ impl State for WalletSettingsState {
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ConfirmDescriptorCopy,
-            )) => {
-                if !self.descriptor_copy_review || !self.expert_open {
-                    return Task::none();
-                }
-                self.descriptor_copy_review = false;
-                let descriptor_text = match &self.descriptor {
-                    WalletDescriptor::Vault(vault) => vault.to_string(),
-                    WalletDescriptor::Imported(_) => format!(
-                        "Receive: {}\nChange: {}",
-                        self.descriptor.receive_descriptor(),
-                        self.descriptor.change_descriptor()
-                    ),
-                };
-                Task::done(Message::View(view::Message::Clipboard(descriptor_text)))
-            }
+            )) => self.copy_reviewed_descriptor(),
             Message::View(view::Message::Close) => {
                 self.modal = Modal::None;
                 Task::none()
@@ -385,21 +315,7 @@ impl State for WalletSettingsState {
             }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::ExportEncryptedDescriptor,
-            )) => {
-                if self.modal.is_none() {
-                    let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                        return Task::none();
-                    };
-                    let modal = VaultExportModal::new(
-                        Some(daemon),
-                        ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
-                    );
-                    let launch = modal.launch(true);
-                    self.modal = Modal::ImportExport(modal);
-                    return launch;
-                }
-                Task::none()
-            }
+            )) => self.launch_encrypted_descriptor_export(daemon),
             _ => match &mut self.modal {
                 Modal::RegisterWallet(m) => m.update(Some(daemon.clone()), cache, message),
                 _ => Task::none(),
@@ -429,6 +345,110 @@ impl State for WalletSettingsState {
             async move { daemon.get_info().await.map_err(|e| e.into()) },
             Message::Info,
         )
+    }
+}
+
+impl WalletSettingsState {
+    fn apply_wallet_update(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        res: Result<Arc<Wallet>, Error>,
+    ) -> Task<Message> {
+        self.processing = false;
+        // Before the modal check: a Register opened while the save
+        // ran takes the result, and the field must not stay Saving.
+        if self.name_save == NameSave::Saving {
+            self.name_save = if res.is_ok() {
+                NameSave::Saved
+            } else {
+                NameSave::Failed
+            };
+        }
+        if let Modal::RegisterWallet(modal) = &mut self.modal {
+            // The modal takes the result, but this panel's wallet
+            // must follow it too (as the Vault settings wrapper's
+            // does): a name save that lands while Register is open
+            // would otherwise still read as "Not saved yet" once it
+            // closes. Signer fields keep what was typed.
+            if let Ok(wallet) = &res {
+                self.wallet = wallet.clone();
+            }
+            modal.update(Some(daemon.clone()), cache, Message::WalletUpdated(res))
+        } else {
+            match res {
+                Ok(wallet) => {
+                    self.keys_aliases = Self::keys_aliases(&wallet);
+                    self.wallet = wallet;
+                    self.updated = true;
+                    Task::none()
+                }
+                Err(e) => {
+                    let err_msg = crate::user_error::report(&e);
+                    self.warning = Some(e);
+                    Task::done(Message::View(view::Message::ShowError(err_msg)))
+                }
+            }
+        }
+    }
+
+    fn save_wallet_aliases(&mut self) -> Task<Message> {
+        self.modal = Modal::None;
+        self.processing = true;
+        self.updated = false;
+        let alias = self.changed_alias();
+        if alias.is_some() {
+            self.name_save = NameSave::Saving;
+        } else {
+            self.settle_failed_name();
+        }
+        Task::perform(
+            update_aliases(
+                self.data_dir.clone(),
+                self.wallet.clone(),
+                alias,
+                self.keys_aliases
+                    .iter()
+                    .map(|(fg, name)| (*fg, name.value.to_owned()))
+                    .collect(),
+            ),
+            Message::WalletUpdated,
+        )
+    }
+
+    fn copy_reviewed_descriptor(&mut self) -> Task<Message> {
+        if !self.descriptor_copy_review || !self.expert_open {
+            return Task::none();
+        }
+        self.descriptor_copy_review = false;
+        let descriptor_text = match &self.descriptor {
+            WalletDescriptor::Vault(vault) => vault.to_string(),
+            WalletDescriptor::Imported(_) => format!(
+                "Receive: {}\nChange: {}",
+                self.descriptor.receive_descriptor(),
+                self.descriptor.change_descriptor()
+            ),
+        };
+        Task::done(Message::View(view::Message::Clipboard(descriptor_text)))
+    }
+
+    fn launch_encrypted_descriptor_export(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Task<Message> {
+        if self.modal.is_none() {
+            let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
+                return Task::none();
+            };
+            let modal = VaultExportModal::new(
+                Some(daemon),
+                ImportExportType::ExportEncryptedDescriptor(Box::new(descriptor)),
+            );
+            let launch = modal.launch(true);
+            self.modal = Modal::ImportExport(modal);
+            return launch;
+        }
+        Task::none()
     }
 }
 
@@ -498,7 +518,7 @@ impl RegisterWalletModal {
             result,
         } = message
         {
-            return self.finish_registration(attempt, fingerprint, result);
+            return self.apply_device_registration_result(attempt, fingerprint, result);
         }
         if daemon.is_none() {
             tracing::warn!("RegisterWalletModal::update called without daemon");
@@ -519,61 +539,40 @@ impl RegisterWalletModal {
                     Task::done(Message::View(view::Message::ShowError(err_msg)))
                 }
             },
-            Message::WalletUpdated(res) => {
-                self.processing = false;
-                self.chosen_hw = None;
-                match res {
-                    Ok(wallet) => {
-                        self.registered = HashSet::new();
-                        for hw in &wallet.hardware_wallets {
-                            self.registered.insert(hw.fingerprint);
-                        }
-                        self.wallet = wallet;
-                    }
-                    Err(e) => {
-                        if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            let err_msg = crate::user_error::report(&e);
-                            self.warning = Some(e);
-                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::View(view::Message::SelectHardwareWallet(i)) => {
-                if self.wallet.is_imported() {
-                    return self.register_imported(i);
-                }
-                if let Some(HardwareWallet::Supported {
-                    fingerprint,
-                    device,
-                    ..
-                }) = self.hws.list.get(i)
-                {
-                    self.chosen_hw = Some(i);
-                    self.processing = true;
-                    Task::perform(
-                        register_wallet(
-                            self.data_dir.clone(),
-                            device.clone(),
-                            *fingerprint,
-                            self.wallet.clone(),
-                        ),
-                        Message::WalletUpdated,
-                    )
-                } else {
-                    Task::none()
-                }
-            }
+            Message::WalletUpdated(res) => self.apply_registration_wallet_update(res),
+            Message::View(view::Message::SelectHardwareWallet(i)) => self.select_hardware_wallet(i),
             _ => Task::none(),
         }
     }
 }
 
 impl RegisterWalletModal {
-    /// Closes out the registration `attempt` started, unless the dialog has
-    /// since been closed or another attempt replaced it.
-    fn finish_registration(
+    fn apply_registration_wallet_update(
+        &mut self,
+        res: Result<Arc<Wallet>, Error>,
+    ) -> Task<Message> {
+        self.processing = false;
+        self.chosen_hw = None;
+        match res {
+            Ok(wallet) => {
+                self.registered = HashSet::new();
+                for hw in &wallet.hardware_wallets {
+                    self.registered.insert(hw.fingerprint);
+                }
+                self.wallet = wallet;
+            }
+            Err(e) => {
+                if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
+                    let err_msg = crate::user_error::report(&e);
+                    self.warning = Some(e);
+                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                }
+            }
+        }
+        Task::none()
+    }
+
+    fn apply_device_registration_result(
         &mut self,
         attempt: uuid::Uuid,
         fingerprint: Fingerprint,
@@ -596,6 +595,32 @@ impl RegisterWalletModal {
                 self.warning = Some(e);
                 Task::done(Message::View(view::Message::ShowError(err_msg)))
             }
+        }
+    }
+
+    fn select_hardware_wallet(&mut self, i: usize) -> Task<Message> {
+        if self.wallet.is_imported() {
+            return self.register_imported(i);
+        }
+        if let Some(HardwareWallet::Supported {
+            fingerprint,
+            device,
+            ..
+        }) = self.hws.list.get(i)
+        {
+            self.chosen_hw = Some(i);
+            self.processing = true;
+            Task::perform(
+                register_wallet(
+                    self.data_dir.clone(),
+                    device.clone(),
+                    *fingerprint,
+                    self.wallet.clone(),
+                ),
+                Message::WalletUpdated,
+            )
+        } else {
+            Task::none()
         }
     }
 

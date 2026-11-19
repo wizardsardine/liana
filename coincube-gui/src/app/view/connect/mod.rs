@@ -285,194 +285,17 @@ pub fn connect_sheet<'a>(
         .flatten()
         .map(|user| user.email.as_str())
         .or(unverified.map(|u| u.email.as_str()));
-    let mut heading = Row::new()
-        .push(
-            iced::widget::text(localized_copy(title))
-                .size(24)
-                .font(coincube_ui::font::SEMIBOLD)
-                .style(theme::tenshu::text::ink),
-        )
-        .spacing(16)
-        .align_y(Alignment::Center)
-        .width(Length::Fill);
-    if let Some(email) = identity {
-        heading = heading.push(tenshu_text::body(email).style(theme::tenshu::text::muted));
-    }
-    heading = heading
-        .push(iced::widget::Space::new().width(Length::Fill))
-        .push(
-            FocusableAction::new(
-                CLOSE_ID,
-                centred(
-                    Row::new()
-                        .push(cross_icon().size(14).style(theme::tenshu::text::ink))
-                        .push(tenshu_text::label(localized_copy("Close")))
-                        .spacing(6)
-                        .align_y(Alignment::Center),
-                ),
-                ConnectSheetMessage::FocusAction,
-            )
-            .height(Length::Fixed(36.0))
-            .padding([0, 12])
-            .style(|theme, status| sheet_button_style(theme, status, ActionKind::Secondary))
-            .on_press(ConnectSheetMessage::Close),
-        );
+    let heading = sheet_heading(title, identity);
 
-    let content: Element<ConnectSheetMessage> = if blocked {
-        text::p1_regular("Connect authorization ended. Close and reopen this Cube through authenticated Connect startup to reconnect.").into()
-    } else if let Some(unverified) = unverified.filter(|_| !show_auth) {
-        unverified_account_ux(unverified)
-    } else if show_auth {
-        connect_account_body(acct).map(ConnectSheetMessage::Account)
-    } else if acct.is_checking_session() {
-        Column::new()
-            .push(sheet_title(section_label(active_section)))
-            .push(lead(localized_copy("Loading your Connect account…")))
-            .spacing(4)
-            .into()
-    } else if signed_in {
-        let section_content = match active_section {
-            ConnectSheetSection::Account => sheet_account_ux(acct),
-            ConnectSheetSection::PlanBilling => plan_billing_ux(acct),
-            ConnectSheetSection::Contacts => contacts::contacts_ux(acct),
-            ConnectSheetSection::DevicesSecurity => security_ux(acct),
-            ConnectSheetSection::Duress => duress_ux(acct),
-            ConnectSheetSection::RecoveryServices => recovery_services_ux(acct),
-        };
-        let mut column = Column::new().spacing(12);
-        if let Some(error) = acct.error.as_ref() {
-            column = column.push(account_error_card(error));
-        }
-        if let Some(left) = acct.backup_codes_notice {
-            column = column.push(two_factor::backup_codes_notice(left));
-        }
-        let content: Element<ConnectAccountMessage> = column.push(section_content).into();
-        content.map(ConnectSheetMessage::Account)
-    } else if active_section == ConnectSheetSection::Account {
-        signed_out_account_ux(acct.signed_out_by)
-    } else {
-        signed_out_section_ux(active_section)
-    };
-    let body: Element<ConnectSheetMessage> = if !show_auth {
-        let mut sections = vec![
-            (
-                "tenshu.connect.section.account",
-                ConnectSheetSection::Account,
-            ),
-            (
-                "tenshu.connect.section.plan",
-                ConnectSheetSection::PlanBilling,
-            ),
-            (
-                "tenshu.connect.section.contacts",
-                ConnectSheetSection::Contacts,
-            ),
-            (
-                "tenshu.connect.section.security",
-                ConnectSheetSection::DevicesSecurity,
-            ),
-        ];
-        if signed_in && acct.show_duress() {
-            sections.push(("tenshu.connect.section.duress", ConnectSheetSection::Duress));
-        }
-        sections.push((
-            "tenshu.connect.section.recovery",
-            ConnectSheetSection::RecoveryServices,
-        ));
-        let mut navigation = Column::new().spacing(6).height(Length::Fill);
-        for (id, section) in sections {
-            let selected = section == active_section;
-            let icon = match section {
-                ConnectSheetSection::Account => person_outline_icon(),
-                ConnectSheetSection::PlanBilling => credit_card_icon(),
-                ConnectSheetSection::Contacts => people_icon(),
-                ConnectSheetSection::DevicesSecurity => laptop_icon(),
-                ConnectSheetSection::Duress => shield_check_icon(),
-                ConnectSheetSection::RecoveryServices => shield_check_icon(),
-            };
-            let label = tenshu_text::body(section_label(section));
-            navigation = navigation.push(
-                FocusableAction::new(
-                    id,
-                    centred(
-                        Row::new()
-                            .push(icon.size(18).style(if selected {
-                                theme::tenshu::text::accent
-                            } else {
-                                theme::tenshu::text::muted
-                            }))
-                            .push(if selected {
-                                label.font(coincube_ui::font::SEMIBOLD)
-                            } else {
-                                label
-                            })
-                            .spacing(10)
-                            .align_y(Alignment::Center),
-                    ),
-                    ConnectSheetMessage::FocusAction,
-                )
-                .width(Length::Fill)
-                .height(Length::Fixed(theme::tenshu::size::NAV_ITEM_HEIGHT))
-                .padding([0, 12])
-                .style(move |theme, status| {
-                    theme::tenshu::control::nav_item(theme, status, selected)
-                })
-                .on_press(ConnectSheetMessage::SelectSection(section)),
-            );
-        }
-        navigation = navigation
-            .push(iced::widget::Space::new().height(Length::Fill))
-            .push(
-                container(tenshu_text::caption(
-                    localized_copy("Account-wide. Each Cube's own service connection stays in that Cube's Settings › Connections."),
-                ))
-                .padding([0, 12]),
-            );
-        let reading_width = if signed_in && active_section == ConnectSheetSection::RecoveryServices
-        {
-            f32::INFINITY
-        } else {
-            680.0
-        };
-        Row::new()
-            .push(
-                container(navigation)
-                    .padding([16, 12])
-                    .width(Length::Fixed(232.0))
-                    .height(Length::Fill),
-            )
-            .push(vertical_rule())
-            .push(
-                scrollable(
-                    container(container(content).max_width(reading_width)).padding(iced::Padding {
-                        top: 28.0,
-                        right: 40.0,
-                        bottom: 40.0,
-                        left: 40.0,
-                    }),
-                )
-                .id(CONTENT_SCROLL_ID)
-                .width(Length::Fill)
-                .height(Length::Fill),
-            )
-            .height(Length::Fill)
-            .into()
-    } else {
-        container(
-            scrollable(container(content).padding(iced::Padding {
-                right: 30.0,
-                ..iced::Padding::ZERO
-            }))
-            .id(CONTENT_SCROLL_ID)
-            .width(Length::Fill)
-            .height(Length::Fill),
-        )
-        .max_width(600)
-        .center_x(Length::Fill)
-        .height(Length::Fill)
-        .padding(28)
-        .into()
-    };
+    let content = sheet_content(
+        acct,
+        blocked,
+        unverified,
+        show_auth,
+        signed_in,
+        active_section,
+    );
+    let body = sheet_body(acct, content, show_auth, signed_in, active_section);
 
     // The slot stays when there is no rail (a failed account check, duress
     // recovery) so the body keeps its place in the tree.
@@ -481,28 +304,7 @@ pub fn connect_sheet<'a>(
         _ => iced::widget::Space::new().width(Length::Fill).into(),
     };
 
-    container(
-        Column::new()
-            .push(
-                container(heading)
-                    .height(Length::Fixed(72.0))
-                    .center_y(Length::Fixed(72.0))
-                    .padding(iced::Padding {
-                        left: 28.0,
-                        right: 24.0,
-                        ..iced::Padding::ZERO
-                    }),
-            )
-            .push(horizontal_rule())
-            .push(rail)
-            .push(body)
-            .spacing(0)
-            .height(Length::Fill),
-    )
-    .max_width(if show_auth { 600 } else { 1040 })
-    .height(Length::Fill)
-    .style(sheet_style)
-    .into()
+    sheet_surface(heading, rail, body, show_auth)
 }
 
 fn section_label(section: ConnectSheetSection) -> &'static str {
@@ -1701,96 +1503,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
             let mut col = Column::new().push(horizontal_rule());
 
             for d in devices {
-                let name = non_blank(d.device_name.as_deref()).unwrap_or("Unknown Device");
-                let time_label = if let Some(ref last_used) = d.last_used_at {
-                    format!("Last activity {}", format_datetime(last_used))
-                } else {
-                    format!("Added {}", format_datetime(&d.created_at))
-                };
-
-                let mut title = Row::new()
-                    .push(tenshu_text::label(name))
-                    .spacing(8)
-                    .align_y(Alignment::Center);
-                if d.is_current {
-                    title = title.push(row_tag("Current", true));
-                }
-                let mut row = Row::new()
-                    .push(laptop_icon().size(20).style(theme::tenshu::text::muted))
-                    .push(
-                        Column::new()
-                            .push(title)
-                            .push(lead(time_label))
-                            .width(Length::Fill),
-                    )
-                    .spacing(16)
-                    .align_y(Alignment::Center);
-
-                if !d.is_current {
-                    let is_deleting = state.verified_devices_state.deleting_ids.contains(&d.id);
-                    let mut remove = sheet_button(
-                        if is_deleting { "Removing…" } else { "Remove" },
-                        ActionKind::Secondary,
-                        true,
-                    );
-                    if !is_deleting {
-                        remove = remove.on_press(
-                            ConnectAccountMessage::ReviewVerifiedDeviceRemoval(Some(d.id)),
-                        );
-                    }
-                    row = row.push(remove);
-                }
-
-                col = col
-                    .push(container(row).padding([10, 0]).width(Length::Fill))
-                    .push(horizontal_rule());
-                if state.review_device_removal == Some(d.id) {
-                    col = col.push(
-                        container(
-                            Column::new()
-                                .push(group_title(localized_format!(
-                                    "Remove {name}?",
-                                    "¿Retirar {name}?"
-                                )))
-                                .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-                                .push(
-                                    tenshu_text::body(localized_copy(
-                                        "This removes the device from your verified devices.",
-                                    ))
-                                    .size(13),
-                                )
-                                .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
-                                .push(
-                                    Row::new()
-                                        .push(
-                                            sheet_button(
-                                                localized_format!(
-                                                    "Remove {name}",
-                                                    "Eliminar a {name}"
-                                                ),
-                                                ActionKind::Primary,
-                                                false,
-                                            )
-                                            .on_press(
-                                                ConnectAccountMessage::DeleteVerifiedDevice(d.id),
-                                            ),
-                                        )
-                                        .push(
-                                            sheet_button("Cancel", ActionKind::Secondary, false)
-                                                .on_press(
-                                                ConnectAccountMessage::ReviewVerifiedDeviceRemoval(
-                                                    None,
-                                                ),
-                                            ),
-                                        )
-                                        .spacing(12),
-                                ),
-                        )
-                        .padding([14, 16])
-                        .width(Length::Fill)
-                        .style(review_style),
-                    );
-                }
+                col = append_verified_device(col, state, d);
             }
 
             col.into()
@@ -1798,49 +1511,7 @@ fn security_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccount
     };
 
     let mut activity_summary = None;
-    let activity_section: Element<ConnectAccountMessage> = match &state.login_activity {
-        None => lead(localized_copy("Loading activity…")).into(),
-        Some(activity) if activity.is_empty() => {
-            lead(localized_copy("No login activity on record.")).into()
-        }
-        Some(activity) => {
-            let shown = &activity[..activity.len().min(50)];
-            let succeeded = shown.iter().filter(|a| a.success == Some(true)).count();
-            let failed = shown.iter().filter(|a| a.success == Some(false)).count();
-            activity_summary = Some(format!("{succeeded} successful · {failed} failed"));
-            ruled_list(shown.iter().map(|a| {
-                let (icon, status, tone) = match a.success {
-                    Some(true) => (check_circle_icon(), "Successful", Tone::Good),
-                    Some(false) => (x_circle_icon(), "Failed", Tone::Bad),
-                    None => (question_circle_icon(), "Unknown", Tone::Muted),
-                };
-
-                let ip = non_blank(a.ip_address.as_deref());
-                let ua = non_blank(a.device_name.as_deref());
-                let shorten = |u: &str| {
-                    if u.chars().count() > 60 {
-                        format!("{}…", u.chars().take(59).collect::<String>())
-                    } else {
-                        u.to_string()
-                    }
-                };
-                let ip_and_ua = match (ip, ua) {
-                    (Some(i), Some(u)) => format!("{} - {}", i, shorten(u)),
-                    (Some(i), None) => i.to_string(),
-                    (None, Some(u)) => shorten(u),
-                    (None, None) => "Unknown device".to_string(),
-                };
-
-                Row::new()
-                    .push(container(status_line(icon, status, tone)).width(Length::Fixed(120.0)))
-                    .push(tenshu_text::body(ip_and_ua).width(Length::Fill))
-                    .push(lead(format_datetime(&a.created_at)))
-                    .spacing(16)
-                    .align_y(Alignment::Center)
-                    .into()
-            }))
-        }
-    };
+    let activity_section = login_activity_section(state, &mut activity_summary);
 
     let mut activity_heading = Row::new()
         .push(group_title(localized_copy("Login Activity")).width(Length::Fill))
@@ -1935,8 +1606,6 @@ fn checking_duress_ux<'a>(status: DuressGateStatus) -> Element<'a, ConnectAccoun
 /// `services::duress::enroll`; this surface explains eligibility and the
 /// credentials the user will set, and surfaces the Tier 2 BIG warning.
 fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMessage> {
-    use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
-
     // A submission abandoned on another sheet route may still succeed. Keep
     // its payload for local arming without resurfacing the entered secrets.
     if state.duress_enroll_abandoned {
@@ -2055,249 +1724,16 @@ fn duress_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAccountMe
     let locally_armed = state.duress_locally_armed;
 
     if locally_armed {
-        col = col.push(
-            Column::new()
-                .push(
-                    text::p1_bold(localized_copy("Duress mode is enabled"))
-                        .style(theme::text::success),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(localized_copy(
-                        "Your duress PIN is armed on every Cube on this device. Entering it \
-                         at any Cube's unlock screen triggers a duress wipe and locks your \
-                         account.",
-                    ))
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-                )
-                .spacing(2)
-                .width(Length::Fill),
-        );
-
-        // Enrolled-state Recovery-Kit warning (master decision 6): if a Vault
-        // Cube's kit is incomplete — e.g. a Vault created *after* enrollment,
-        // whose Wallet Descriptor was never added to the kit — surface the
-        // same shape-aware checklist as a warning. Duress stays on; this is a
-        // nudge, not a gate (no disable pressure).
-        if let Some(warning) = duress_enrolled_kit_warning(state) {
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
-            col = col.push(warning);
-        }
-
-        // Disable control — shown only when enrolled & inactive (this whole
-        // branch is unreachable during active duress, which routes to the
-        // recovery/cryptic screen, but guard anyway). Styled as a
-        // destructive-secondary action with a one-line explainer.
-        if !duress_active {
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-            col = col.push(
-                button::secondary(None, localized_copy("Disable Duress Mode"))
-                    .width(Length::Fixed(240.0))
-                    .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
-            );
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            col = col.push(
-                text::p2_regular(localized_copy(
-                    "Turns off duress on all your devices. You can re-enable it anytime.",
-                ))
-                .width(Length::Fill)
-                .style(theme::text::secondary),
-            );
-        }
+        col = append_locally_armed_duress(state, col, duress_active);
     } else if server_enrolled {
         // Enrolled on the account but not armed on THIS device (set up on
         // another device, or a local persist that didn't complete). Be honest:
         // the duress PIN does nothing here. No setup CTA — re-enrolling an
         // already-enrolled account is rejected server-side, and this device
         // can't arm without the duress PIN it never had.
-        col = col.push(
-            Column::new()
-                .push(
-                    text::p1_bold(localized_copy("Duress mode is enabled on your account"))
-                        .style(theme::text::primary),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(localized_copy(
-                        "It was set up on another device, so it is not armed on this one — \
-                         entering your duress PIN here will not trigger a wipe. Manage duress \
-                         mode from the device where you enabled it.",
-                    ))
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-                )
-                .spacing(2)
-                .width(Length::Fill),
-        );
-
-        // Duress can still be turned off account-wide from here (the server
-        // disable propagates to every device); this one just has no local PIN
-        // hashes to clear. Shown only while inactive.
-        if !duress_active {
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-            col = col.push(
-                button::secondary(None, localized_copy("Disable Duress Mode"))
-                    .width(Length::Fixed(240.0))
-                    .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
-            );
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            col = col.push(
-                text::p2_regular(localized_copy(
-                    "Turns off duress on all your devices. You can re-enable it anytime.",
-                ))
-                .width(Length::Fill)
-                .style(theme::text::secondary),
-            );
-        }
+        col = append_other_device_duress(col, duress_active);
     } else {
-        let delays: String = DuressDelay::ALL
-            .iter()
-            .map(|d| d.label())
-            .collect::<Vec<_>>()
-            .join(" · ");
-
-        // Credentials the user will set during enrollment.
-        col = col.push(
-            Column::new()
-                .push(text::p1_bold(localized_copy("You'll set")).style(theme::text::primary))
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(
-                        localized_copy("• A duress PIN — one you don't use to unlock any of your Cubes."),
-                    )
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-                )
-                .push(
-                    text::p2_regular(localized_format!(
-                        "• An all-clear passphrase — at least {} characters, used to unlock \
-                         your account from a trusted device.", "• Una contraseña completa —al menos caracteres de {}— usada para desbloquear su cuenta desde un dispositivo de confianza.",
-                        MIN_ALL_CLEAR_LEN
-                    ))
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-                )
-                .push(
-                    text::p2_regular(localized_copy("• A duress recovery-kit password — covers all your Cubes."))
-                        .width(Length::Fill)
-                        .style(theme::text::secondary),
-                )
-                .push(
-                    text::p2_regular(localized_format!("• An unlock delay: {}.", "• Un retraso de desbloqueo: {}.", delays))
-                        .width(Length::Fill)
-                        .style(theme::text::secondary),
-                )
-                .spacing(6)
-                .width(Length::Fill),
-        );
-
-        col = col
-            .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
-            .push(divider_line())
-            .push(iced::widget::Space::new().height(Length::Fixed(20.0)));
-
-        // Per-Cube recovery-kit checklist. A duress wipe is only reversible
-        // from Connect for Cubes that have a Recovery Kit, so we list the
-        // user's mainnet Cubes with their backup state and nudge them to back
-        // up each one first. The list is additive — when it hasn't loaded (or
-        // there are no mainnet Cubes) the card still shows its guidance copy.
-        col = col.push({
-            let mut card_col = Column::new()
-                .push(
-                    text::p1_bold(localized_copy("Set up a Cube Recovery Kit for each Cube"))
-                        .style(theme::text::warning),
-                )
-                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                .push(
-                    text::p2_regular(localized_copy(
-                        "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect. \
-                         Seed-only Cubes need their Master Seed Phrase backed up; Cubes with a \
-                         Vault need both the Master Seed Phrase and the Vault Wallet Descriptor. \
-                         Finish the Recovery Kit for each of your Vault Cubes before enabling \
-                         duress mode.",
-                    ))
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-                );
-            if let Some(list) = duress_recovery_kit_list(state) {
-                card_col = card_col
-                    .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
-                    .push(list);
-            }
-            // Transparency footnote for the has_vault gate's accepted
-            // limitation (PLAN-duress-vault-gate master §9): other-device
-            // Cubes are shown as *reported to Connect*, and a Vault created on
-            // another device that hasn't synced yet can still read as
-            // vaultless here. Only surfaced when the checklist actually
-            // includes a Cube this device doesn't hold, so single-device users
-            // aren't shown an irrelevant caveat.
-            let has_other_device_cube = state
-                .duress_cubes
-                .as_deref()
-                .is_some_and(|cubes| cubes.iter().any(|c| !c.local));
-            if has_other_device_cube {
-                card_col = card_col
-                    .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
-                    .push(
-                        text::caption(localized_copy(
-                            "Cubes on your other devices are shown as reported to Connect. A \
-                             Vault created on another device that hasn't synced yet may not \
-                             appear here — open that device to confirm its Recovery Kit.",
-                        ))
-                        .width(Length::Fill)
-                        .style(theme::text::secondary),
-                    );
-            }
-            card_col.spacing(2).width(Length::Fill)
-        });
-
-        col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
-        // The hard vault gate (PLAN-duress-vault-gate): enrollment is blocked
-        // while any Vault Cube in the checklist has an incomplete (or
-        // unverifiable) Recovery Kit — a duress wipe of such a Cube would be
-        // irreversible. This is now the single hard requirement: there is no
-        // "advanced" bypass and no sovereign path.
-        //
-        // Fail closed on an unloaded checklist (`None`): until the cube list +
-        // kit statuses land we can't confirm every Vault Cube is safe, so the
-        // CTA stays disabled rather than opening a fail-open window before the
-        // fetch completes (master I7 / Resolved decision 4). A failed fetch
-        // also leaves `None`, so it stays blocked. An empty (loaded) list is
-        // `Some([])` → not blocked.
-        let cubes_loaded = state.duress_cubes.is_some();
-        let gate_blocked = duress_tier1_gate_blocked(state.duress_cubes.as_deref());
-        if gate_blocked {
-            // Disabled CTA — `button::primary` with no `.on_press` renders
-            // inert. The state handler re-checks the gate too, so a stale view
-            // that somehow fires `StartEnrollment` no-ops (belt-and-suspenders).
-            col = col.push(
-                button::primary(None, localized_copy("Set up Duress Mode"))
-                    .width(Length::Fixed(240.0)),
-            );
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            // Distinguish "still verifying" from "known incomplete": the former
-            // shouldn't accuse the user of an unfinished kit before we've even
-            // checked.
-            let gate_copy = if cubes_loaded {
-                "Finish the Recovery Kit for your Vault Cubes above to enable Duress Mode."
-            } else {
-                "Checking your Cubes' Recovery Kits…"
-            };
-            col = col.push(
-                text::p2_regular(gate_copy)
-                    .width(Length::Fill)
-                    .style(theme::text::secondary),
-            );
-        } else {
-            col = col.push(
-                button::primary(None, localized_copy("Set up Duress Mode"))
-                    .width(Length::Fixed(240.0))
-                    .on_press(ConnectAccountMessage::Duress(
-                        DuressMessage::StartEnrollment,
-                    )),
-            );
-        }
+        col = append_duress_setup(state, col);
     }
 
     // Emergency contacts (Estate Notifications — PR 1). Rendered below the
@@ -2753,7 +2189,711 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
     };
 
     // Variant thumbnails row
-    let variant_row: Element<ConnectCubeMessage> = if data.variants.len() > 1 {
+    let variant_row = avatar_variant_row(state, data, active_url);
+
+    let regen_btn = if regen_remaining == 0 {
+        button::primary(None, localized_copy("No Regenerations Remaining"))
+    } else {
+        button::primary(None, localized_copy("Regenerate Avatar")).on_press(
+            ConnectCubeMessage::Avatar(AvatarMessage::SetStep(AvatarFlowStep::Questionnaire)),
+        )
+    };
+
+    let download_btn = button::secondary(None, localized_copy("Download PNG"))
+        .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DownloadAvatar));
+
+    container(
+        Column::new()
+            .push(
+                Row::new()
+                    .push(image_widget)
+                    .push(iced::widget::Space::new().width(Length::Fixed(16.0)))
+                    .push(
+                        Column::new()
+                            .push(text::p1_bold(archetype_upper).color(color::ORANGE))
+                            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                            .push(text::p2_regular(regen_text).color(color::GREY_3))
+                            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+                            .push(regen_btn)
+                            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                            .push(download_btn)
+                            .spacing(0),
+                    )
+                    .align_y(Alignment::Start),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
+            .push(variant_row)
+            .padding(16)
+            .spacing(0),
+    )
+    .style(card_style)
+    .width(Length::Fill)
+    .into()
+}
+
+fn sheet_heading<'a>(
+    title: &'static str,
+    identity: Option<&'a str>,
+) -> Row<'a, ConnectSheetMessage> {
+    let mut heading = Row::new()
+        .push(
+            iced::widget::text(localized_copy(title))
+                .size(24)
+                .font(coincube_ui::font::SEMIBOLD)
+                .style(theme::tenshu::text::ink),
+        )
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .width(Length::Fill);
+    if let Some(email) = identity {
+        heading = heading.push(tenshu_text::body(email).style(theme::tenshu::text::muted));
+    }
+    heading = heading
+        .push(iced::widget::Space::new().width(Length::Fill))
+        .push(
+            FocusableAction::new(
+                CLOSE_ID,
+                centred(
+                    Row::new()
+                        .push(cross_icon().size(14).style(theme::tenshu::text::ink))
+                        .push(tenshu_text::label(localized_copy("Close")))
+                        .spacing(6)
+                        .align_y(Alignment::Center),
+                ),
+                ConnectSheetMessage::FocusAction,
+            )
+            .height(Length::Fixed(36.0))
+            .padding([0, 12])
+            .style(|theme, status| sheet_button_style(theme, status, ActionKind::Secondary))
+            .on_press(ConnectSheetMessage::Close),
+        );
+
+    heading
+}
+
+fn sheet_body<'a>(
+    acct: &'a ConnectAccountPanel,
+    content: Element<'a, ConnectSheetMessage>,
+    show_auth: bool,
+    signed_in: bool,
+    active_section: ConnectSheetSection,
+) -> Element<'a, ConnectSheetMessage> {
+    if !show_auth {
+        let navigation = sheet_navigation(acct, signed_in, active_section);
+        let reading_width = if signed_in && active_section == ConnectSheetSection::RecoveryServices
+        {
+            f32::INFINITY
+        } else {
+            680.0
+        };
+        Row::new()
+            .push(
+                container(navigation)
+                    .padding([16, 12])
+                    .width(Length::Fixed(232.0))
+                    .height(Length::Fill),
+            )
+            .push(vertical_rule())
+            .push(
+                scrollable(
+                    container(container(content).max_width(reading_width)).padding(iced::Padding {
+                        top: 28.0,
+                        right: 40.0,
+                        bottom: 40.0,
+                        left: 40.0,
+                    }),
+                )
+                .id(CONTENT_SCROLL_ID)
+                .width(Length::Fill)
+                .height(Length::Fill),
+            )
+            .height(Length::Fill)
+            .into()
+    } else {
+        container(
+            scrollable(container(content).padding(iced::Padding {
+                right: 30.0,
+                ..iced::Padding::ZERO
+            }))
+            .id(CONTENT_SCROLL_ID)
+            .width(Length::Fill)
+            .height(Length::Fill),
+        )
+        .max_width(600)
+        .center_x(Length::Fill)
+        .height(Length::Fill)
+        .padding(28)
+        .into()
+    }
+}
+
+fn sheet_surface<'a>(
+    heading: Row<'a, ConnectSheetMessage>,
+    rail: Element<'a, ConnectSheetMessage>,
+    body: Element<'a, ConnectSheetMessage>,
+    show_auth: bool,
+) -> Element<'a, ConnectSheetMessage> {
+    container(
+        Column::new()
+            .push(
+                container(heading)
+                    .height(Length::Fixed(72.0))
+                    .center_y(Length::Fixed(72.0))
+                    .padding(iced::Padding {
+                        left: 28.0,
+                        right: 24.0,
+                        ..iced::Padding::ZERO
+                    }),
+            )
+            .push(horizontal_rule())
+            .push(rail)
+            .push(body)
+            .spacing(0)
+            .height(Length::Fill),
+    )
+    .max_width(if show_auth { 600 } else { 1040 })
+    .height(Length::Fill)
+    .style(sheet_style)
+    .into()
+}
+
+fn signed_in_sheet_section<'a>(
+    acct: &'a ConnectAccountPanel,
+    active_section: ConnectSheetSection,
+) -> Element<'a, ConnectAccountMessage> {
+    let section_content = match active_section {
+        ConnectSheetSection::Account => sheet_account_ux(acct),
+        ConnectSheetSection::PlanBilling => plan_billing_ux(acct),
+        ConnectSheetSection::Contacts => contacts::contacts_ux(acct),
+        ConnectSheetSection::DevicesSecurity => security_ux(acct),
+        ConnectSheetSection::Duress => duress_ux(acct),
+        ConnectSheetSection::RecoveryServices => recovery_services_ux(acct),
+    };
+    let mut column = Column::new().spacing(12);
+    if let Some(error) = acct.error.as_ref() {
+        column = column.push(account_error_card(error));
+    }
+    if let Some(left) = acct.backup_codes_notice {
+        column = column.push(two_factor::backup_codes_notice(left));
+    }
+    column.push(section_content).into()
+}
+
+fn sheet_content<'a>(
+    acct: &'a ConnectAccountPanel,
+    blocked: bool,
+    unverified: Option<&'a crate::app::state::connect::account::UnverifiedSession>,
+    show_auth: bool,
+    signed_in: bool,
+    active_section: ConnectSheetSection,
+) -> Element<'a, ConnectSheetMessage> {
+    if blocked {
+        text::p1_regular("Connect authorization ended. Close and reopen this Cube through authenticated Connect startup to reconnect.").into()
+    } else if let Some(unverified) = unverified.filter(|_| !show_auth) {
+        unverified_account_ux(unverified)
+    } else if show_auth {
+        connect_account_body(acct).map(ConnectSheetMessage::Account)
+    } else if acct.is_checking_session() {
+        Column::new()
+            .push(sheet_title(section_label(active_section)))
+            .push(lead(localized_copy("Loading your Connect account…")))
+            .spacing(4)
+            .into()
+    } else if signed_in {
+        let content = signed_in_sheet_section(acct, active_section);
+        content.map(ConnectSheetMessage::Account)
+    } else if active_section == ConnectSheetSection::Account {
+        signed_out_account_ux(acct.signed_out_by)
+    } else {
+        signed_out_section_ux(active_section)
+    }
+}
+
+fn sheet_navigation<'a>(
+    acct: &ConnectAccountPanel,
+    signed_in: bool,
+    active_section: ConnectSheetSection,
+) -> Column<'a, ConnectSheetMessage> {
+    let mut sections = vec![
+        (
+            "tenshu.connect.section.account",
+            ConnectSheetSection::Account,
+        ),
+        (
+            "tenshu.connect.section.plan",
+            ConnectSheetSection::PlanBilling,
+        ),
+        (
+            "tenshu.connect.section.contacts",
+            ConnectSheetSection::Contacts,
+        ),
+        (
+            "tenshu.connect.section.security",
+            ConnectSheetSection::DevicesSecurity,
+        ),
+    ];
+    if signed_in && acct.show_duress() {
+        sections.push(("tenshu.connect.section.duress", ConnectSheetSection::Duress));
+    }
+    sections.push((
+        "tenshu.connect.section.recovery",
+        ConnectSheetSection::RecoveryServices,
+    ));
+    let mut navigation = Column::new().spacing(6).height(Length::Fill);
+    for (id, section) in sections {
+        let selected = section == active_section;
+        let icon = match section {
+            ConnectSheetSection::Account => person_outline_icon(),
+            ConnectSheetSection::PlanBilling => credit_card_icon(),
+            ConnectSheetSection::Contacts => people_icon(),
+            ConnectSheetSection::DevicesSecurity => laptop_icon(),
+            ConnectSheetSection::Duress => shield_check_icon(),
+            ConnectSheetSection::RecoveryServices => shield_check_icon(),
+        };
+        let label = tenshu_text::body(section_label(section));
+        navigation = navigation.push(
+            FocusableAction::new(
+                id,
+                centred(
+                    Row::new()
+                        .push(icon.size(18).style(if selected {
+                            theme::tenshu::text::accent
+                        } else {
+                            theme::tenshu::text::muted
+                        }))
+                        .push(if selected {
+                            label.font(coincube_ui::font::SEMIBOLD)
+                        } else {
+                            label
+                        })
+                        .spacing(10)
+                        .align_y(Alignment::Center),
+                ),
+                ConnectSheetMessage::FocusAction,
+            )
+            .width(Length::Fill)
+            .height(Length::Fixed(theme::tenshu::size::NAV_ITEM_HEIGHT))
+            .padding([0, 12])
+            .style(move |theme, status| theme::tenshu::control::nav_item(theme, status, selected))
+            .on_press(ConnectSheetMessage::SelectSection(section)),
+        );
+    }
+    navigation = navigation
+            .push(iced::widget::Space::new().height(Length::Fill))
+            .push(
+                container(tenshu_text::caption(
+                    localized_copy("Account-wide. Each Cube's own service connection stays in that Cube's Settings › Connections."),
+                ))
+                .padding([0, 12]),
+            );
+
+    navigation
+}
+
+fn append_verified_device<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+    state: &'a ConnectAccountPanel,
+    d: &'a crate::services::coincube::VerifiedDevice,
+) -> Column<'a, ConnectAccountMessage> {
+    let name = non_blank(d.device_name.as_deref()).unwrap_or("Unknown Device");
+    let time_label = if let Some(ref last_used) = d.last_used_at {
+        format!("Last activity {}", format_datetime(last_used))
+    } else {
+        format!("Added {}", format_datetime(&d.created_at))
+    };
+
+    let mut title = Row::new()
+        .push(tenshu_text::label(name))
+        .spacing(8)
+        .align_y(Alignment::Center);
+    if d.is_current {
+        title = title.push(row_tag("Current", true));
+    }
+    let mut row = Row::new()
+        .push(laptop_icon().size(20).style(theme::tenshu::text::muted))
+        .push(
+            Column::new()
+                .push(title)
+                .push(lead(time_label))
+                .width(Length::Fill),
+        )
+        .spacing(16)
+        .align_y(Alignment::Center);
+
+    if !d.is_current {
+        let is_deleting = state.verified_devices_state.deleting_ids.contains(&d.id);
+        let mut remove = sheet_button(
+            if is_deleting { "Removing…" } else { "Remove" },
+            ActionKind::Secondary,
+            true,
+        );
+        if !is_deleting {
+            remove = remove.on_press(ConnectAccountMessage::ReviewVerifiedDeviceRemoval(Some(
+                d.id,
+            )));
+        }
+        row = row.push(remove);
+    }
+
+    col = col
+        .push(container(row).padding([10, 0]).width(Length::Fill))
+        .push(horizontal_rule());
+    if state.review_device_removal == Some(d.id) {
+        col = col.push(
+            container(
+                Column::new()
+                    .push(group_title(localized_format!(
+                        "Remove {name}?",
+                        "¿Retirar {name}?"
+                    )))
+                    .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
+                    .push(
+                        tenshu_text::body(localized_copy(
+                            "This removes the device from your verified devices.",
+                        ))
+                        .size(13),
+                    )
+                    .push(iced::widget::Space::new().height(Length::Fixed(12.0)))
+                    .push(
+                        Row::new()
+                            .push(
+                                sheet_button(
+                                    localized_format!("Remove {name}", "Eliminar a {name}"),
+                                    ActionKind::Primary,
+                                    false,
+                                )
+                                .on_press(ConnectAccountMessage::DeleteVerifiedDevice(d.id)),
+                            )
+                            .push(
+                                sheet_button("Cancel", ActionKind::Secondary, false).on_press(
+                                    ConnectAccountMessage::ReviewVerifiedDeviceRemoval(None),
+                                ),
+                            )
+                            .spacing(12),
+                    ),
+            )
+            .padding([14, 16])
+            .width(Length::Fill)
+            .style(review_style),
+        );
+    }
+
+    col
+}
+
+fn login_activity_row<'a>(
+    a: &'a crate::services::coincube::LoginActivity,
+) -> Element<'a, ConnectAccountMessage> {
+    let (icon, status, tone) = match a.success {
+        Some(true) => (check_circle_icon(), "Successful", Tone::Good),
+        Some(false) => (x_circle_icon(), "Failed", Tone::Bad),
+        None => (question_circle_icon(), "Unknown", Tone::Muted),
+    };
+
+    let ip = non_blank(a.ip_address.as_deref());
+    let ua = non_blank(a.device_name.as_deref());
+    let shorten = |u: &str| {
+        if u.chars().count() > 60 {
+            format!("{}…", u.chars().take(59).collect::<String>())
+        } else {
+            u.to_string()
+        }
+    };
+    let ip_and_ua = match (ip, ua) {
+        (Some(i), Some(u)) => format!("{} - {}", i, shorten(u)),
+        (Some(i), None) => i.to_string(),
+        (None, Some(u)) => shorten(u),
+        (None, None) => "Unknown device".to_string(),
+    };
+
+    Row::new()
+        .push(container(status_line(icon, status, tone)).width(Length::Fixed(120.0)))
+        .push(tenshu_text::body(ip_and_ua).width(Length::Fill))
+        .push(lead(format_datetime(&a.created_at)))
+        .spacing(16)
+        .align_y(Alignment::Center)
+        .into()
+}
+
+fn login_activity_section<'a>(
+    state: &'a ConnectAccountPanel,
+    activity_summary: &mut Option<String>,
+) -> Element<'a, ConnectAccountMessage> {
+    match &state.login_activity {
+        None => lead(localized_copy("Loading activity…")).into(),
+        Some(activity) if activity.is_empty() => {
+            lead(localized_copy("No login activity on record.")).into()
+        }
+        Some(activity) => {
+            let shown = &activity[..activity.len().min(50)];
+            let succeeded = shown.iter().filter(|a| a.success == Some(true)).count();
+            let failed = shown.iter().filter(|a| a.success == Some(false)).count();
+            *activity_summary = Some(format!("{succeeded} successful · {failed} failed"));
+            ruled_list(shown.iter().map(login_activity_row))
+        }
+    }
+}
+
+fn append_locally_armed_duress<'a>(
+    state: &'a ConnectAccountPanel,
+    mut col: Column<'a, ConnectAccountMessage>,
+    duress_active: bool,
+) -> Column<'a, ConnectAccountMessage> {
+    col = col.push(
+        Column::new()
+            .push(
+                text::p1_bold(localized_copy("Duress mode is enabled")).style(theme::text::success),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(
+                text::p2_regular(localized_copy(
+                    "Your duress PIN is armed on every Cube on this device. Entering it \
+                         at any Cube's unlock screen triggers a duress wipe and locks your \
+                         account.",
+                ))
+                .width(Length::Fill)
+                .style(theme::text::secondary),
+            )
+            .spacing(2)
+            .width(Length::Fill),
+    );
+
+    // Enrolled-state Recovery-Kit warning (master decision 6): if a Vault
+    // Cube's kit is incomplete — e.g. a Vault created *after* enrollment,
+    // whose Wallet Descriptor was never added to the kit — surface the
+    // same shape-aware checklist as a warning. Duress stays on; this is a
+    // nudge, not a gate (no disable pressure).
+    if let Some(warning) = duress_enrolled_kit_warning(state) {
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(12.0)));
+        col = col.push(warning);
+    }
+
+    // Disable control — shown only when enrolled & inactive (this whole
+    // branch is unreachable during active duress, which routes to the
+    // recovery/cryptic screen, but guard anyway). Styled as a
+    // destructive-secondary action with a one-line explainer.
+    if !duress_active {
+        col = append_duress_disable_controls(col);
+    }
+
+    col
+}
+
+fn append_other_device_duress<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+    duress_active: bool,
+) -> Column<'a, ConnectAccountMessage> {
+    col = col.push(
+        Column::new()
+            .push(
+                text::p1_bold(localized_copy("Duress mode is enabled on your account"))
+                    .style(theme::text::primary),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(
+                text::p2_regular(localized_copy(
+                    "It was set up on another device, so it is not armed on this one — \
+                         entering your duress PIN here will not trigger a wipe. Manage duress \
+                         mode from the device where you enabled it.",
+                ))
+                .width(Length::Fill)
+                .style(theme::text::secondary),
+            )
+            .spacing(2)
+            .width(Length::Fill),
+    );
+
+    // Duress can still be turned off account-wide from here (the server
+    // disable propagates to every device); this one just has no local PIN
+    // hashes to clear. Shown only while inactive.
+    if !duress_active {
+        col = append_duress_disable_controls(col);
+    }
+
+    col
+}
+
+fn append_duress_disable_controls<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+) -> Column<'a, ConnectAccountMessage> {
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    col = col.push(
+        button::secondary(None, localized_copy("Disable Duress Mode"))
+            .width(Length::Fixed(240.0))
+            .on_press(ConnectAccountMessage::Duress(DuressMessage::DisableStart)),
+    );
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+    col = col.push(
+        text::p2_regular(localized_copy(
+            "Turns off duress on all your devices. You can re-enable it anytime.",
+        ))
+        .width(Length::Fill)
+        .style(theme::text::secondary),
+    );
+    col
+}
+
+fn append_duress_setup<'a>(
+    state: &'a ConnectAccountPanel,
+    mut col: Column<'a, ConnectAccountMessage>,
+) -> Column<'a, ConnectAccountMessage> {
+    use crate::services::duress::enroll::{DuressDelay, MIN_ALL_CLEAR_LEN};
+    let delays: String = DuressDelay::ALL
+        .iter()
+        .map(|d| d.label())
+        .collect::<Vec<_>>()
+        .join(" · ");
+
+    // Credentials the user will set during enrollment.
+    col = col.push(
+            Column::new()
+                .push(text::p1_bold(localized_copy("You'll set")).style(theme::text::primary))
+                .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+                .push(
+                    text::p2_regular(
+                        localized_copy("• A duress PIN — one you don't use to unlock any of your Cubes."),
+                    )
+                    .width(Length::Fill)
+                    .style(theme::text::secondary),
+                )
+                .push(
+                    text::p2_regular(localized_format!(
+                        "• An all-clear passphrase — at least {} characters, used to unlock \
+                         your account from a trusted device.", "• Una contraseña completa —al menos caracteres de {}— usada para desbloquear su cuenta desde un dispositivo de confianza.",
+                        MIN_ALL_CLEAR_LEN
+                    ))
+                    .width(Length::Fill)
+                    .style(theme::text::secondary),
+                )
+                .push(
+                    text::p2_regular(localized_copy("• A duress recovery-kit password — covers all your Cubes."))
+                        .width(Length::Fill)
+                        .style(theme::text::secondary),
+                )
+                .push(
+                    text::p2_regular(localized_format!("• An unlock delay: {}.", "• Un retraso de desbloqueo: {}.", delays))
+                        .width(Length::Fill)
+                        .style(theme::text::secondary),
+                )
+                .spacing(6)
+                .width(Length::Fill),
+        );
+
+    col = col
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)))
+        .push(divider_line())
+        .push(iced::widget::Space::new().height(Length::Fixed(20.0)));
+
+    // Per-Cube recovery-kit checklist. A duress wipe is only reversible
+    // from Connect for Cubes that have a Recovery Kit, so we list the
+    // user's mainnet Cubes with their backup state and nudge them to back
+    // up each one first. The list is additive — when it hasn't loaded (or
+    // there are no mainnet Cubes) the card still shows its guidance copy.
+    col = col.push({
+        let mut card_col = Column::new()
+            .push(
+                text::p1_bold(localized_copy("Set up a Cube Recovery Kit for each Cube"))
+                    .style(theme::text::warning),
+            )
+            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
+            .push(
+                text::p2_regular(localized_copy(
+                    "Without a Cube Recovery Kit, a duress wipe is irreversible from Connect. \
+                         Seed-only Cubes need their Master Seed Phrase backed up; Cubes with a \
+                         Vault need both the Master Seed Phrase and the Vault Wallet Descriptor. \
+                         Finish the Recovery Kit for each of your Vault Cubes before enabling \
+                         duress mode.",
+                ))
+                .width(Length::Fill)
+                .style(theme::text::secondary),
+            );
+        if let Some(list) = duress_recovery_kit_list(state) {
+            card_col = card_col
+                .push(iced::widget::Space::new().height(Length::Fixed(14.0)))
+                .push(list);
+        }
+        // Transparency footnote for the has_vault gate's accepted
+        // limitation (PLAN-duress-vault-gate master §9): other-device
+        // Cubes are shown as *reported to Connect*, and a Vault created on
+        // another device that hasn't synced yet can still read as
+        // vaultless here. Only surfaced when the checklist actually
+        // includes a Cube this device doesn't hold, so single-device users
+        // aren't shown an irrelevant caveat.
+        let has_other_device_cube = state
+            .duress_cubes
+            .as_deref()
+            .is_some_and(|cubes| cubes.iter().any(|c| !c.local));
+        if has_other_device_cube {
+            card_col = card_col
+                .push(iced::widget::Space::new().height(Length::Fixed(10.0)))
+                .push(
+                    text::caption(localized_copy(
+                        "Cubes on your other devices are shown as reported to Connect. A \
+                             Vault created on another device that hasn't synced yet may not \
+                             appear here — open that device to confirm its Recovery Kit.",
+                    ))
+                    .width(Length::Fill)
+                    .style(theme::text::secondary),
+                );
+        }
+        card_col.spacing(2).width(Length::Fill)
+    });
+
+    col = col.push(iced::widget::Space::new().height(Length::Fixed(16.0)));
+    // The hard vault gate (PLAN-duress-vault-gate): enrollment is blocked
+    // while any Vault Cube in the checklist has an incomplete (or
+    // unverifiable) Recovery Kit — a duress wipe of such a Cube would be
+    // irreversible. This is now the single hard requirement: there is no
+    // "advanced" bypass and no sovereign path.
+    //
+    // Fail closed on an unloaded checklist (`None`): until the cube list +
+    // kit statuses land we can't confirm every Vault Cube is safe, so the
+    // CTA stays disabled rather than opening a fail-open window before the
+    // fetch completes (master I7 / Resolved decision 4). A failed fetch
+    // also leaves `None`, so it stays blocked. An empty (loaded) list is
+    // `Some([])` → not blocked.
+    let cubes_loaded = state.duress_cubes.is_some();
+    let gate_blocked = duress_tier1_gate_blocked(state.duress_cubes.as_deref());
+    if gate_blocked {
+        // Disabled CTA — `button::primary` with no `.on_press` renders
+        // inert. The state handler re-checks the gate too, so a stale view
+        // that somehow fires `StartEnrollment` no-ops (belt-and-suspenders).
+        col = col.push(
+            button::primary(None, localized_copy("Set up Duress Mode")).width(Length::Fixed(240.0)),
+        );
+        col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+        // Distinguish "still verifying" from "known incomplete": the former
+        // shouldn't accuse the user of an unfinished kit before we've even
+        // checked.
+        let gate_copy = if cubes_loaded {
+            "Finish the Recovery Kit for your Vault Cubes above to enable Duress Mode."
+        } else {
+            "Checking your Cubes' Recovery Kits…"
+        };
+        col = col.push(
+            text::p2_regular(gate_copy)
+                .width(Length::Fill)
+                .style(theme::text::secondary),
+        );
+    } else {
+        col = col.push(
+            button::primary(None, localized_copy("Set up Duress Mode"))
+                .width(Length::Fixed(240.0))
+                .on_press(ConnectAccountMessage::Duress(
+                    DuressMessage::StartEnrollment,
+                )),
+        );
+    }
+
+    col
+}
+
+fn avatar_variant_row<'a>(
+    state: &'a ConnectCubePanel,
+    data: &'a crate::services::coincube::GetAvatarData,
+    active_url: &str,
+) -> Element<'a, ConnectCubeMessage> {
+    if data.variants.len() > 1 {
         let mut row = Row::new().spacing(8);
         for v in &data.variants {
             let is_active = active_url.ends_with(&v.id.to_string());
@@ -2802,46 +2942,7 @@ fn avatar_settings_ux<'a>(state: &'a ConnectCubePanel) -> Element<'a, ConnectCub
         row.into()
     } else {
         iced::widget::Space::new().height(Length::Fixed(0.0)).into()
-    };
-
-    let regen_btn = if regen_remaining == 0 {
-        button::primary(None, localized_copy("No Regenerations Remaining"))
-    } else {
-        button::primary(None, localized_copy("Regenerate Avatar")).on_press(
-            ConnectCubeMessage::Avatar(AvatarMessage::SetStep(AvatarFlowStep::Questionnaire)),
-        )
-    };
-
-    let download_btn = button::secondary(None, localized_copy("Download PNG"))
-        .on_press(ConnectCubeMessage::Avatar(AvatarMessage::DownloadAvatar));
-
-    container(
-        Column::new()
-            .push(
-                Row::new()
-                    .push(image_widget)
-                    .push(iced::widget::Space::new().width(Length::Fixed(16.0)))
-                    .push(
-                        Column::new()
-                            .push(text::p1_bold(archetype_upper).color(color::ORANGE))
-                            .push(iced::widget::Space::new().height(Length::Fixed(4.0)))
-                            .push(text::p2_regular(regen_text).color(color::GREY_3))
-                            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-                            .push(regen_btn)
-                            .push(iced::widget::Space::new().height(Length::Fixed(8.0)))
-                            .push(download_btn)
-                            .spacing(0),
-                    )
-                    .align_y(Alignment::Start),
-            )
-            .push(iced::widget::Space::new().height(Length::Fixed(16.0)))
-            .push(variant_row)
-            .padding(16)
-            .spacing(0),
-    )
-    .style(card_style)
-    .width(Length::Fill)
-    .into()
+    }
 }
 
 #[cfg(test)]
@@ -2895,6 +2996,401 @@ mod renewal_banner_tests {
             .as_widget_mut()
             .operate(&mut tree, Layout::new(&node), renderer, &mut labels);
         labels.0
+    }
+
+    use iced::advanced::{
+        layout,
+        renderer::Headless,
+        widget::{Operation, Tree},
+        Layout,
+    };
+
+    #[derive(Default)]
+    struct TextBounds(Vec<(String, iced::Rectangle)>);
+    impl Operation for TextBounds {
+        fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
+            operate(self);
+        }
+
+        fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
+            self.0.push((value.to_owned(), bounds));
+        }
+    }
+
+    fn configure_layout_recovery(panel: &mut ConnectAccountPanel, section: &str) {
+        if section == "recovery" {
+            let cube: crate::services::coincube::CubeResponse = serde_json::from_str(
+                                r#"{"id":7,"uuid":"cube-7","name":"Family Vault","network":"bitcoin","status":"active","hasRecoveryKit":true}"#,
+                            ).unwrap();
+            panel.recovery_services = RecoveryServicesState::Ready(vec![cube.into()]);
+        }
+        if section == "recovery-error-retryable" || section == "recovery-error-terminal" {
+            let retryable = section == "recovery-error-retryable";
+            panel.recovery_services =
+                RecoveryServicesState::Failed(crate::user_error::UserError::new(
+                    "Could not load Cube status",
+                    if retryable {
+                        "Check your connection and try again."
+                    } else {
+                        "Sign in again or contact support."
+                    },
+                    if retryable {
+                        "CC-RECOVERY-TEMP"
+                    } else {
+                        "CC-RECOVERY-AUTH"
+                    },
+                    retryable,
+                ));
+        }
+    }
+
+    fn configure_layout_overlays(panel: &mut ConnectAccountPanel, section: &str) {
+        if section == "compare" {
+            panel.show_plan_comparison = true;
+        }
+        configure_layout_recovery(panel, section);
+        if section == "plan-promo-success" || section == "plan-promo-failure" {
+            panel.show_campaign_redeem = true;
+            panel.campaign_redeem.result = Some(if section == "plan-promo-success" {
+                Ok("Estate unlocked".into())
+            } else {
+                Err("Code expired".into())
+            });
+        }
+        if section == "account-review" {
+            panel.review_sign_out = true;
+        }
+        if section == "device-review" {
+            panel.review_device_removal = Some(9);
+        }
+        if section == "checkout" {
+            let mut cs =
+                CheckoutState::new(1, PlanTier::Pro, BillingCycle::Monthly, panel.plan.clone());
+            cs.phase = CheckoutPhase::AwaitingPayment;
+            cs.checkout = Some(checkout_response());
+            panel.checkout = Some(cs);
+        }
+    }
+
+    fn configure_layout_dashboard(panel: &mut ConnectAccountPanel, section: &str) {
+        panel.step = ConnectFlowStep::Dashboard;
+        panel.user = Some(user());
+        if section == "account-long-email" {
+            panel.user.as_mut().unwrap().email =
+                "morgan.with-a-long-household-recovery-address@family-office.example.test".into();
+        }
+        panel.plan = Some(plan(
+            PlanTier::Pro,
+            PlanStatus::Active,
+            Some("2027-07-04T00:00:00Z"),
+        ));
+        panel.features = Some(priced_features(None, Some(false)));
+        panel.active_sub = match section {
+            "plan" | "plan-promo-success" | "plan-promo-failure" | "compare" | "checkout" => {
+                ConnectSubMenu::PlanBilling
+            }
+            "security" | "device-review" => ConnectSubMenu::Security,
+            "contacts" => ConnectSubMenu::Contacts,
+            _ => ConnectSubMenu::Overview,
+        };
+        panel.verified_devices = Some(vec![
+            VerifiedDevice {
+                id: 7,
+                device_name: Some("This Mac".into()),
+                created_at: "2026-10-01T00:00:00Z".into(),
+                last_used_at: Some("2026-10-23T12:00:00Z".into()),
+                is_current: true,
+            },
+            VerifiedDevice {
+                id: 9,
+                device_name: Some("Travel laptop".into()),
+                created_at: "2026-09-01T00:00:00Z".into(),
+                last_used_at: Some("2026-10-19T12:00:00Z".into()),
+                is_current: false,
+            },
+        ]);
+        panel.login_activity = Some(vec![LoginActivity {
+            id: 8,
+            ip_address: None,
+            device_name: Some("This Mac".into()),
+            created_at: "2026-10-23T12:00:00Z".into(),
+            success: Some(true),
+        }]);
+        panel.contacts_state.contacts = Some(Vec::new());
+        panel.contacts_state.invites = Some(Vec::new());
+        panel.contacts_state.received_invites = Some(Vec::new());
+        configure_layout_overlays(panel, section);
+    }
+
+    fn configure_connect_layout_fixture(panel: &mut ConnectAccountPanel, scenario: &str) {
+        match scenario {
+            "sign-in" => {
+                panel.step = ConnectFlowStep::Login {
+                    email: String::new(),
+                    loading: false,
+                };
+            }
+            "sign-up" => {
+                panel.step = ConnectFlowStep::Register {
+                    email: String::new(),
+                    loading: false,
+                };
+            }
+            "token" => {
+                panel.step = ConnectFlowStep::OtpVerification {
+                    email: "founder@example.test".into(),
+                    otp: String::new(),
+                    sending: false,
+                    is_signup: false,
+                    cooldown: 30,
+                };
+            }
+            section => {
+                configure_layout_dashboard(panel, section);
+            }
+        }
+    }
+
+    async fn inspect_connect_layout_case(
+        panel: &ConnectAccountPanel,
+        scenario: &str,
+        appearance: &str,
+        theme: &theme::Theme,
+    ) {
+        use iced::advanced::{layout, renderer::Headless, widget::Tree, Layout};
+        let mut renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer for Connect");
+        let content = if scenario == "recovery"
+            || scenario == "recovery-error-retryable"
+            || scenario == "recovery-error-terminal"
+        {
+            recovery_services_ux(panel)
+        } else {
+            connect_account_panel(panel)
+        };
+        let mut element: Element<'_, ConnectAccountMessage> = iced::widget::scrollable(content)
+            .height(Length::Fill)
+            .into();
+        let mut tree = Tree::new(element.as_widget());
+        let size = iced::Size::new(760.0, 768.0);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        assert!(
+            node.size().width <= size.width,
+            "{} scroll viewport overflows width",
+            scenario
+        );
+        assert!(
+            node.size().height <= size.height,
+            "{} scroll viewport overflows height",
+            scenario
+        );
+
+        if let Ok(directory) = std::env::var("CONNECT_PREVIEW_DIR") {
+            let viewport = iced::Rectangle::with_size(size);
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut Vec::new()),
+                &viewport,
+            );
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                theme,
+                &iced::advanced::renderer::Style {
+                    text_color: theme.colors.text.primary,
+                },
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let pixels = renderer.screenshot(
+                iced::Size::new(760, 768),
+                1.0,
+                theme.colors.general.background,
+            );
+            image::save_buffer(
+                std::path::Path::new(&directory)
+                    .join(format!("connect-{scenario}-{appearance}-compact.png")),
+                &pixels,
+                760,
+                768,
+                image::ColorType::Rgba8,
+            )
+            .expect("save Connect preview");
+        }
+    }
+
+    fn assert_signed_in_account_bounds(
+        bounds: &TextBounds,
+        account: &ConnectAccountPanel,
+        outer: (u32, u32),
+        size: iced::Size,
+        long_email: bool,
+        review_sign_out: bool,
+    ) {
+        let (width, height) = outer;
+        let action_label = if review_sign_out {
+            "Sign out"
+        } else {
+            "Sign out…"
+        };
+        for label in ["Close", action_label, "Signed in on this device"] {
+            let rect = bounds
+                .0
+                .iter()
+                .find(|(value, _)| value == label)
+                .map(|(_, rect)| rect)
+                .unwrap_or_else(|| panic!("missing {} at {}x{}", label, width, height));
+            assert!(
+                rect.x >= 0.0 && rect.x + rect.width <= size.width,
+                "{} clipped horizontally at {}x{}: {:?}",
+                label,
+                width,
+                height,
+                rect
+            );
+            if label == "Close" {
+                assert!(
+                    rect.y >= 0.0 && rect.y + rect.height <= size.height,
+                    "Close below viewport at {}x{}: {:?}",
+                    width,
+                    height,
+                    rect
+                );
+            }
+        }
+        if review_sign_out {
+            assert!(bounds.0.iter().any(|(value, _)| value == "Cancel"));
+        }
+        if long_email {
+            let email = account.user.as_ref().unwrap().email.as_str();
+            let email_bounds: Vec<_> = bounds
+                .0
+                .iter()
+                .filter(|(value, _)| value == email)
+                .map(|(_, rect)| rect)
+                .collect();
+            assert!(
+                email_bounds.len() >= 2,
+                "email missing from header or identity"
+            );
+            assert!(
+                email_bounds
+                    .iter()
+                    .all(|rect| rect.x + rect.width <= size.width),
+                "long email clipped horizontally at {}x{}: {:?}",
+                width,
+                height,
+                email_bounds
+            );
+        }
+    }
+
+    async fn inspect_signed_in_account_case(
+        account: &ConnectAccountPanel,
+        appearance: &str,
+        theme: &theme::Theme,
+        outer: (u32, u32),
+        long_email: bool,
+        review_sign_out: bool,
+    ) {
+        let (width, height) = outer;
+        let mut renderer = <iced::Renderer as Headless>::new(
+            coincube_ui::font::REGULAR,
+            iced::Pixels(16.0),
+            Some("tiny-skia"),
+        )
+        .await
+        .expect("software renderer");
+        let mut element = connect_sheet(
+            account,
+            ConnectSheetPage::Sections(ConnectSheetSection::Account),
+        );
+        let mut tree = Tree::new(element.as_widget());
+        let size = iced::Size::new(width as f32, height as f32);
+        let node = element.as_widget_mut().layout(
+            &mut tree,
+            &renderer,
+            &layout::Limits::new(iced::Size::ZERO, size),
+        );
+        assert!(node.size().width <= size.width);
+        assert!(node.size().height <= size.height);
+        let mut bounds = TextBounds::default();
+        element
+            .as_widget_mut()
+            .operate(&mut tree, Layout::new(&node), &renderer, &mut bounds);
+        assert_signed_in_account_bounds(
+            &bounds,
+            account,
+            (width, height),
+            size,
+            long_email,
+            review_sign_out,
+        );
+
+        if let Ok(directory) = std::env::var("CONNECT_PREVIEW_DIR") {
+            let viewport = iced::Rectangle::with_size(size);
+            element.as_widget_mut().update(
+                &mut tree,
+                &iced::Event::Window(iced::window::Event::RedrawRequested(
+                    std::time::Instant::now(),
+                )),
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut iced::advanced::Shell::new(&mut Vec::new()),
+                &viewport,
+            );
+            element.as_widget().draw(
+                &tree,
+                &mut renderer,
+                theme,
+                &iced::advanced::renderer::Style {
+                    text_color: theme.colors.text.primary,
+                },
+                Layout::new(&node),
+                iced::mouse::Cursor::Unavailable,
+                &viewport,
+            );
+            let pixels = renderer.screenshot(
+                iced::Size::new(width, height),
+                1.0,
+                theme.colors.general.background,
+            );
+            let suffix = match (long_email, review_sign_out) {
+                (false, false) => "",
+                (true, false) => "-long-email",
+                (false, true) => "-review",
+                (true, true) => "-long-email-review",
+            };
+            image::save_buffer(
+                std::path::Path::new(&directory).join(format!(
+                    "connect-account-{appearance}-{width}x{height}{suffix}.png"
+                )),
+                &pixels,
+                width,
+                height,
+                image::ColorType::Rgba8,
+            )
+            .expect("save Connect account preview");
+        }
     }
 
     /// The authenticator step and Devices & security's authenticator rows,
@@ -5981,8 +6477,6 @@ mod renewal_banner_tests {
     /// content. Optional PNG output supports review at the 1024×768 minimum.
     #[tokio::test(flavor = "multi_thread")]
     async fn connect_views_layout_in_compact_scroll_viewport_and_can_be_captured() {
-        use iced::advanced::{layout, renderer::Headless, widget::Tree, Layout};
-
         for bytes in [
             coincube_ui::font::REGULAR_BYTES,
             coincube_ui::font::MEDIUM_BYTES,
@@ -6019,209 +6513,9 @@ mod renewal_banner_tests {
                 "contacts",
             ] {
                 let mut panel = ConnectAccountPanel::new();
-                match scenario {
-                    "sign-in" => {
-                        panel.step = ConnectFlowStep::Login {
-                            email: String::new(),
-                            loading: false,
-                        };
-                    }
-                    "sign-up" => {
-                        panel.step = ConnectFlowStep::Register {
-                            email: String::new(),
-                            loading: false,
-                        };
-                    }
-                    "token" => {
-                        panel.step = ConnectFlowStep::OtpVerification {
-                            email: "founder@example.test".into(),
-                            otp: String::new(),
-                            sending: false,
-                            is_signup: false,
-                            cooldown: 30,
-                        };
-                    }
-                    section => {
-                        panel.step = ConnectFlowStep::Dashboard;
-                        panel.user = Some(user());
-                        if section == "account-long-email" {
-                            panel.user.as_mut().unwrap().email = "morgan.with-a-long-household-recovery-address@family-office.example.test".into();
-                        }
-                        panel.plan = Some(plan(
-                            PlanTier::Pro,
-                            PlanStatus::Active,
-                            Some("2027-07-04T00:00:00Z"),
-                        ));
-                        panel.features = Some(priced_features(None, Some(false)));
-                        panel.active_sub = match section {
-                            "plan" | "plan-promo-success" | "plan-promo-failure" | "compare"
-                            | "checkout" => ConnectSubMenu::PlanBilling,
-                            "security" | "device-review" => ConnectSubMenu::Security,
-                            "contacts" => ConnectSubMenu::Contacts,
-                            _ => ConnectSubMenu::Overview,
-                        };
-                        panel.verified_devices = Some(vec![
-                            VerifiedDevice {
-                                id: 7,
-                                device_name: Some("This Mac".into()),
-                                created_at: "2026-10-01T00:00:00Z".into(),
-                                last_used_at: Some("2026-10-23T12:00:00Z".into()),
-                                is_current: true,
-                            },
-                            VerifiedDevice {
-                                id: 9,
-                                device_name: Some("Travel laptop".into()),
-                                created_at: "2026-09-01T00:00:00Z".into(),
-                                last_used_at: Some("2026-10-19T12:00:00Z".into()),
-                                is_current: false,
-                            },
-                        ]);
-                        panel.login_activity = Some(vec![LoginActivity {
-                            id: 8,
-                            ip_address: None,
-                            device_name: Some("This Mac".into()),
-                            created_at: "2026-10-23T12:00:00Z".into(),
-                            success: Some(true),
-                        }]);
-                        panel.contacts_state.contacts = Some(Vec::new());
-                        panel.contacts_state.invites = Some(Vec::new());
-                        panel.contacts_state.received_invites = Some(Vec::new());
-                        if section == "compare" {
-                            panel.show_plan_comparison = true;
-                        }
-                        if section == "recovery" {
-                            let cube: crate::services::coincube::CubeResponse = serde_json::from_str(
-                                r#"{"id":7,"uuid":"cube-7","name":"Family Vault","network":"bitcoin","status":"active","hasRecoveryKit":true}"#,
-                            ).unwrap();
-                            panel.recovery_services =
-                                RecoveryServicesState::Ready(vec![cube.into()]);
-                        }
-                        if section == "recovery-error-retryable"
-                            || section == "recovery-error-terminal"
-                        {
-                            let retryable = section == "recovery-error-retryable";
-                            panel.recovery_services =
-                                RecoveryServicesState::Failed(crate::user_error::UserError::new(
-                                    "Could not load Cube status",
-                                    if retryable {
-                                        "Check your connection and try again."
-                                    } else {
-                                        "Sign in again or contact support."
-                                    },
-                                    if retryable {
-                                        "CC-RECOVERY-TEMP"
-                                    } else {
-                                        "CC-RECOVERY-AUTH"
-                                    },
-                                    retryable,
-                                ));
-                        }
-                        if section == "plan-promo-success" || section == "plan-promo-failure" {
-                            panel.show_campaign_redeem = true;
-                            panel.campaign_redeem.result =
-                                Some(if section == "plan-promo-success" {
-                                    Ok("Estate unlocked".into())
-                                } else {
-                                    Err("Code expired".into())
-                                });
-                        }
-                        if section == "account-review" {
-                            panel.review_sign_out = true;
-                        }
-                        if section == "device-review" {
-                            panel.review_device_removal = Some(9);
-                        }
-                        if section == "checkout" {
-                            let mut cs = CheckoutState::new(
-                                1,
-                                PlanTier::Pro,
-                                BillingCycle::Monthly,
-                                panel.plan.clone(),
-                            );
-                            cs.phase = CheckoutPhase::AwaitingPayment;
-                            cs.checkout = Some(checkout_response());
-                            panel.checkout = Some(cs);
-                        }
-                    }
-                }
+                configure_connect_layout_fixture(&mut panel, scenario);
 
-                let mut renderer = <iced::Renderer as Headless>::new(
-                    coincube_ui::font::REGULAR,
-                    iced::Pixels(16.0),
-                    Some("tiny-skia"),
-                )
-                .await
-                .expect("software renderer for Connect");
-                let content = if scenario == "recovery"
-                    || scenario == "recovery-error-retryable"
-                    || scenario == "recovery-error-terminal"
-                {
-                    recovery_services_ux(&panel)
-                } else {
-                    connect_account_panel(&panel)
-                };
-                let mut element: Element<'_, ConnectAccountMessage> =
-                    iced::widget::scrollable(content)
-                        .height(Length::Fill)
-                        .into();
-                let mut tree = Tree::new(element.as_widget());
-                let size = iced::Size::new(760.0, 768.0);
-                let node = element.as_widget_mut().layout(
-                    &mut tree,
-                    &renderer,
-                    &layout::Limits::new(iced::Size::ZERO, size),
-                );
-                assert!(
-                    node.size().width <= size.width,
-                    "{} scroll viewport overflows width",
-                    scenario
-                );
-                assert!(
-                    node.size().height <= size.height,
-                    "{} scroll viewport overflows height",
-                    scenario
-                );
-
-                if let Ok(directory) = std::env::var("CONNECT_PREVIEW_DIR") {
-                    let viewport = iced::Rectangle::with_size(size);
-                    element.as_widget_mut().update(
-                        &mut tree,
-                        &iced::Event::Window(iced::window::Event::RedrawRequested(
-                            std::time::Instant::now(),
-                        )),
-                        Layout::new(&node),
-                        iced::mouse::Cursor::Unavailable,
-                        &renderer,
-                        &mut iced::advanced::clipboard::Null,
-                        &mut iced::advanced::Shell::new(&mut Vec::new()),
-                        &viewport,
-                    );
-                    element.as_widget().draw(
-                        &tree,
-                        &mut renderer,
-                        &theme,
-                        &iced::advanced::renderer::Style {
-                            text_color: theme.colors.text.primary,
-                        },
-                        Layout::new(&node),
-                        iced::mouse::Cursor::Unavailable,
-                        &viewport,
-                    );
-                    let pixels = renderer.screenshot(
-                        iced::Size::new(760, 768),
-                        1.0,
-                        theme.colors.general.background,
-                    );
-                    image::save_buffer(
-                        std::path::Path::new(&directory)
-                            .join(format!("connect-{scenario}-{appearance}-compact.png")),
-                        &pixels,
-                        760,
-                        768,
-                        image::ColorType::Rgba8,
-                    )
-                    .expect("save Connect preview");
-                }
+                inspect_connect_layout_case(&panel, scenario, appearance, &theme).await;
             }
         }
     }
@@ -6287,25 +6581,6 @@ mod renewal_banner_tests {
     /// visually checked for glyph clipping, scroll visibility, and overlap.
     #[tokio::test(flavor = "multi_thread")]
     async fn signed_in_account_sheet_layout_and_captures() {
-        use iced::advanced::{
-            layout,
-            renderer::Headless,
-            widget::{Operation, Tree},
-            Layout,
-        };
-
-        #[derive(Default)]
-        struct TextBounds(Vec<(String, iced::Rectangle)>);
-        impl Operation for TextBounds {
-            fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
-                operate(self);
-            }
-
-            fn text(&mut self, _: Option<&Id>, bounds: iced::Rectangle, value: &str) {
-                self.0.push((value.to_owned(), bounds));
-            }
-        }
-
         for bytes in [
             coincube_ui::font::REGULAR_BYTES,
             coincube_ui::font::MEDIUM_BYTES,
@@ -6331,136 +6606,15 @@ mod renewal_banner_tests {
                     if long_email {
                         account.user.as_mut().unwrap().email = "morgan.with-a-long-household-recovery-address@family-office.example.test".into();
                     }
-                    let mut renderer = <iced::Renderer as Headless>::new(
-                        coincube_ui::font::REGULAR,
-                        iced::Pixels(16.0),
-                        Some("tiny-skia"),
-                    )
-                    .await
-                    .expect("software renderer");
-                    let mut element = connect_sheet(
+                    inspect_signed_in_account_case(
                         &account,
-                        ConnectSheetPage::Sections(ConnectSheetSection::Account),
-                    );
-                    let mut tree = Tree::new(element.as_widget());
-                    let size = iced::Size::new(width as f32, height as f32);
-                    let node = element.as_widget_mut().layout(
-                        &mut tree,
-                        &renderer,
-                        &layout::Limits::new(iced::Size::ZERO, size),
-                    );
-                    assert!(node.size().width <= size.width);
-                    assert!(node.size().height <= size.height);
-                    let mut bounds = TextBounds::default();
-                    element.as_widget_mut().operate(
-                        &mut tree,
-                        Layout::new(&node),
-                        &renderer,
-                        &mut bounds,
-                    );
-                    let action_label = if review_sign_out {
-                        "Sign out"
-                    } else {
-                        "Sign out…"
-                    };
-                    for label in ["Close", action_label, "Signed in on this device"] {
-                        let rect = bounds
-                            .0
-                            .iter()
-                            .find(|(value, _)| value == label)
-                            .map(|(_, rect)| rect)
-                            .unwrap_or_else(|| panic!("missing {} at {}x{}", label, width, height));
-                        assert!(
-                            rect.x >= 0.0 && rect.x + rect.width <= size.width,
-                            "{} clipped horizontally at {}x{}: {:?}",
-                            label,
-                            width,
-                            height,
-                            rect
-                        );
-                        if label == "Close" {
-                            assert!(
-                                rect.y >= 0.0 && rect.y + rect.height <= size.height,
-                                "Close below viewport at {}x{}: {:?}",
-                                width,
-                                height,
-                                rect
-                            );
-                        }
-                    }
-                    if review_sign_out {
-                        assert!(bounds.0.iter().any(|(value, _)| value == "Cancel"));
-                    }
-                    if long_email {
-                        let email = account.user.as_ref().unwrap().email.as_str();
-                        let email_bounds: Vec<_> = bounds
-                            .0
-                            .iter()
-                            .filter(|(value, _)| value == email)
-                            .map(|(_, rect)| rect)
-                            .collect();
-                        assert!(
-                            email_bounds.len() >= 2,
-                            "email missing from header or identity"
-                        );
-                        assert!(
-                            email_bounds
-                                .iter()
-                                .all(|rect| rect.x + rect.width <= size.width),
-                            "long email clipped horizontally at {}x{}: {:?}",
-                            width,
-                            height,
-                            email_bounds
-                        );
-                    }
-
-                    if let Ok(directory) = std::env::var("CONNECT_PREVIEW_DIR") {
-                        let viewport = iced::Rectangle::with_size(size);
-                        element.as_widget_mut().update(
-                            &mut tree,
-                            &iced::Event::Window(iced::window::Event::RedrawRequested(
-                                std::time::Instant::now(),
-                            )),
-                            Layout::new(&node),
-                            iced::mouse::Cursor::Unavailable,
-                            &renderer,
-                            &mut iced::advanced::clipboard::Null,
-                            &mut iced::advanced::Shell::new(&mut Vec::new()),
-                            &viewport,
-                        );
-                        element.as_widget().draw(
-                            &tree,
-                            &mut renderer,
-                            &theme,
-                            &iced::advanced::renderer::Style {
-                                text_color: theme.colors.text.primary,
-                            },
-                            Layout::new(&node),
-                            iced::mouse::Cursor::Unavailable,
-                            &viewport,
-                        );
-                        let pixels = renderer.screenshot(
-                            iced::Size::new(width, height),
-                            1.0,
-                            theme.colors.general.background,
-                        );
-                        let suffix = match (long_email, review_sign_out) {
-                            (false, false) => "",
-                            (true, false) => "-long-email",
-                            (false, true) => "-review",
-                            (true, true) => "-long-email-review",
-                        };
-                        image::save_buffer(
-                            std::path::Path::new(&directory).join(format!(
-                                "connect-account-{appearance}-{width}x{height}{suffix}.png"
-                            )),
-                            &pixels,
-                            width,
-                            height,
-                            image::ColorType::Rgba8,
-                        )
-                        .expect("save Connect account preview");
-                    }
+                        appearance,
+                        &theme,
+                        (width, height),
+                        long_email,
+                        review_sign_out,
+                    )
+                    .await;
                 }
             }
         }

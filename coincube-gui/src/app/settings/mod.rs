@@ -2922,43 +2922,8 @@ pub mod global {
 
         fn value(&mut self) -> Result<(), String> {
             match self.peek() {
-                Some(b'{') => {
-                    self.at += 1;
-                    if self.peek() == Some(b'}') {
-                        self.at += 1;
-                        return Ok(());
-                    }
-                    loop {
-                        let key = self.string()?;
-                        if self.peek() != Some(b':') {
-                            return Err(Self::unexpected());
-                        }
-                        self.at += 1;
-                        self.path.push(Step::Key(key));
-                        self.value()?;
-                        self.path.pop();
-                        if !self.next_item(b'}')? {
-                            return Ok(());
-                        }
-                    }
-                }
-                Some(b'[') => {
-                    self.at += 1;
-                    if self.peek() == Some(b']') {
-                        self.at += 1;
-                        return Ok(());
-                    }
-                    let mut index = 0;
-                    loop {
-                        self.path.push(Step::Index(index));
-                        self.value()?;
-                        self.path.pop();
-                        index += 1;
-                        if !self.next_item(b']')? {
-                            return Ok(());
-                        }
-                    }
-                }
+                Some(b'{') => self.object(),
+                Some(b'[') => self.array(),
                 Some(b'"') => self.string().map(drop),
                 Some(b'-' | b'0'..=b'9') => self.number(),
                 Some(b't' | b'f' | b'n') => {
@@ -2968,6 +2933,45 @@ pub mod global {
                     Ok(())
                 }
                 _ => Err(Self::unexpected()),
+            }
+        }
+
+        fn object(&mut self) -> Result<(), String> {
+            self.at += 1;
+            if self.peek() == Some(b'}') {
+                self.at += 1;
+                return Ok(());
+            }
+            loop {
+                let key = self.string()?;
+                if self.peek() != Some(b':') {
+                    return Err(Self::unexpected());
+                }
+                self.at += 1;
+                self.path.push(Step::Key(key));
+                self.value()?;
+                self.path.pop();
+                if !self.next_item(b'}')? {
+                    return Ok(());
+                }
+            }
+        }
+
+        fn array(&mut self) -> Result<(), String> {
+            self.at += 1;
+            if self.peek() == Some(b']') {
+                self.at += 1;
+                return Ok(());
+            }
+            let mut index = 0;
+            loop {
+                self.path.push(Step::Index(index));
+                self.value()?;
+                self.path.pop();
+                index += 1;
+                if !self.next_item(b']')? {
+                    return Ok(());
+                }
             }
         }
 
@@ -4297,27 +4301,30 @@ pub mod global {
 
         /// The child half runs in another process, so the OS lock (not an
         /// in-process mutex) must keep the parent's read after its commit.
+        fn run_global_lock_child(directory: PathBuf) {
+            let path = directory.join(DEFAULT_FILE_NAME);
+            let (locked, waiting) = (
+                directory.join("child-locked"),
+                directory.join("parent-waiting"),
+            );
+            let _hook = install(&path, move |stage| {
+                if stage == Stage::Locked {
+                    std::fs::write(&locked, b"")?;
+                    let deadline = Instant::now() + DEADLOCK;
+                    while !waiting.exists() && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                }
+                Ok(())
+            });
+            GlobalSettings::update_account_tier(&path, AccountTier::Pro).unwrap();
+        }
+
         #[test]
         fn the_global_lock_serializes_writers_across_processes() {
             const CHILD: &str = "COINCUBE_R04B_GLOBAL_LOCK_CHILD";
             if let Some(directory) = std::env::var_os(CHILD) {
-                let directory = PathBuf::from(directory);
-                let path = directory.join(DEFAULT_FILE_NAME);
-                let (locked, waiting) = (
-                    directory.join("child-locked"),
-                    directory.join("parent-waiting"),
-                );
-                let _hook = install(&path, move |stage| {
-                    if stage == Stage::Locked {
-                        std::fs::write(&locked, b"")?;
-                        let deadline = Instant::now() + DEADLOCK;
-                        while !waiting.exists() && Instant::now() < deadline {
-                            std::thread::sleep(Duration::from_millis(5));
-                        }
-                    }
-                    Ok(())
-                });
-                GlobalSettings::update_account_tier(&path, AccountTier::Pro).unwrap();
+                run_global_lock_child(PathBuf::from(directory));
                 return;
             }
             let root = TempRoot::new("process-lock");
