@@ -310,152 +310,7 @@ mod seed_export_duress_gui_tests {
                 let _enter = runtime.enter();
                 let _guard = crate::app::session::test_guard();
                 for reopen in [false, true] {
-                    crate::app::session::close();
-                    let path = std::env::temp_dir().join(format!(
-                        "delayed-unlock-duress-{}-{}",
-                        reopen,
-                        uuid::Uuid::new_v4()
-                    ));
-                    let (source, _) = crate::app::shell_tests::bitcoin_app(&path);
-                    let cube = source.cube_settings().clone();
-                    let root = source.datadir().clone();
-                    let (home, startup) = home::Home::new_for_chain(root.clone(), None);
-                    drop(startup);
-                    let (mut gui, pane_id) = GUI::reviewer_split_app_home_gui(source, home);
-                    let sibling_pane = gui.focus.unwrap();
-                    let pin = crate::pin_entry::PinEntry::new(
-                        cube.clone(),
-                        path.clone(),
-                        crate::pin_entry::PinEntrySuccess::LoadApp {
-                            datadir: root.clone(),
-                            config: crate::app::Config::new(false),
-                            network: bitcoin::Network::Bitcoin,
-                            internal_bitcoind: None,
-                            backup: None,
-                            wallet_settings: None,
-                            connect_client: None,
-                        },
-                        None,
-                    );
-                    let old_generation = pin.reviewer_trial_generation();
-                    gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(pin);
-
-                    let (mut revealing, _) = crate::app::shell_tests::bitcoin_app(&path);
-                    revealing.reviewer_show_seed_phrase_for_test();
-                    let pane = gui.panes.get_mut(sibling_pane).unwrap();
-                    pane.tabs.push(tab::Tab::new(3, tab::State::App(revealing)));
-                    pane.focused_tab = 1;
-                    crate::app::session::open(
-                        "foreground-seed-reveal",
-                        zeroize::Zeroizing::new("2468".into()),
-                    );
-
-                    let proof = crate::pin_entry::VerifiedUnlockDuress::for_test(
-                        path.clone(),
-                        cube.id.clone(),
-                        cube.network,
-                    );
-                    let (release, delayed) = tokio::sync::oneshot::channel();
-                    let pending_classifier =
-                        Task::perform(async move { delayed.await.unwrap() }, move |proof| {
-                            Message::Pane(
-                                pane_id,
-                                pane::Message::tab(
-                                    1,
-                                    tab::Message::PinEntry(crate::pin_entry::Message::Classified(
-                                        old_generation,
-                                        Ok(crate::pin_entry::Verdict::Duress(proof)),
-                                    )),
-                                ),
-                            )
-                        });
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            1,
-                            tab::Message::PinEntry(crate::pin_entry::Message::Back),
-                        ),
-                    )));
-                    assert!(matches!(
-                        gui.panes.get(pane_id).unwrap().tabs[0].state,
-                        tab::State::Home(_)
-                    ));
-
-                    if reopen {
-                        let mut new_cube = cube.clone();
-                        new_cube.id = "reopened-different-cube".into();
-                        let mut reopened = crate::pin_entry::PinEntry::new(
-                            new_cube,
-                            path.clone(),
-                            crate::pin_entry::PinEntrySuccess::LoadApp {
-                                datadir: root,
-                                config: crate::app::Config::new(false),
-                                network: bitcoin::Network::Bitcoin,
-                                internal_bitcoind: None,
-                                backup: None,
-                                wallet_settings: None,
-                                connect_client: None,
-                            },
-                            None,
-                        );
-                        assert_ne!(reopened.reviewer_trial_generation(), old_generation);
-                        for (index, digit) in "1234".chars().enumerate() {
-                            drop(reopened.update(crate::pin_entry::Message::PinInput(
-                                crate::pin_input::Message::DigitChanged(index, digit.to_string()),
-                            )));
-                        }
-                        drop(reopened.update(crate::pin_entry::Message::Submit));
-                        assert!(reopened.is_loading());
-                        gui.panes.get_mut(pane_id).unwrap().tabs[0].state =
-                            tab::State::PinEntry(reopened);
-                    }
-
-                    // An old ordinary Unlock cannot advance the new PinEntry
-                    // or write a signer into the foreground Cube's session.
-                    drop(gui.update(Message::Pane(
-                        pane_id,
-                        pane::Message::tab(
-                            1,
-                            tab::Message::PinEntry(crate::pin_entry::Message::Classified(
-                                old_generation,
-                                Ok(crate::pin_entry::Verdict::Unlock),
-                            )),
-                        ),
-                    )));
-                    if reopen {
-                        let tab::State::PinEntry(pin) =
-                            &gui.panes.get(pane_id).unwrap().tabs[0].state
-                        else {
-                            panic!("old ordinary verdict changed the new PIN entry")
-                        };
-                        assert!(pin.is_loading());
-                    }
-                    assert_eq!(
-                        crate::app::session::current_cube_id().as_deref(),
-                        Some("foreground-seed-reveal")
-                    );
-
-                    release.send(proof).unwrap();
-                    let delivered = runtime.block_on(async {
-                        let mut stream =
-                            iced_runtime::task::into_stream(pending_classifier).unwrap();
-                        while let Some(action) = stream.next().await {
-                            if let iced_runtime::Action::Output(message) = action {
-                                return message;
-                            }
-                        }
-                        panic!("held classifier did not deliver")
-                    });
-                    let pending_activation = gui.update(delivered);
-                    let pane = gui.panes.get(pane_id).unwrap();
-                    assert_eq!(pane.tabs.len(), 1);
-                    assert!(matches!(pane.tabs[0].state, tab::State::DuressActive(_)));
-                    assert_eq!(gui.focus, Some(pane_id));
-                    assert_eq!(gui.panes.iter().count(), 1);
-                    assert!(!crate::app::session::is_open());
-                    drop(pending_activation);
-                    drop(gui);
-                    std::fs::remove_dir_all(path).ok();
+                    assert_delayed_classifier_duress(&runtime, reopen);
                 }
             })
             .unwrap()
@@ -463,6 +318,148 @@ mod seed_export_duress_gui_tests {
         if let Err(panic) = result {
             std::panic::resume_unwind(panic);
         }
+    }
+
+    fn assert_delayed_classifier_duress(runtime: &tokio::runtime::Runtime, reopen: bool) {
+        crate::app::session::close();
+        let path = std::env::temp_dir().join(format!(
+            "delayed-unlock-duress-{}-{}",
+            reopen,
+            uuid::Uuid::new_v4()
+        ));
+        let (source, _) = crate::app::shell_tests::bitcoin_app(&path);
+        let cube = source.cube_settings().clone();
+        let root = source.datadir().clone();
+        let (home, startup) = home::Home::new_for_chain(root.clone(), None);
+        drop(startup);
+        let (mut gui, pane_id) = GUI::reviewer_split_app_home_gui(source, home);
+        let sibling_pane = gui.focus.unwrap();
+        let pin = crate::pin_entry::PinEntry::new(
+            cube.clone(),
+            path.clone(),
+            crate::pin_entry::PinEntrySuccess::LoadApp {
+                datadir: root.clone(),
+                config: crate::app::Config::new(false),
+                network: bitcoin::Network::Bitcoin,
+                internal_bitcoind: None,
+                backup: None,
+                wallet_settings: None,
+                connect_client: None,
+            },
+            None,
+        );
+        let old_generation = pin.reviewer_trial_generation();
+        gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(pin);
+
+        let (mut revealing, _) = crate::app::shell_tests::bitcoin_app(&path);
+        revealing.reviewer_show_seed_phrase_for_test();
+        let pane = gui.panes.get_mut(sibling_pane).unwrap();
+        pane.tabs.push(tab::Tab::new(3, tab::State::App(revealing)));
+        pane.focused_tab = 1;
+        crate::app::session::open(
+            "foreground-seed-reveal",
+            zeroize::Zeroizing::new("2468".into()),
+        );
+
+        let proof = crate::pin_entry::VerifiedUnlockDuress::for_test(
+            path.clone(),
+            cube.id.clone(),
+            cube.network,
+        );
+        let (release, delayed) = tokio::sync::oneshot::channel();
+        let pending_classifier =
+            Task::perform(async move { delayed.await.unwrap() }, move |proof| {
+                Message::Pane(
+                    pane_id,
+                    pane::Message::tab(
+                        1,
+                        tab::Message::PinEntry(crate::pin_entry::Message::Classified(
+                            old_generation,
+                            Ok(crate::pin_entry::Verdict::Duress(proof)),
+                        )),
+                    ),
+                )
+            });
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(1, tab::Message::PinEntry(crate::pin_entry::Message::Back)),
+        )));
+        assert!(matches!(
+            gui.panes.get(pane_id).unwrap().tabs[0].state,
+            tab::State::Home(_)
+        ));
+
+        if reopen {
+            let mut new_cube = cube.clone();
+            new_cube.id = "reopened-different-cube".into();
+            let mut reopened = crate::pin_entry::PinEntry::new(
+                new_cube,
+                path.clone(),
+                crate::pin_entry::PinEntrySuccess::LoadApp {
+                    datadir: root,
+                    config: crate::app::Config::new(false),
+                    network: bitcoin::Network::Bitcoin,
+                    internal_bitcoind: None,
+                    backup: None,
+                    wallet_settings: None,
+                    connect_client: None,
+                },
+                None,
+            );
+            assert_ne!(reopened.reviewer_trial_generation(), old_generation);
+            for (index, digit) in "1234".chars().enumerate() {
+                drop(reopened.update(crate::pin_entry::Message::PinInput(
+                    crate::pin_input::Message::DigitChanged(index, digit.to_string()),
+                )));
+            }
+            drop(reopened.update(crate::pin_entry::Message::Submit));
+            assert!(reopened.is_loading());
+            gui.panes.get_mut(pane_id).unwrap().tabs[0].state = tab::State::PinEntry(reopened);
+        }
+
+        // An old ordinary Unlock cannot advance the new PinEntry
+        // or write a signer into the foreground Cube's session.
+        drop(gui.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                1,
+                tab::Message::PinEntry(crate::pin_entry::Message::Classified(
+                    old_generation,
+                    Ok(crate::pin_entry::Verdict::Unlock),
+                )),
+            ),
+        )));
+        if reopen {
+            let tab::State::PinEntry(pin) = &gui.panes.get(pane_id).unwrap().tabs[0].state else {
+                panic!("old ordinary verdict changed the new PIN entry")
+            };
+            assert!(pin.is_loading());
+        }
+        assert_eq!(
+            crate::app::session::current_cube_id().as_deref(),
+            Some("foreground-seed-reveal")
+        );
+
+        release.send(proof).unwrap();
+        let delivered = runtime.block_on(async {
+            let mut stream = iced_runtime::task::into_stream(pending_classifier).unwrap();
+            while let Some(action) = stream.next().await {
+                if let iced_runtime::Action::Output(message) = action {
+                    return message;
+                }
+            }
+            panic!("held classifier did not deliver")
+        });
+        let pending_activation = gui.update(delivered);
+        let pane = gui.panes.get(pane_id).unwrap();
+        assert_eq!(pane.tabs.len(), 1);
+        assert!(matches!(pane.tabs[0].state, tab::State::DuressActive(_)));
+        assert_eq!(gui.focus, Some(pane_id));
+        assert_eq!(gui.panes.iter().count(), 1);
+        assert!(!crate::app::session::is_open());
+        drop(pending_activation);
+        drop(gui);
+        std::fs::remove_dir_all(path).ok();
     }
 
     #[test]
