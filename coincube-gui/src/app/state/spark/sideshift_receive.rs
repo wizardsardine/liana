@@ -589,176 +589,17 @@ impl SparkSideshiftReceiveFlow {
                 self.fetch_affiliate_id()
             }
 
-            Msg::AffiliateFetched(result) => {
-                if self.phase != SparkShiftPhase::FetchingAffiliate {
-                    return Task::none();
-                }
-                match result {
-                    Ok(id) => {
-                        self.affiliate_id = Some(id.clone());
-                        self.phase = SparkShiftPhase::CreatingShift;
-                        self.create_shift(id)
-                    }
-                    Err(e) => {
-                        self.loading = false;
-                        self.phase = SparkShiftPhase::Failed;
-                        // This step talks to the *Coincube* API, not SideShift
-                        // (see `fetch_affiliate_id`). Naming SideShift here
-                        // would send whoever debugs it to the wrong service —
-                        // and reassure the user that a third party is at fault
-                        // when it's ours. No deposit address exists yet, so
-                        // nothing is at risk.
-                        self.error = Some(nothing_sent_yet(&coincube_ui::localized_format!(
-                            "Couldn't load swap settings from Coincube: {e}",
-                            "No se pudo cargar la configuración de intercambio desde COINCUBE: {e}"
-                        )));
-                        Task::none()
-                    }
-                }
-            }
+            Msg::AffiliateFetched(result) => self.affiliate_fetched(result),
 
-            Msg::ShiftCreated(result) => {
-                if self.phase != SparkShiftPhase::CreatingShift {
-                    return Task::none();
-                }
-                self.loading = false;
-                match result {
-                    Ok(shift) => {
-                        self.qr_data = qr_code::Data::new(&shift.deposit_address).ok();
-                        self.shift = Some(shift.clone());
-                        self.shift_status = Some(ShiftStatusKind::Waiting);
-                        self.phase = SparkShiftPhase::Active;
-                        // From here the user may leave, lock or quit; keep the
-                        // shift so its page can come back.
-                        return store_record(self.record());
-                    }
-                    Err(e) => {
-                        self.phase = SparkShiftPhase::Failed;
-                        // `create_shift` spans two services — the Spark bridge
-                        // (deposit address) and SideShift (the shift itself) —
-                        // and each already names itself in its error. Wrapping
-                        // them in a single "SideShift failed" prefix would
-                        // misattribute half of them, so pass the attributed
-                        // error through as-is.
-                        self.error = Some(nothing_sent_yet(e));
-                    }
-                }
-                Task::none()
-            }
+            Msg::ShiftCreated(result) => self.shift_created(result),
 
             Msg::PollStatus => self.poll_shift_status(),
 
-            Msg::StatusUpdated(result) => {
-                // An answer for another shift (one polled before "Get a new
-                // address" or "Start over" and answered after) must not touch
-                // this one: an old `expired` would mark the new shift expired
-                // and clear its stored record.
-                let current = self.shift.as_ref().map(|shift| shift.id.as_str());
-                if let Some(status) = result
-                    .as_ref()
-                    .ok()
-                    .filter(|s| Some(s.id.as_str()) == current)
-                {
-                    let kind = ShiftStatusKind::from(status.status.as_str());
-                    let settled = kind == ShiftStatusKind::Settled
-                        && self.shift_status.as_ref() != Some(&ShiftStatusKind::Settled);
-                    let first_after_restore = std::mem::take(&mut self.restored);
-                    // A restored shift may already show as expired by the
-                    // clock; SideShift confirming it is what clears the record.
-                    let expired = kind == ShiftStatusKind::Expired
-                        && (first_after_restore
-                            || self.shift_status.as_ref() != Some(&ShiftStatusKind::Expired));
-                    self.shift_status = Some(kind);
-                    // SideShift reports the settle output (BTC, as a decimal
-                    // string) once a deposit is detected. Keep the latest so the
-                    // view can show how much bitcoin is arriving. Parse it exactly
-                    // (BTC → sats) rather than via f64, which rounds.
-                    let settle_sat = parse_btc_settle_amount_sats(status.settle_amount.as_deref());
-                    if settle_sat.is_some() {
-                        self.settle_amount_sat = settle_sat;
-                    }
-                    if let Some(amount) = status
-                        .deposit_amount
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|a| !a.is_empty())
-                    {
-                        self.deposit_amount = Some(amount.to_string());
-                    }
-                    if let Some(hash) = status
-                        .settle_hash
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|h| !h.is_empty())
-                    {
-                        self.settle_hash = Some(hash.to_string());
-                    }
-                    if expired {
-                        // Nothing was deposited and nothing ever will be: this
-                        // page stays up for now, but a restart needn't bring
-                        // it back.
-                        return store_record(None);
-                    }
-                    if settled {
-                        // The bitcoin has landed at Spark's on-chain deposit
-                        // address, which means it shows up as an *unclaimed
-                        // deposit* — not as a payment in history. Two things
-                        // happen on settle:
-                        //   1. Kick the panel's deposit list so the pending
-                        //      deposit is loaded when the user returns to it.
-                        //   2. Register the arrival with the always-resident Home
-                        //      state, which auto-claims the deposit once it matures
-                        //      — wherever the user has since navigated — and fires
-                        //      the "bitcoin received" celebration when it lands.
-                        //
-                        // A shift put back after a restart may have settled long
-                        // ago, its deposit already claimed. Registering that would
-                        // leave Home waiting for a deposit that never comes, so
-                        // find where the bitcoin is first, and keep looking until
-                        // the wallet shows it (it may not have synced yet).
-                        if first_after_restore {
-                            self.arrival_unconfirmed = true;
-                        } else if !self.arrival_unconfirmed {
-                            self.awaiting_claim = true;
-                            return self.settled_tasks(false);
-                        }
-                    }
-                    if self.arrival_unconfirmed {
-                        // Waiting to learn where the bitcoin is: look as soon
-                        // as the settle hash is known. Without it, the recheck
-                        // timer polls again (never straight from here, which
-                        // would loop poll → answer → poll).
-                        if let Some(hash) = self.settle_hash.clone() {
-                            return self.check_restored_arrival(hash);
-                        }
-                    }
-                }
-                Task::none()
-            }
+            Msg::StatusUpdated(result) => self.status_updated(result),
 
             Msg::RecheckRestoredArrival => self.recheck_restored_arrival(),
 
-            Msg::RestoredSettleChecked(found) => {
-                if self.phase != SparkShiftPhase::Active || !self.arrival_unconfirmed {
-                    return Task::none();
-                }
-                match found {
-                    RestoredSettle::Claimed(amount_sat) => {
-                        self.arrival_unconfirmed = false;
-                        self.awaiting_claim = false;
-                        self.arrived_amount_sat = Some(*amount_sat);
-                        self.phase = SparkShiftPhase::Arrived;
-                        store_record(None)
-                    }
-                    RestoredSettle::StillPending => {
-                        self.arrival_unconfirmed = false;
-                        self.awaiting_claim = true;
-                        self.settled_tasks(true)
-                    }
-                    // The recheck subscription tries again.
-                    RestoredSettle::Unknown => Task::none(),
-                }
-            }
+            Msg::RestoredSettleChecked(found) => self.restored_settle_checked(found),
 
             Msg::CheckSettleClaim => self.check_settle_claim(),
 
@@ -856,6 +697,181 @@ impl SparkSideshiftReceiveFlow {
             Msg::Restore(_) => Task::none(),
 
             Msg::Back | Msg::Reset => self.reset(),
+        }
+    }
+
+    fn affiliate_fetched(&mut self, result: &Result<String, String>) -> Task<Message> {
+        if self.phase != SparkShiftPhase::FetchingAffiliate {
+            return Task::none();
+        }
+        match result {
+            Ok(id) => {
+                self.affiliate_id = Some(id.clone());
+                self.phase = SparkShiftPhase::CreatingShift;
+                self.create_shift(id)
+            }
+            Err(e) => {
+                self.loading = false;
+                self.phase = SparkShiftPhase::Failed;
+                // This step talks to the *Coincube* API, not SideShift
+                // (see `fetch_affiliate_id`). Naming SideShift here
+                // would send whoever debugs it to the wrong service —
+                // and reassure the user that a third party is at fault
+                // when it's ours. No deposit address exists yet, so
+                // nothing is at risk.
+                self.error = Some(nothing_sent_yet(&coincube_ui::localized_format!(
+                    "Couldn't load swap settings from Coincube: {e}",
+                    "No se pudo cargar la configuración de intercambio desde COINCUBE: {e}"
+                )));
+                Task::none()
+            }
+        }
+    }
+
+    fn shift_created(&mut self, result: &Result<ShiftResponse, String>) -> Task<Message> {
+        if self.phase != SparkShiftPhase::CreatingShift {
+            return Task::none();
+        }
+        self.loading = false;
+        match result {
+            Ok(shift) => {
+                self.qr_data = qr_code::Data::new(&shift.deposit_address).ok();
+                self.shift = Some(shift.clone());
+                self.shift_status = Some(ShiftStatusKind::Waiting);
+                self.phase = SparkShiftPhase::Active;
+                // From here the user may leave, lock or quit; keep the
+                // shift so its page can come back.
+                return store_record(self.record());
+            }
+            Err(e) => {
+                self.phase = SparkShiftPhase::Failed;
+                // `create_shift` spans two services — the Spark bridge
+                // (deposit address) and SideShift (the shift itself) —
+                // and each already names itself in its error. Wrapping
+                // them in a single "SideShift failed" prefix would
+                // misattribute half of them, so pass the attributed
+                // error through as-is.
+                self.error = Some(nothing_sent_yet(e));
+            }
+        }
+        Task::none()
+    }
+
+    fn status_updated(
+        &mut self,
+        result: &Result<crate::services::sideshift::ShiftStatus, String>,
+    ) -> Task<Message> {
+        // An answer for another shift (one polled before "Get a new
+        // address" or "Start over" and answered after) must not touch
+        // this one: an old `expired` would mark the new shift expired
+        // and clear its stored record.
+        let current = self.shift.as_ref().map(|shift| shift.id.as_str());
+        let Some(status) = result
+            .as_ref()
+            .ok()
+            .filter(|s| Some(s.id.as_str()) == current)
+        else {
+            return Task::none();
+        };
+        let kind = ShiftStatusKind::from(status.status.as_str());
+        let settled = kind == ShiftStatusKind::Settled
+            && self.shift_status.as_ref() != Some(&ShiftStatusKind::Settled);
+        let first_after_restore = std::mem::take(&mut self.restored);
+        // A restored shift may already show as expired by the
+        // clock; SideShift confirming it is what clears the record.
+        let expired = kind == ShiftStatusKind::Expired
+            && (first_after_restore
+                || self.shift_status.as_ref() != Some(&ShiftStatusKind::Expired));
+        self.shift_status = Some(kind);
+        self.update_status_amounts(status);
+        if expired {
+            // Nothing was deposited and nothing ever will be: this
+            // page stays up for now, but a restart needn't bring
+            // it back.
+            return store_record(None);
+        }
+        if settled {
+            // The bitcoin has landed at Spark's on-chain deposit
+            // address, which means it shows up as an *unclaimed
+            // deposit* — not as a payment in history. Two things
+            // happen on settle:
+            //   1. Kick the panel's deposit list so the pending
+            //      deposit is loaded when the user returns to it.
+            //   2. Register the arrival with the always-resident Home
+            //      state, which auto-claims the deposit once it matures
+            //      — wherever the user has since navigated — and fires
+            //      the "bitcoin received" celebration when it lands.
+            //
+            // A shift put back after a restart may have settled long
+            // ago, its deposit already claimed. Registering that would
+            // leave Home waiting for a deposit that never comes, so
+            // find where the bitcoin is first, and keep looking until
+            // the wallet shows it (it may not have synced yet).
+            if first_after_restore {
+                self.arrival_unconfirmed = true;
+            } else if !self.arrival_unconfirmed {
+                self.awaiting_claim = true;
+                return self.settled_tasks(false);
+            }
+        }
+        if self.arrival_unconfirmed {
+            // Waiting to learn where the bitcoin is: look as soon
+            // as the settle hash is known. Without it, the recheck
+            // timer polls again (never straight from here, which
+            // would loop poll → answer → poll).
+            if let Some(hash) = self.settle_hash.clone() {
+                return self.check_restored_arrival(hash);
+            }
+        }
+        Task::none()
+    }
+
+    fn update_status_amounts(&mut self, status: &crate::services::sideshift::ShiftStatus) {
+        // SideShift reports the settle output (BTC, as a decimal
+        // string) once a deposit is detected. Keep the latest so the
+        // view can show how much bitcoin is arriving. Parse it exactly
+        // (BTC → sats) rather than via f64, which rounds.
+        let settle_sat = parse_btc_settle_amount_sats(status.settle_amount.as_deref());
+        if settle_sat.is_some() {
+            self.settle_amount_sat = settle_sat;
+        }
+        if let Some(amount) = status
+            .deposit_amount
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+        {
+            self.deposit_amount = Some(amount.to_string());
+        }
+        if let Some(hash) = status
+            .settle_hash
+            .as_deref()
+            .map(str::trim)
+            .filter(|h| !h.is_empty())
+        {
+            self.settle_hash = Some(hash.to_string());
+        }
+    }
+
+    fn restored_settle_checked(&mut self, found: &RestoredSettle) -> Task<Message> {
+        if self.phase != SparkShiftPhase::Active || !self.arrival_unconfirmed {
+            return Task::none();
+        }
+        match found {
+            RestoredSettle::Claimed(amount_sat) => {
+                self.arrival_unconfirmed = false;
+                self.awaiting_claim = false;
+                self.arrived_amount_sat = Some(*amount_sat);
+                self.phase = SparkShiftPhase::Arrived;
+                store_record(None)
+            }
+            RestoredSettle::StillPending => {
+                self.arrival_unconfirmed = false;
+                self.awaiting_claim = true;
+                self.settled_tasks(true)
+            }
+            // The recheck subscription tries again.
+            RestoredSettle::Unknown => Task::none(),
         }
     }
 
