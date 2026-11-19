@@ -1628,110 +1628,13 @@ impl Recipient {
     ) {
         match message {
             view::CreateSpendMessage::RecipientEdited(_, "address", address) => {
-                self.address.value = address;
-                if self.amount.value.is_empty() {
-                    if let Ok((_, Some(amount))) = parse_payment_request(&self.address.value) {
-                        self.bitcoin_unit = bitcoin_unit;
-                        self.amount.value = match bitcoin_unit {
-                            BitcoinDisplayUnit::BTC => amount.to_btc().to_string(),
-                            BitcoinDisplayUnit::Sats => amount.to_sat().to_string(),
-                        };
-                    }
-                }
-                if let Ok(address) = self.destination() {
-                    self.address.valid = address.is_valid_for_network(network);
-                    if !self.amount.value.is_empty() {
-                        self.amount.valid = self.amount().is_ok();
-                    }
-                } else if self.address.value.is_empty() {
-                    // Make the error disappear if we deleted the invalid address
-                    self.address.valid = true;
-                } else {
-                    self.address.valid = false;
-                }
+                self.edit_address(network, bitcoin_unit, address)
             }
             view::CreateSpendMessage::RecipientFiatAmountEdited(_, fiat_amt_str, converter) => {
-                // Clear any warning on the BTC amount as it is no longer the last edited field.
-                self.amount.warning = None;
-                self.fiat_converter = Some(converter);
-                if fiat_amt_str.is_empty() {
-                    self.fiat_amount = Some(form::Value::default());
-                    self.amount = form::Value::default(); // reset the BTC amount to be consistent
-                    return;
-                }
-                // Don't allow more than currency's decimal places for fiat amounts.
-                if fiat_amt_str
-                    .split_once(".")
-                    .filter(|(_, decimals)| {
-                        converter.currency().decimals() == 0
-                            || decimals.len() > converter.currency().decimals()
-                    })
-                    .is_some()
-                {
-                    return;
-                }
-                let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_amt_str, converter.currency())
-                else {
-                    // We don't save the invalid fiat amount.
-                    return;
-                };
-                match converter.convert_to_btc(&fiat_amount) {
-                    Ok(btc_amount) => {
-                        // Update both BTC and fiat amounts.
-                        self.amount.value = btc_amount.to_btc().to_string();
-                        self.bitcoin_unit = BitcoinDisplayUnit::BTC;
-                        self.amount.valid = self.amount().is_ok();
-                        self.fiat_amount = Some(form::Value {
-                            value: fiat_amt_str,
-                            valid: true,
-                            warning: None,
-                        });
-                    }
-                    Err(e) => {
-                        // Probably the BTC amount is too large.
-                        tracing::debug!("Could not convert fiat to BTC: {e}");
-                        self.fiat_amount = Some(form::Value {
-                            value: fiat_amt_str,
-                            valid: false,
-                            warning: Some(coincube_ui::locale::copy("Could not convert to BTC")),
-                        });
-                    }
-                }
+                return self.edit_fiat_amount(fiat_amt_str, converter)
             }
             view::CreateSpendMessage::RecipientEdited(_, "amount", amount) => {
-                self.bitcoin_unit = bitcoin_unit;
-                self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
-                self.fiat_converter = None;
-                self.amount.warning = None;
-
-                // If a float has been pasted with more than 8 decimal places, and truncating
-                // it to 8 places yields a valid BTC amount, truncate it and show a warning.
-                // This can only happen on paste, as the input otherwise allows up to 8 decimal
-                // places. Sats entry has no fractional part, so it is kept as-is.
-                self.amount.value = match bitcoin_unit {
-                    BitcoinDisplayUnit::BTC => f64::from_str(&amount)
-                        .ok()
-                        .and_then(|_| amount.split_once('.'))
-                        .filter(|(_, fraction)| fraction.len() > 8)
-                        .map(|(integer, fraction)| format!("{}.{}", integer, &fraction[..8]))
-                        .filter(|truncated| {
-                            Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok()
-                        })
-                        .inspect(|_| {
-                            self.amount.warning = Some(coincube_ui::locale::copy(
-                                "Amount has been truncated to 8 decimal places",
-                            ));
-                        })
-                        .unwrap_or(amount),
-                    BitcoinDisplayUnit::Sats => amount,
-                };
-
-                if !self.amount.value.is_empty() {
-                    self.amount.valid = self.amount().is_ok();
-                } else {
-                    // Make the error disappear if we deleted the invalid amount
-                    self.amount.valid = true;
-                }
+                self.edit_bitcoin_amount(bitcoin_unit, amount)
             }
             view::CreateSpendMessage::RecipientEdited(_, "label", label) => {
                 self.label.valid = label.len() <= 100;
@@ -1739,6 +1642,122 @@ impl Recipient {
             }
             _ => {}
         }
+        self.enforce_payment_request_amount();
+    }
+
+    fn edit_address(
+        &mut self,
+        network: Network,
+        bitcoin_unit: BitcoinDisplayUnit,
+        address: String,
+    ) {
+        self.address.value = address;
+        if self.amount.value.is_empty() {
+            if let Ok((_, Some(amount))) = parse_payment_request(&self.address.value) {
+                self.bitcoin_unit = bitcoin_unit;
+                self.amount.value = match bitcoin_unit {
+                    BitcoinDisplayUnit::BTC => amount.to_btc().to_string(),
+                    BitcoinDisplayUnit::Sats => amount.to_sat().to_string(),
+                };
+            }
+        }
+        if let Ok(address) = self.destination() {
+            self.address.valid = address.is_valid_for_network(network);
+            if !self.amount.value.is_empty() {
+                self.amount.valid = self.amount().is_ok();
+            }
+        } else if self.address.value.is_empty() {
+            // Make the error disappear if we deleted the invalid address
+            self.address.valid = true;
+        } else {
+            self.address.valid = false;
+        }
+    }
+
+    fn edit_fiat_amount(&mut self, fiat_amt_str: String, converter: view::FiatAmountConverter) {
+        // Clear any warning on the BTC amount as it is no longer the last edited field.
+        self.amount.warning = None;
+        self.fiat_converter = Some(converter);
+        if fiat_amt_str.is_empty() {
+            self.fiat_amount = Some(form::Value::default());
+            self.amount = form::Value::default(); // reset the BTC amount to be consistent
+            return;
+        }
+        // Don't allow more than currency's decimal places for fiat amounts.
+        if fiat_amt_str
+            .split_once(".")
+            .filter(|(_, decimals)| {
+                converter.currency().decimals() == 0
+                    || decimals.len() > converter.currency().decimals()
+            })
+            .is_some()
+        {
+            return;
+        }
+        let Ok(fiat_amount) = FiatAmount::from_str_in(&fiat_amt_str, converter.currency()) else {
+            // We don't save the invalid fiat amount.
+            return;
+        };
+        match converter.convert_to_btc(&fiat_amount) {
+            Ok(btc_amount) => {
+                // Update both BTC and fiat amounts.
+                self.amount.value = btc_amount.to_btc().to_string();
+                self.bitcoin_unit = BitcoinDisplayUnit::BTC;
+                self.amount.valid = self.amount().is_ok();
+                self.fiat_amount = Some(form::Value {
+                    value: fiat_amt_str,
+                    valid: true,
+                    warning: None,
+                });
+            }
+            Err(e) => {
+                // Probably the BTC amount is too large.
+                tracing::debug!("Could not convert fiat to BTC: {e}");
+                self.fiat_amount = Some(form::Value {
+                    value: fiat_amt_str,
+                    valid: false,
+                    warning: Some(coincube_ui::locale::copy("Could not convert to BTC")),
+                });
+            }
+        }
+        self.enforce_payment_request_amount();
+    }
+
+    fn edit_bitcoin_amount(&mut self, bitcoin_unit: BitcoinDisplayUnit, amount: String) {
+        self.bitcoin_unit = bitcoin_unit;
+        self.fiat_amount = None; // Clear any fiat amount to indicate BTC amount is now primary.
+        self.fiat_converter = None;
+        self.amount.warning = None;
+
+        // If a float has been pasted with more than 8 decimal places, and truncating
+        // it to 8 places yields a valid BTC amount, truncate it and show a warning.
+        // This can only happen on paste, as the input otherwise allows up to 8 decimal
+        // places. Sats entry has no fractional part, so it is kept as-is.
+        self.amount.value = match bitcoin_unit {
+            BitcoinDisplayUnit::BTC => f64::from_str(&amount)
+                .ok()
+                .and_then(|_| amount.split_once('.'))
+                .filter(|(_, fraction)| fraction.len() > 8)
+                .map(|(integer, fraction)| format!("{}.{}", integer, &fraction[..8]))
+                .filter(|truncated| Amount::from_str_in(truncated, Denomination::Bitcoin).is_ok())
+                .inspect(|_| {
+                    self.amount.warning = Some(coincube_ui::locale::copy(
+                        "Amount has been truncated to 8 decimal places",
+                    ));
+                })
+                .unwrap_or(amount),
+            BitcoinDisplayUnit::Sats => amount,
+        };
+
+        if !self.amount.value.is_empty() {
+            self.amount.valid = self.amount().is_ok();
+        } else {
+            // Make the error disappear if we deleted the invalid amount
+            self.amount.valid = true;
+        }
+    }
+
+    fn enforce_payment_request_amount(&mut self) {
         if let Ok((_, Some(_))) = parse_payment_request(&self.address.value) {
             if !self.amount.value.is_empty() && self.amount().is_err() {
                 self.amount.valid = false;
