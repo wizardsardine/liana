@@ -3368,6 +3368,46 @@ impl GUI {
         Task::batch(tasks)
     }
 
+    fn open_app_connect_sign_in(
+        &mut self,
+        pane_id: pane_grid::Pane,
+        tab_id: usize,
+    ) -> Task<Message> {
+        let refresh = self.overlay_origin(None).is_some_and(|origin| {
+            origin.pane == pane_id
+                && origin.tab_id == tab_id
+                && self.connect_panel(&origin).is_some_and(|account| {
+                    !account.is_authenticated() && !account.is_checking_session()
+                })
+        });
+        // The Connect control opened it, directly or from its panel.
+        let source_id = crate::app::view::nav::shell::CONNECTION_ID;
+        let open = self.open_connect_sheet_from(
+            pane_id,
+            tab_id,
+            ConnectSheetSection::Account,
+            Some(iced::advanced::widget::Id::new(source_id)),
+        );
+        if refresh {
+            Task::batch([
+                open,
+                Task::done(Message::Pane(
+                    pane_id,
+                    pane::Message::tab(
+                        tab_id,
+                        tab::Message::Run(AppMessage::View(
+                            crate::app::view::Message::ConnectAccount(
+                                crate::app::view::ConnectAccountMessage::Init,
+                            ),
+                        )),
+                    ),
+                )),
+            ])
+        } else {
+            open
+        }
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3428,39 +3468,7 @@ impl GUI {
                     ))
                 ) && self.connect_overlay_eligible(pane_id) =>
             {
-                let refresh = self.overlay_origin(None).is_some_and(|origin| {
-                    origin.pane == pane_id
-                        && origin.tab_id == tab_id
-                        && self.connect_panel(&origin).is_some_and(|account| {
-                            !account.is_authenticated() && !account.is_checking_session()
-                        })
-                });
-                // The Connect control opened it, directly or from its panel.
-                let source_id = crate::app::view::nav::shell::CONNECTION_ID;
-                let open = self.open_connect_sheet_from(
-                    pane_id,
-                    tab_id,
-                    ConnectSheetSection::Account,
-                    Some(iced::advanced::widget::Id::new(source_id)),
-                );
-                if refresh {
-                    Task::batch([
-                        open,
-                        Task::done(Message::Pane(
-                            pane_id,
-                            pane::Message::tab(
-                                tab_id,
-                                tab::Message::Run(AppMessage::View(
-                                    crate::app::view::Message::ConnectAccount(
-                                        crate::app::view::ConnectAccountMessage::Init,
-                                    ),
-                                )),
-                            ),
-                        )),
-                    ])
-                } else {
-                    open
-                }
+                self.open_app_connect_sign_in(pane_id, tab_id)
             }
             Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
                 if matches!(
