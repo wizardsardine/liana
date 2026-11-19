@@ -4493,8 +4493,399 @@ impl Tab {
         enc_key_error
     }
 
+    fn route_pin_entry_message(&mut self, message: crate::pin_entry::Message) -> TabDispatchResult {
+        use crate::pin_entry::Message;
+        use std::ops::ControlFlow::Continue;
+        match message {
+            Message::PinVerified => self.on_pin_verified(),
+            Message::Back => Continue(self.back_from_pin_entry()),
+            Message::DuressDetected { account_id } => {
+                Continue(self.on_pin_duress_detected(account_id))
+            }
+            message => {
+                let State::PinEntry(pin_entry) = &mut self.state else {
+                    unreachable!();
+                };
+                Continue(pin_entry.update(message).map(self::Message::PinEntry))
+            }
+        }
+    }
+
+    fn on_pin_verified(&mut self) -> TabDispatchResult {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        let State::PinEntry(pin_entry) = &mut self.state else {
+            unreachable!();
+        };
+        // After PIN verification, resolve the Cube signer and load
+        // Spark before routing to App/Loader/Login
+        match &pin_entry.on_success {
+            crate::pin_entry::PinEntrySuccess::LoadApp {
+                datadir,
+                config,
+                network,
+                wallet_settings,
+                internal_bitcoind,
+                backup,
+                connect_client,
+            } => {
+                let cube = pin_entry.cube().clone();
+                let pin = pin_entry.pin();
+
+                if cube.network.is_blake2b() && wallet_settings.is_none() {
+                    return Break(self.open_pin_fork_without_vault(cube, pin));
+                }
+                if cube.network.is_blake2b() {
+                    return Break(self.open_pin_fork_vault(cube, pin));
+                }
+
+                let Some(signer) = pin_entry.take_bitcoin_signer() else {
+                    pin_entry
+                        .fail_open("Unlock this Cube again to recover its verified signer".into());
+                    return Break(Task::none());
+                };
+                let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+                let fingerprint = signer.fingerprint(&secp);
+                app::session::store_unlocked_signer(&cube.id, fingerprint, signer);
+
+                // Resolve the Cube's wallets with the PIN first
+                let config_clone = config.clone();
+                let datadir_clone = datadir.clone();
+                let network_val = *network;
+                let wallet_settings_clone = wallet_settings.clone();
+                let internal_bitcoind_clone = internal_bitcoind.clone();
+                let backup_clone = backup.clone();
+                let connect_client_clone = connect_client.clone();
+
+                Continue(Task::perform(
+                    async move {
+                        let mut cube = cube;
+                        // The PIN stays available for the lifetime
+                        // of the open Cube. The Vault installer
+                        // (launched later, from inside the app) has
+                        // to encrypt the hot signer it generates,
+                        // and there is no plaintext branch left for
+                        // it to fall back on. See `app::session`.
+                        app::session::open(cube.id.clone(), pin.clone());
+
+                        let migration_error = Self::migrate_pin_unlocked_cube(
+                            &mut cube,
+                            &datadir_clone,
+                            &pin,
+                            network_val,
+                        )
+                        .await;
+
+                        Self::backfill_pin_unlock_fingerprint(&mut cube, &datadir_clone, &pin)
+                            .await;
+
+                        // The Cube signer and Spark load from the
+                        // same master seed fingerprint.
+                        let master_signer_fingerprint = cube.master_signer_fingerprint;
+
+                        let enc_key_error = Self::derive_pin_unlock_connect_key(
+                            &mut cube,
+                            &datadir_clone,
+                            &pin,
+                            master_signer_fingerprint,
+                        )
+                        .await;
+
+                        let signer_result = Self::resolve_pin_unlock_signer(
+                            &datadir_clone,
+                            network_val,
+                            &cube,
+                            &pin,
+                            master_signer_fingerprint,
+                        );
+
+                        let spark_backend = Self::load_pin_unlock_spark(
+                            &datadir_clone,
+                            network_val,
+                            &cube,
+                            &pin,
+                            master_signer_fingerprint,
+                        )
+                        .await;
+
+                        (
+                            config_clone,
+                            datadir_clone,
+                            network_val,
+                            cube,
+                            signer_result,
+                            spark_backend,
+                            wallet_settings_clone,
+                            internal_bitcoind_clone,
+                            backup_clone,
+                            connect_client_clone,
+                            migration_error,
+                            enc_key_error,
+                        )
+                    },
+                    |(
+                        config,
+                        datadir,
+                        network,
+                        cube,
+                        signer_result,
+                        spark_backend,
+                        wallet_settings,
+                        internal_bitcoind,
+                        backup,
+                        connect_client,
+                        migration_error,
+                        enc_key_error,
+                    )| {
+                        Message::WalletsLoadedAfterUnlock {
+                            cube_signer: signer_result,
+                            spark_backend,
+                            config,
+                            datadir,
+                            network,
+                            cube,
+                            wallet_settings,
+                            internal_bitcoind,
+                            backup,
+                            connect_client,
+                            migration_error,
+                            enc_key_error,
+                        }
+                    },
+                ))
+            }
+        }
+    }
+
+    fn open_pin_fork_without_vault(
+        &mut self,
+        cube: app::settings::CubeSettings,
+        pin: zeroize::Zeroizing<String>,
+    ) -> Task<Message> {
+        let State::PinEntry(pin_entry) = &mut self.state else {
+            unreachable!();
+        };
+        let crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir,
+            config,
+            connect_client,
+            ..
+        } = &pin_entry.on_success;
+        let Some(signer) = pin_entry.take_bitcoin_signer() else {
+            pin_entry.fail_open("Unlock this Cube again to recover its chain-bound signer".into());
+            return Task::none();
+        };
+        app::session::open(cube.id.clone(), pin.clone());
+        // Kept for the Vault this Cube creates next:
+        // its installer exit reopens the Cube from the
+        // session instead of asking for the PIN again.
+        let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
+        let fingerprint = signer.fingerprint(&secp);
+        let key = crate::services::connect::crypto::CubeEncryptionKey::derive(
+            &signer,
+            cube.network.bitcoin_network(),
+        );
+        app::session::store_unlocked_signer(&cube.id, fingerprint, signer);
+        let client = connect_client.clone();
+        let (datadir, config) = (datadir.clone(), config.clone());
+        match self.open_fork_without_vault(Arc::new(key), client, config, datadir, cube) {
+            Ok(task) => task,
+            Err(reason) => {
+                if let State::PinEntry(pin_entry) = &mut self.state {
+                    pin_entry.fail_open(reason);
+                }
+                Task::none()
+            }
+        }
+    }
+
+    fn open_pin_fork_vault(
+        &mut self,
+        cube: app::settings::CubeSettings,
+        pin: zeroize::Zeroizing<String>,
+    ) -> Task<Message> {
+        let State::PinEntry(pin_entry) = &mut self.state else {
+            unreachable!();
+        };
+        let crate::pin_entry::PinEntrySuccess::LoadApp {
+            datadir,
+            config,
+            connect_client,
+            wallet_settings,
+            ..
+        } = &pin_entry.on_success;
+        let requires_connect = pin_entry.requires_connect();
+        let client = connect_client.clone().filter(|c| c.token().is_some());
+        if requires_connect && client.is_none() {
+            pin_entry.fail_open(
+                "Sign in to Connect from Home before opening this Bitcoin Blake2b Cube".into(),
+            );
+            return Task::none();
+        }
+        let Some(wallet_settings) = wallet_settings
+            .clone()
+            .filter(|w| w.remote_backend_auth.is_none())
+        else {
+            pin_entry.fail_open("Bitcoin Blake2b requires a local Connect-backed Vault".into());
+            return Task::none();
+        };
+        let Some(signer) = pin_entry.take_fork_signer() else {
+            pin_entry.fail_open("Unlock this Cube again to recover its chain-bound signer".into());
+            return Task::none();
+        };
+        let cek = Arc::new(crate::services::connect::crypto::CubeEncryptionKey::derive(
+            &signer,
+            cube.network.bitcoin_network(),
+        ));
+        app::session::open(cube.id.clone(), pin.clone());
+        let (loader, command) = if requires_connect {
+            Loader::new_for_chain(
+                datadir.clone(),
+                config.clone(),
+                wallet_settings,
+                cube,
+                client.expect("authenticated backend checked"),
+                cek,
+            )
+        } else {
+            Loader::new_local_fork(datadir.clone(), config.clone(), wallet_settings, cube, cek)
+        };
+        self.state = State::Loader(loader);
+        command.map(Message::Load)
+    }
+
+    fn resolve_pin_unlock_signer(
+        datadir_clone: &CoincubeDirectory,
+        network_val: bitcoin::Network,
+        cube: &app::settings::CubeSettings,
+        pin: &zeroize::Zeroizing<String>,
+        master_signer_fingerprint: Option<bitcoin::bip32::Fingerprint>,
+    ) -> Result<Option<app::cube_signer::CubeSigner>, app::cube_signer::CubeSignerError> {
+        if let Some(fingerprint) = master_signer_fingerprint {
+            app::cube_signer::CubeSigner::resolve(
+                datadir_clone.path(),
+                network_val,
+                &app::seed_source::SeedSource::encrypted_file(fingerprint, pin),
+                &cube.id,
+            )
+        } else {
+            Err(app::cube_signer::CubeSignerError::Signer(
+                "No master signer configured".to_string(),
+            ))
+        }
+    }
+
+    async fn load_pin_unlock_spark(
+        datadir_clone: &CoincubeDirectory,
+        network_val: bitcoin::Network,
+        cube: &app::settings::CubeSettings,
+        pin: &zeroize::Zeroizing<String>,
+        master_signer_fingerprint: Option<bitcoin::bip32::Fingerprint>,
+    ) -> Option<Arc<app::wallets::SparkBackend>> {
+        // Load the Spark backend alongside the signer.
+        // Failures here are non-fatal — we log + return
+        // None so the gui can continue without it and the
+        // Spark panels surface a placeholder. The load
+        // path spawns the bridge subprocess
+        // (coincube-spark-bridge), performs the init
+        // handshake with the cube's mnemonic, and
+        // returns an Arc<SparkClient> on success.
+        if let Some(fingerprint) = master_signer_fingerprint {
+            match app::breez_spark::load_spark_client(
+                datadir_clone.path(),
+                network_val,
+                app::seed_source::SeedSource::encrypted_file(fingerprint, pin),
+                &cube.id,
+            )
+            .await
+            {
+                Ok(client) => Some(Arc::new(app::wallets::SparkBackend::new(client))),
+                Err(e) => {
+                    tracing::warn!(
+                        "Spark bridge unavailable, continuing \
+                     without Spark: {}",
+                        e
+                    );
+                    None
+                }
+            }
+        } else {
+            None
+        }
+    }
+
+    fn back_from_pin_entry(&mut self) -> Task<Message> {
+        let State::PinEntry(pin_entry) = &mut self.state else {
+            unreachable!();
+        };
+        // Go back to home. `Home` speaks `bitcoin::Network` (it
+        // only ever lists the Bitcoin family), and a Cube on the
+        // PIN screen is one that passed the open gate, so the
+        // projection is lossless here.
+        let network = pin_entry.cube().network.bitcoin_network();
+        let (home, command) = Home::new(
+            match &pin_entry.on_success {
+                crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => datadir.clone(),
+            },
+            Some(network),
+        );
+        self.state = State::Home(home);
+        command.map(Message::Launch)
+    }
+
+    fn on_pin_duress_detected(&mut self, account_id: Option<String>) -> Task<Message> {
+        let State::PinEntry(pin_entry) = &mut self.state else {
+            unreachable!();
+        };
+        // Duress PIN entered at Cube unlock. Delegate to the single
+        // trust anchor — `DuressOrchestrator::activate`
+        // (services/duress/orchestrator.rs) — which journals,
+        // enqueues the server POST, drives it in the background, and
+        // runs the atomic wipe in parallel (never gated on the
+        // network). It is async (spawns the POST), so drive it from a
+        // Task rather than re-inlining the sequence here. `account_id`
+        // is the explicitly-threaded enrolled Connect account, `None`
+        // for sovereign (Task A.1). Enter the cryptic screen now;
+        // GUI seals sibling surfaces before this returned Task can
+        // be polled, even if activation later stalls.
+        let network = pin_entry.cube().network.bitcoin_network();
+        let datadir = match &pin_entry.on_success {
+            crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => datadir.clone(),
+        };
+        // Drop every in-memory secret before the wipe runs. A duress
+        // wipe destroys the seed on disk; leaving a decrypted copy
+        // resident would undo that for the rest of the process's
+        // life. This matters more than it looks: the session holds
+        // the *decrypted master signer* now, not just a 4-digit PIN.
+        //
+        // No Cube was ever opened on this path, so the only thing
+        // being cleared is whatever a previous unlock left behind.
+        crate::app::session::close();
+        self.state = State::DuressActive(
+            crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
+                datadir.clone(),
+                Some(network),
+            ),
+        );
+        Task::perform(
+            async move {
+                let root = datadir.path().to_path_buf();
+                run_local_duress_activation(&root, account_id).await;
+                let queue_pending = crate::services::duress::queue::DuressQueue::new(&root)
+                    .is_empty()
+                    .map(|empty| !empty)
+                    .unwrap_or(false);
+                (datadir, network, queue_pending)
+            },
+            |(datadir, network, queue_pending)| Message::DuressActivated {
+                datadir,
+                network,
+                queue_pending,
+            },
+        )
+    }
+
     fn update_inner(&mut self, message: Message) -> Task<Message> {
-        use crate::app::settings::global::GlobalSettings;
         let message = match self.prepare_tab_update(message) {
             std::ops::ControlFlow::Continue(message) => message,
             std::ops::ControlFlow::Break(task) => return task,
@@ -4574,342 +4965,10 @@ impl Tab {
                 std::ops::ControlFlow::Continue(task) => task,
                 std::ops::ControlFlow::Break(task) => return task,
             },
-            (State::PinEntry(pin_entry), Message::PinEntry(msg)) => match msg {
-                crate::pin_entry::Message::PinVerified => {
-                    // After PIN verification, resolve the Cube signer and load
-                    // Spark before routing to App/Loader/Login
-                    match &pin_entry.on_success {
-                        crate::pin_entry::PinEntrySuccess::LoadApp {
-                            datadir,
-                            config,
-                            network,
-                            wallet_settings,
-                            internal_bitcoind,
-                            backup,
-                            connect_client,
-                        } => {
-                            let cube = pin_entry.cube().clone();
-                            let pin = pin_entry.pin();
-
-                            if cube.network.is_blake2b() && wallet_settings.is_none() {
-                                let Some(signer) = pin_entry.take_bitcoin_signer() else {
-                                    pin_entry.fail_open(
-                                        "Unlock this Cube again to recover its chain-bound signer"
-                                            .into(),
-                                    );
-                                    return Task::none();
-                                };
-                                app::session::open(cube.id.clone(), pin.clone());
-                                // Kept for the Vault this Cube creates next:
-                                // its installer exit reopens the Cube from the
-                                // session instead of asking for the PIN again.
-                                let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
-                                let fingerprint = signer.fingerprint(&secp);
-                                let key =
-                                    crate::services::connect::crypto::CubeEncryptionKey::derive(
-                                        &signer,
-                                        cube.network.bitcoin_network(),
-                                    );
-                                app::session::store_unlocked_signer(&cube.id, fingerprint, signer);
-                                let client = connect_client.clone();
-                                let (datadir, config) = (datadir.clone(), config.clone());
-                                return match self.open_fork_without_vault(
-                                    Arc::new(key),
-                                    client,
-                                    config,
-                                    datadir,
-                                    cube,
-                                ) {
-                                    Ok(task) => task,
-                                    Err(reason) => {
-                                        if let State::PinEntry(pin_entry) = &mut self.state {
-                                            pin_entry.fail_open(reason);
-                                        }
-                                        Task::none()
-                                    }
-                                };
-                            }
-                            if cube.network.is_blake2b() {
-                                let requires_connect = pin_entry.requires_connect();
-                                let client = connect_client.clone().filter(|c| c.token().is_some());
-                                if requires_connect && client.is_none() {
-                                    pin_entry.fail_open("Sign in to Connect from Home before opening this Bitcoin Blake2b Cube".into());
-                                    return Task::none();
-                                }
-                                let Some(wallet_settings) = wallet_settings
-                                    .clone()
-                                    .filter(|w| w.remote_backend_auth.is_none())
-                                else {
-                                    pin_entry.fail_open(
-                                        "Bitcoin Blake2b requires a local Connect-backed Vault"
-                                            .into(),
-                                    );
-                                    return Task::none();
-                                };
-                                let Some(signer) = pin_entry.take_fork_signer() else {
-                                    pin_entry.fail_open(
-                                        "Unlock this Cube again to recover its chain-bound signer"
-                                            .into(),
-                                    );
-                                    return Task::none();
-                                };
-                                let cek = Arc::new(
-                                    crate::services::connect::crypto::CubeEncryptionKey::derive(
-                                        &signer,
-                                        cube.network.bitcoin_network(),
-                                    ),
-                                );
-                                app::session::open(cube.id.clone(), pin.clone());
-                                let (loader, command) = if requires_connect {
-                                    Loader::new_for_chain(
-                                        datadir.clone(),
-                                        config.clone(),
-                                        wallet_settings,
-                                        cube,
-                                        client.expect("authenticated backend checked"),
-                                        cek,
-                                    )
-                                } else {
-                                    Loader::new_local_fork(
-                                        datadir.clone(),
-                                        config.clone(),
-                                        wallet_settings,
-                                        cube,
-                                        cek,
-                                    )
-                                };
-                                self.state = State::Loader(loader);
-                                return command.map(Message::Load);
-                            }
-
-                            let Some(signer) = pin_entry.take_bitcoin_signer() else {
-                                pin_entry.fail_open(
-                                    "Unlock this Cube again to recover its verified signer".into(),
-                                );
-                                return Task::none();
-                            };
-                            let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::signing_only();
-                            let fingerprint = signer.fingerprint(&secp);
-                            app::session::store_unlocked_signer(&cube.id, fingerprint, signer);
-
-                            // Resolve the Cube's wallets with the PIN first
-                            let config_clone = config.clone();
-                            let datadir_clone = datadir.clone();
-                            let network_val = *network;
-                            let wallet_settings_clone = wallet_settings.clone();
-                            let internal_bitcoind_clone = internal_bitcoind.clone();
-                            let backup_clone = backup.clone();
-                            let connect_client_clone = connect_client.clone();
-
-                            Task::perform(
-                                async move {
-                                    let mut cube = cube;
-                                    // The PIN stays available for the lifetime
-                                    // of the open Cube. The Vault installer
-                                    // (launched later, from inside the app) has
-                                    // to encrypt the hot signer it generates,
-                                    // and there is no plaintext branch left for
-                                    // it to fall back on. See `app::session`.
-                                    app::session::open(cube.id.clone(), pin.clone());
-
-                                    let migration_error = Self::migrate_pin_unlocked_cube(
-                                        &mut cube,
-                                        &datadir_clone,
-                                        &pin,
-                                        network_val,
-                                    )
-                                    .await;
-
-                                    Self::backfill_pin_unlock_fingerprint(
-                                        &mut cube,
-                                        &datadir_clone,
-                                        &pin,
-                                    )
-                                    .await;
-
-                                    // The Cube signer and Spark load from the
-                                    // same master seed fingerprint.
-                                    let master_signer_fingerprint = cube.master_signer_fingerprint;
-
-                                    let enc_key_error = Self::derive_pin_unlock_connect_key(
-                                        &mut cube,
-                                        &datadir_clone,
-                                        &pin,
-                                        master_signer_fingerprint,
-                                    )
-                                    .await;
-
-                                    let signer_result =
-                                        if let Some(fingerprint) = master_signer_fingerprint {
-                                            app::cube_signer::CubeSigner::resolve(
-                                                datadir_clone.path(),
-                                                network_val,
-                                                &app::seed_source::SeedSource::encrypted_file(
-                                                    fingerprint,
-                                                    &pin,
-                                                ),
-                                                &cube.id,
-                                            )
-                                        } else {
-                                            Err(app::cube_signer::CubeSignerError::Signer(
-                                                "No master signer configured".to_string(),
-                                            ))
-                                        };
-
-                                    // Load the Spark backend alongside the signer.
-                                    // Failures here are non-fatal — we log + return
-                                    // None so the gui can continue without it and the
-                                    // Spark panels surface a placeholder. The load
-                                    // path spawns the bridge subprocess
-                                    // (coincube-spark-bridge), performs the init
-                                    // handshake with the cube's mnemonic, and
-                                    // returns an Arc<SparkClient> on success.
-                                    let spark_backend =
-                                        if let Some(fingerprint) = master_signer_fingerprint {
-                                            match app::breez_spark::load_spark_client(
-                                                datadir_clone.path(),
-                                                network_val,
-                                                app::seed_source::SeedSource::encrypted_file(
-                                                    fingerprint,
-                                                    &pin,
-                                                ),
-                                                &cube.id,
-                                            )
-                                            .await
-                                            {
-                                                Ok(client) => Some(Arc::new(
-                                                    app::wallets::SparkBackend::new(client),
-                                                )),
-                                                Err(e) => {
-                                                    tracing::warn!(
-                                                        "Spark bridge unavailable, continuing \
-                                                     without Spark: {}",
-                                                        e
-                                                    );
-                                                    None
-                                                }
-                                            }
-                                        } else {
-                                            None
-                                        };
-
-                                    (
-                                        config_clone,
-                                        datadir_clone,
-                                        network_val,
-                                        cube,
-                                        signer_result,
-                                        spark_backend,
-                                        wallet_settings_clone,
-                                        internal_bitcoind_clone,
-                                        backup_clone,
-                                        connect_client_clone,
-                                        migration_error,
-                                        enc_key_error,
-                                    )
-                                },
-                                |(
-                                    config,
-                                    datadir,
-                                    network,
-                                    cube,
-                                    signer_result,
-                                    spark_backend,
-                                    wallet_settings,
-                                    internal_bitcoind,
-                                    backup,
-                                    connect_client,
-                                    migration_error,
-                                    enc_key_error,
-                                )| {
-                                    Message::WalletsLoadedAfterUnlock {
-                                        cube_signer: signer_result,
-                                        spark_backend,
-                                        config,
-                                        datadir,
-                                        network,
-                                        cube,
-                                        wallet_settings,
-                                        internal_bitcoind,
-                                        backup,
-                                        connect_client,
-                                        migration_error,
-                                        enc_key_error,
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-                crate::pin_entry::Message::Back => {
-                    // Go back to home. `Home` speaks `bitcoin::Network` (it
-                    // only ever lists the Bitcoin family), and a Cube on the
-                    // PIN screen is one that passed the open gate, so the
-                    // projection is lossless here.
-                    let network = pin_entry.cube().network.bitcoin_network();
-                    let (home, command) = Home::new(
-                        match &pin_entry.on_success {
-                            crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => {
-                                datadir.clone()
-                            }
-                        },
-                        Some(network),
-                    );
-                    self.state = State::Home(home);
-                    command.map(Message::Launch)
-                }
-                crate::pin_entry::Message::DuressDetected { account_id } => {
-                    // Duress PIN entered at Cube unlock. Delegate to the single
-                    // trust anchor — `DuressOrchestrator::activate`
-                    // (services/duress/orchestrator.rs) — which journals,
-                    // enqueues the server POST, drives it in the background, and
-                    // runs the atomic wipe in parallel (never gated on the
-                    // network). It is async (spawns the POST), so drive it from a
-                    // Task rather than re-inlining the sequence here. `account_id`
-                    // is the explicitly-threaded enrolled Connect account, `None`
-                    // for sovereign (Task A.1). Enter the cryptic screen now;
-                    // GUI seals sibling surfaces before this returned Task can
-                    // be polled, even if activation later stalls.
-                    let network = pin_entry.cube().network.bitcoin_network();
-                    let datadir = match &pin_entry.on_success {
-                        crate::pin_entry::PinEntrySuccess::LoadApp { datadir, .. } => {
-                            datadir.clone()
-                        }
-                    };
-                    // Drop every in-memory secret before the wipe runs. A duress
-                    // wipe destroys the seed on disk; leaving a decrypted copy
-                    // resident would undo that for the rest of the process's
-                    // life. This matters more than it looks: the session holds
-                    // the *decrypted master signer* now, not just a 4-digit PIN.
-                    //
-                    // No Cube was ever opened on this path, so the only thing
-                    // being cleared is whatever a previous unlock left behind.
-                    crate::app::session::close();
-                    self.state = State::DuressActive(
-                        crate::app::view::duress::active_screen::DuressActiveScreen::with_context(
-                            datadir.clone(),
-                            Some(network),
-                        ),
-                    );
-                    Task::perform(
-                        async move {
-                            let root = datadir.path().to_path_buf();
-                            run_local_duress_activation(&root, account_id).await;
-                            let queue_pending =
-                                crate::services::duress::queue::DuressQueue::new(&root)
-                                    .is_empty()
-                                    .map(|empty| !empty)
-                                    .unwrap_or(false);
-                            (datadir, network, queue_pending)
-                        },
-                        |(datadir, network, queue_pending)| Message::DuressActivated {
-                            datadir,
-                            network,
-                            queue_pending,
-                        },
-                    )
-                }
-                m => pin_entry.update(m).map(Message::PinEntry),
+            (State::PinEntry(_), Message::PinEntry(msg)) => match self.route_pin_entry_message(msg)
+            {
+                std::ops::ControlFlow::Continue(task) => task,
+                std::ops::ControlFlow::Break(task) => return task,
             },
             (State::PasskeyUnlock(unlock), Message::PasskeyUnlock(msg)) => match msg {
                 crate::passkey_unlock::Message::Unlocked { fingerprint } => {
