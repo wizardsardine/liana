@@ -1199,69 +1199,11 @@ impl ImportedBitcoinPanel {
             return Task::none();
         }
         self.set_connect_client(client.as_ref());
-        // Moving between Import or restore and the Cube changes only what is
-        // shown, so it stays open while a refresh keeps the panel busy.
-        let presentation = matches!(
-            &message,
-            ImportMessage::LeaveJourney
-                | ImportMessage::ResumeJourney
-                | ImportMessage::ContinueFromScan
-        );
-        if self.busy
-            && !presentation
-            && (!matches!(&message, ImportMessage::PollProgress) || self.address_reserving)
-        {
-            return Task::none();
-        }
-        if matches!(&self.import.stage, BitcoinImportStage::Installing { .. })
-            && matches!(
-                &message,
-                ImportMessage::Source(_)
-                    | ImportMessage::BirthdayEdited(_)
-                    | ImportMessage::BirthdayCalendarOpen
-                    | ImportMessage::BirthdayCalendarCancel
-                    | ImportMessage::BirthdaySelected(_)
-                    | ImportMessage::ScanFromBeginning(_)
-                    | ImportMessage::LookaheadEdited(_)
-                    | ImportMessage::Edit
-                    | ImportMessage::Review
-            )
-        {
-            self.error = Some("This interrupted import is bound to the reviewed wallet. Retry it or return to your Cube.".into());
+        if !self.can_apply_import_message(&message) {
             return Task::none();
         }
         match message {
-            ImportMessage::Source(message) => {
-                let task = match message {
-                    wallet_source_form::Message::Focus(id) => iced::widget::operation::focus(id),
-                    wallet_source_form::Message::SourceSelected(source) => {
-                        if self.source.select_source(source) {
-                            self.invalidate();
-                        }
-                        Task::none()
-                    }
-                    wallet_source_form::Message::ExternalEdited(value) => {
-                        self.source.edit_external(value);
-                        self.invalidate();
-                        Task::none()
-                    }
-                    wallet_source_form::Message::InternalEdited(value) => {
-                        self.source.edit_internal(value);
-                        self.invalidate();
-                        Task::none()
-                    }
-                    wallet_source_form::Message::Hardware(message) => {
-                        let (task, invalidated) = self.source.update_hardware(message);
-                        if invalidated {
-                            self.invalidate();
-                        }
-                        task
-                    }
-                };
-                task.map(|m| {
-                    Message::View(view::Message::ImportedBitcoin(ImportMessage::Source(m)))
-                })
-            }
+            ImportMessage::Source(message) => self.update_import_source(message),
             ImportMessage::BirthdayEdited(value) => {
                 self.birthday = value;
                 self.invalidate();
@@ -1277,20 +1219,7 @@ impl ImportedBitcoinPanel {
                 self.birthday_calendar_open = false;
                 Task::none()
             }
-            ImportMessage::BirthdaySelected(date) => {
-                if !self.birthday_calendar_open {
-                    return Task::none();
-                }
-                self.birthday_calendar_open = false;
-                match birthday_timestamp(date) {
-                    Ok(_) => {
-                        self.birthday = date.format("%Y-%m-%d").to_string();
-                        self.invalidate();
-                    }
-                    Err(error) => self.error = Some(error),
-                }
-                Task::none()
-            }
+            ImportMessage::BirthdaySelected(date) => self.select_import_birthday(date),
             ImportMessage::ScanFromBeginning(value) => {
                 self.scan_from_beginning = value;
                 self.invalidate();
@@ -1302,16 +1231,7 @@ impl ImportedBitcoinPanel {
                 Task::none()
             }
             ImportMessage::ProviderSelected(value) => {
-                self.provider = value;
-                self.provider_known = true;
-                if matches!(&self.import.stage, BitcoinImportStage::Installing { .. }) {
-                    self.review_connect_epoch =
-                        (value == Provider::Connect).then_some(connect_epoch);
-                    self.error = None;
-                } else {
-                    self.invalidate();
-                }
-                Task::none()
+                self.select_import_provider(value, connect_epoch)
             }
             ImportMessage::EndpointEdited(value) => {
                 self.endpoint = value;
@@ -1322,33 +1242,7 @@ impl ImportedBitcoinPanel {
                 }
                 Task::none()
             }
-            ImportMessage::Review => {
-                self.birthday_calendar_open = false;
-                match self.parse_review().and_then(|wallet| {
-                    self.backend(client.as_ref())?;
-                    Ok(wallet)
-                }) {
-                    Ok(wallet) => {
-                        let mut keys = KeysState::new(&wallet.descriptor);
-                        // A descriptor without signer origins names no key to
-                        // check; it goes straight to Review.
-                        self.keys_confirmed = keys.slots.is_empty();
-                        self.review = Some(wallet);
-                        // Keys start on a hardware wallet, so its device list
-                        // starts now; without device access they start on
-                        // recovery words.
-                        if !keys.slots.is_empty() && self.ensure_review_hardware_wallets().is_err()
-                        {
-                            keys = keys.starting_on(KeySource::Words);
-                        }
-                        self.keys = Some(keys);
-                        self.review_connect_epoch =
-                            (self.provider == Provider::Connect).then_some(connect_epoch);
-                    }
-                    Err(error) => self.error = Some(error),
-                }
-                Task::none()
-            }
+            ImportMessage::Review => self.review_import(client.as_ref(), connect_epoch),
             ImportMessage::Edit => {
                 self.birthday_calendar_open = false;
                 self.review = None;
@@ -1361,6 +1255,89 @@ impl ImportedBitcoinPanel {
                 self.error = None;
                 Task::none()
             }
+            message @ (ImportMessage::KeySourceMenu(_)
+            | ImportMessage::KeySourcePicked(_, _)
+            | ImportMessage::KeyWordsEdited(_, _)
+            | ImportMessage::KeyPassphraseEdited(_, _)
+            | ImportMessage::VerifyWords(_)
+            | ImportMessage::CheckDevice(_)
+            | ImportMessage::KeysDone
+            | ImportMessage::AddKeys
+            | ImportMessage::BackToKeys
+            | ImportMessage::RetryStoreKeys) => self.update_import_keys(message),
+            ImportMessage::Confirm | ImportMessage::Retry => {
+                self.confirm_import(client.as_ref(), connect_epoch)
+            }
+            ImportMessage::Refresh => self.request_import_refresh(),
+            ImportMessage::RetrySynchronization => self.retry_synchronization(),
+            ImportMessage::PollProgress => self.poll_progress(),
+            ImportMessage::ExpandDiscovery => self.expand_import_discovery(),
+            ImportMessage::Receive => self.reserve_import_address(),
+            ImportMessage::CopyAddress => {
+                self.address.as_ref().map_or_else(Task::none, |address| {
+                    iced::clipboard::write(address.address.to_string())
+                })
+            }
+            ImportMessage::ToggleDetails => {
+                self.show_details = !self.show_details;
+                Task::none()
+            }
+            ImportMessage::Hardware(message) => self.update_import_hardware(message),
+            ImportMessage::ContinueFromScan => {
+                if self.import.active_attachment().is_some() {
+                    self.scan_continued = true;
+                }
+                Task::none()
+            }
+            ImportMessage::LeaveJourney => self.leave_import_journey(),
+            ImportMessage::ResumeJourney => {
+                if self.import.active_attachment().is_none() {
+                    self.journey = true;
+                }
+                // Back on Keys: a device connected meanwhile is checked now.
+                self.auto_check_devices()
+            }
+            ImportMessage::Abandon => self.abandon_import(),
+        }
+    }
+
+    fn can_apply_import_message(&mut self, message: &ImportMessage) -> bool {
+        // Moving between Import or restore and the Cube changes only what is
+        // shown, so it stays open while a refresh keeps the panel busy.
+        let presentation = matches!(
+            message,
+            ImportMessage::LeaveJourney
+                | ImportMessage::ResumeJourney
+                | ImportMessage::ContinueFromScan
+        );
+        if self.busy
+            && !presentation
+            && (!matches!(message, ImportMessage::PollProgress) || self.address_reserving)
+        {
+            return false;
+        }
+        if matches!(&self.import.stage, BitcoinImportStage::Installing { .. })
+            && matches!(
+                message,
+                ImportMessage::Source(_)
+                    | ImportMessage::BirthdayEdited(_)
+                    | ImportMessage::BirthdayCalendarOpen
+                    | ImportMessage::BirthdayCalendarCancel
+                    | ImportMessage::BirthdaySelected(_)
+                    | ImportMessage::ScanFromBeginning(_)
+                    | ImportMessage::LookaheadEdited(_)
+                    | ImportMessage::Edit
+                    | ImportMessage::Review
+            )
+        {
+            self.error = Some("This interrupted import is bound to the reviewed wallet. Retry it or return to your Cube.".into());
+            return false;
+        }
+        true
+    }
+
+    fn update_import_keys(&mut self, message: ImportMessage) -> Task<Message> {
+        match message {
             ImportMessage::KeySourceMenu(index) => {
                 if let Some(keys) = &mut self.keys {
                     keys.menu = (keys.menu != Some(index)).then_some(index);
@@ -1368,33 +1345,7 @@ impl ImportedBitcoinPanel {
                 Task::none()
             }
             ImportMessage::KeySourcePicked(index, source) => {
-                if let Some(keys) = &mut self.keys {
-                    keys.menu = None;
-                    // Not offered where every key must sign here.
-                    if !keys.sources().contains(&source) {
-                        return Task::none();
-                    }
-                }
-                if let Some(slot) = self.key_slot(index) {
-                    slot.source = source;
-                    slot.check = 0;
-                    slot.auto_checked = None;
-                    slot.words = zeroize::Zeroizing::new(String::new());
-                    slot.passphrase = zeroize::Zeroizing::new(String::new());
-                    slot.status = if source == KeySource::Elsewhere {
-                        KeyStatus::Verified
-                    } else {
-                        KeyStatus::Missing
-                    };
-                }
-                if source == KeySource::Hardware {
-                    if let Err(error) = self.ensure_review_hardware_wallets() {
-                        self.error = Some(error);
-                    }
-                    // Its device may already be connected.
-                    return self.auto_check_devices();
-                }
-                Task::none()
+                self.select_import_key_source(index, source)
             }
             ImportMessage::KeyWordsEdited(index, SecretInput(value)) => {
                 if let Some(slot) = self.key_slot(index) {
@@ -1414,20 +1365,7 @@ impl ImportedBitcoinPanel {
             }
             ImportMessage::VerifyWords(index) => self.verify_words(index),
             ImportMessage::CheckDevice(index) => self.check_device(index),
-            ImportMessage::KeysDone if self.adding_keys => {
-                if self.keys_stored == KeysStored::Storing
-                    || !self.keys.as_ref().is_some_and(KeysState::ready_to_add)
-                {
-                    return Task::none();
-                }
-                if let Err(error) = self.storage_preflight() {
-                    self.error = Some(error);
-                    return Task::none();
-                }
-                self.keys_confirmed = true;
-                self.error = None;
-                self.store_keys()
-            }
+            ImportMessage::KeysDone if self.adding_keys => self.finish_adding_import_keys(),
             ImportMessage::KeysDone => {
                 if self.keys.as_ref().is_some_and(KeysState::ready) {
                     self.keys_confirmed = true;
@@ -1435,22 +1373,7 @@ impl ImportedBitcoinPanel {
                 }
                 Task::none()
             }
-            ImportMessage::AddKeys => {
-                let Some(wallet) = self.import.active_attachment() else {
-                    return Task::none();
-                };
-                if self.stored_keys != Some(0) || self.adding_keys {
-                    return Task::none();
-                }
-                // Only words are stored, so a device is not offered.
-                self.keys = Some(KeysState::new(&wallet.descriptor).starting_on(KeySource::Words));
-                self.keys_confirmed = false;
-                self.keys_stored = KeysStored::None;
-                self.adding_keys = true;
-                self.journey = true;
-                self.error = None;
-                Task::none()
-            }
+            ImportMessage::AddKeys => self.begin_adding_import_keys(),
             ImportMessage::BackToKeys => {
                 if self.keys.is_some() && !self.writing_setup() {
                     self.keys_confirmed = false;
@@ -1464,268 +1387,397 @@ impl ImportedBitcoinPanel {
                     Task::none()
                 }
             }
-            ImportMessage::Confirm | ImportMessage::Retry => {
-                if self.provider == Provider::Connect
-                    && self
-                        .review_connect_epoch
-                        .is_some_and(|epoch| epoch != connect_epoch)
-                {
+            _ => Task::none(),
+        }
+    }
+
+    fn update_import_source(&mut self, message: wallet_source_form::Message) -> Task<Message> {
+        let task = match message {
+            wallet_source_form::Message::Focus(id) => iced::widget::operation::focus(id),
+            wallet_source_form::Message::SourceSelected(source) => {
+                if self.source.select_source(source) {
                     self.invalidate();
-                    self.error = Some("Your Connect session changed. Review the Bitcoin server again before importing.".into());
-                    return Task::none();
-                }
-                if self.busy || self.import.is_ready() {
-                    return Task::none();
-                }
-                let Some(wallet) = self.review.clone() else {
-                    self.error = Some("Review a public Bitcoin wallet before importing it.".into());
-                    return Task::none();
-                };
-                if self.keys.is_some() && !self.keys_confirmed {
-                    self.error = Some("Add the wallet's keys before importing it.".into());
-                    return Task::none();
-                }
-                // Installing cannot be undone, so the words must be storable
-                // before the wallet is attached.
-                if let Err(error) = self.storage_preflight() {
-                    self.error = Some(error);
-                    return Task::none();
-                }
-                let config = match self.config(&wallet, client.as_ref()) {
-                    Ok(config) => config,
-                    Err(error) => {
-                        self.error = Some(error);
-                        return Task::none();
-                    }
-                };
-                self.busy = true;
-                self.error = None;
-                let generation = self.generation;
-                let directory = self.directory.clone();
-                let cube_id = self.cube_id.clone();
-                let operation_id = self.import.operation_id;
-                Task::perform(
-                    async move {
-                        bitcoin_import::install(&directory, &cube_id, operation_id, wallet, config)
-                            .await
-                            .map(|_| ())
-                    },
-                    move |result| {
-                        Message::ImportedBitcoin(Box::new(ImportEvent::Installed(
-                            generation, result,
-                        )))
-                    },
-                )
-            }
-            ImportMessage::Refresh => {
-                if self.busy {
-                    Task::none()
-                } else {
-                    // This is the deliberate/slow refresh path. A failed full
-                    // snapshot must not be retried by each 2-second status tick.
-                    self.snapshot_failed = false;
-                    if self.daemon.is_some() {
-                        self.refresh()
-                    } else {
-                        self.open_daemon()
-                    }
-                }
-            }
-            ImportMessage::RetrySynchronization => self.retry_synchronization(),
-            ImportMessage::PollProgress => self.poll_progress(),
-            ImportMessage::ExpandDiscovery => {
-                let Some(wallet) = self.import.active_attachment().cloned() else {
-                    return Task::none();
-                };
-                if self.verified_address_state().is_none() {
-                    self.error =
-                        Some("Refresh this wallet before expanding its history search.".into());
-                    return Task::none();
-                }
-                let Some(status) = self
-                    .info
-                    .as_ref()
-                    .and_then(|info| info.imported_wallet.as_ref())
-                else {
-                    return Task::none();
-                };
-                let target = status
-                    .discovery_target
-                    .max(wallet.initial_lookahead)
-                    .saturating_add(200)
-                    .min(10_000);
-                if target <= status.discovery_target {
-                    self.error = Some("The maximum discovery range has been reached.".into());
-                    return Task::none();
-                }
-                // Expansion requires the daemon to be stopped even when App
-                // owns the shared runtime. Revoke late callbacks first, then
-                // stop it in the task before changing its durable scan target.
-                self.generation = fresh_generation();
-                self.generation_gate
-                    .store(self.generation, Ordering::SeqCst);
-                self.progress_polling = false;
-                self.sync_requesting = false;
-                self.address_reserving = false;
-                let daemon = self.daemon.take();
-                self.owns_daemon = false;
-                self.info = None;
-                self.coins = None;
-                self.address = None;
-                self.import.stage = BitcoinImportStage::Syncing {
-                    wallet: wallet.clone(),
-                };
-                self.busy = true;
-                self.error = None;
-                let generation = self.generation;
-                let data_dir = self.directory.coincubed_data_directory(&wallet.wallet_id);
-                Task::perform(
-                    async move {
-                        if let Some(daemon) = daemon {
-                            daemon.stop().await.map_err(|error| error.to_string())?;
-                        }
-                        tokio::task::spawn_blocking(move || {
-                            let config =
-                                Config::from_file(Some(data_dir.path().join("daemon.toml")))
-                                    .map_err(|error| error.to_string())?;
-                            coincubed::expand_imported_discovery(&config, &data_dir, target)
-                                .map_err(|error| error.to_string())
-                        })
-                        .await
-                        .map_err(|error| error.to_string())?
-                    },
-                    move |result| {
-                        Message::ImportedBitcoin(Box::new(ImportEvent::Expanded(
-                            generation, result,
-                        )))
-                    },
-                )
-            }
-            ImportMessage::Receive => {
-                if !self.is_ready() {
-                    self.error =
-                        Some("Wait for the complete Bitcoin history scan before receiving.".into());
-                    return Task::none();
-                }
-                let Some(daemon) = self.daemon.clone() else {
-                    return Task::none();
-                };
-                let Some(root) = self.hardware_root.clone() else {
-                    self.error =
-                        Some("Reopen this Cube before reserving a receive address.".into());
-                    return Task::none();
-                };
-                let Some(wallet) = self.import.active_attachment() else {
-                    return Task::none();
-                };
-                let descriptor = WalletDescriptor::Imported(wallet.descriptor.clone());
-                // A successful reservation changes the Kit fingerprint. Hide
-                // the previous daemon snapshot until its new durable index is
-                // read back, even if the address request fails midway.
-                self.generation = fresh_generation();
-                self.generation_gate
-                    .store(self.generation, Ordering::SeqCst);
-                self.progress_polling = false;
-                self.sync_requesting = false;
-                self.info = None;
-                self.address_reserving = true;
-                self.busy = true;
-                let generation = self.generation;
-                Task::perform(
-                    async move { reserve_receive_address(root, descriptor, daemon).await },
-                    move |result| {
-                        Message::ImportedBitcoin(Box::new(ImportEvent::Address(generation, result)))
-                    },
-                )
-            }
-            ImportMessage::CopyAddress => {
-                self.address.as_ref().map_or_else(Task::none, |address| {
-                    iced::clipboard::write(address.address.to_string())
-                })
-            }
-            ImportMessage::ToggleDetails => {
-                self.show_details = !self.show_details;
-                Task::none()
-            }
-            ImportMessage::Hardware(message) => {
-                let Some(listing) = &mut self.hardware_wallets else {
-                    return Task::none();
-                };
-                let task = match listing.update(message) {
-                    Ok(task) => task.map(|message| {
-                        Message::View(view::Message::ImportedBitcoin(ImportMessage::Hardware(
-                            message,
-                        )))
-                    }),
-                    Err(error) => {
-                        self.error = Some(format!("Hardware wallet: {error}"));
-                        Task::none()
-                    }
-                };
-                // The list may now hold the device a key is waiting for.
-                Task::batch([task, self.auto_check_devices()])
-            }
-            ImportMessage::ContinueFromScan => {
-                if self.import.active_attachment().is_some() {
-                    self.scan_continued = true;
                 }
                 Task::none()
             }
-            ImportMessage::LeaveJourney => {
-                if !self.writing_setup() && self.keys_stored != KeysStored::Storing {
-                    // Closing an import that never installed its wallet
-                    // abandons it: the Cube made for it goes too, through
-                    // the Launcher's delete confirmation, where the user can
-                    // still keep it. A finished import only closes.
-                    let abandoned = !self.adding_keys && self.can_delete_cube();
-                    self.journey = false;
-                    // Typed words do not outlive the screen they were typed on.
-                    if let Some(keys) = &mut self.keys {
-                        keys.forget_words();
-                    }
-                    if self.import.active_attachment().is_none() {
-                        self.keys_confirmed = false;
-                    }
-                    if self.adding_keys {
-                        self.adding_keys = false;
-                        self.keys = None;
-                    }
-                    if abandoned {
-                        return Task::done(Message::View(view::Message::DeleteUnfinishedCube));
-                    }
-                }
+            wallet_source_form::Message::ExternalEdited(value) => {
+                self.source.edit_external(value);
+                self.invalidate();
                 Task::none()
             }
-            ImportMessage::ResumeJourney => {
-                if self.import.active_attachment().is_none() {
-                    self.journey = true;
-                }
-                // Back on Keys: a device connected meanwhile is checked now.
-                self.auto_check_devices()
+            wallet_source_form::Message::InternalEdited(value) => {
+                self.source.edit_internal(value);
+                self.invalidate();
+                Task::none()
             }
-            ImportMessage::Abandon => {
-                if self.import.active_attachment().is_some() {
-                    self.error =
-                        Some("An installed Bitcoin wallet cannot be replaced here.".into());
-                    return Task::none();
+            wallet_source_form::Message::Hardware(message) => {
+                let (task, invalidated) = self.source.update_hardware(message);
+                if invalidated {
+                    self.invalidate();
                 }
-                self.busy = true;
-                let generation = self.generation;
-                let directory = self.directory.clone();
-                let cube_id = self.cube_id.clone();
-                let operation_id = self.import.operation_id;
-                Task::perform(
-                    async move {
-                        bitcoin_import::abandon_pending(&directory, &cube_id, operation_id).await
-                    },
-                    move |result| {
-                        Message::ImportedBitcoin(Box::new(ImportEvent::Abandoned(
-                            generation, result,
-                        )))
-                    },
-                )
+                task
+            }
+        };
+        task.map(|m| Message::View(view::Message::ImportedBitcoin(ImportMessage::Source(m))))
+    }
+
+    fn select_import_birthday(&mut self, date: chrono::NaiveDate) -> Task<Message> {
+        if !self.birthday_calendar_open {
+            return Task::none();
+        }
+        self.birthday_calendar_open = false;
+        match birthday_timestamp(date) {
+            Ok(_) => {
+                self.birthday = date.format("%Y-%m-%d").to_string();
+                self.invalidate();
+            }
+            Err(error) => self.error = Some(error),
+        }
+        Task::none()
+    }
+
+    fn select_import_provider(&mut self, value: Provider, connect_epoch: u64) -> Task<Message> {
+        self.provider = value;
+        self.provider_known = true;
+        if matches!(&self.import.stage, BitcoinImportStage::Installing { .. }) {
+            self.review_connect_epoch = (value == Provider::Connect).then_some(connect_epoch);
+            self.error = None;
+        } else {
+            self.invalidate();
+        }
+        Task::none()
+    }
+
+    fn review_import(
+        &mut self,
+        client: Option<&CoincubeClient>,
+        connect_epoch: u64,
+    ) -> Task<Message> {
+        self.birthday_calendar_open = false;
+        match self.parse_review().and_then(|wallet| {
+            self.backend(client)?;
+            Ok(wallet)
+        }) {
+            Ok(wallet) => {
+                let mut keys = KeysState::new(&wallet.descriptor);
+                // A descriptor without signer origins names no key to
+                // check; it goes straight to Review.
+                self.keys_confirmed = keys.slots.is_empty();
+                self.review = Some(wallet);
+                // Keys start on a hardware wallet, so its device list
+                // starts now; without device access they start on
+                // recovery words.
+                if !keys.slots.is_empty() && self.ensure_review_hardware_wallets().is_err() {
+                    keys = keys.starting_on(KeySource::Words);
+                }
+                self.keys = Some(keys);
+                self.review_connect_epoch =
+                    (self.provider == Provider::Connect).then_some(connect_epoch);
+            }
+            Err(error) => self.error = Some(error),
+        }
+        Task::none()
+    }
+
+    fn select_import_key_source(&mut self, index: usize, source: KeySource) -> Task<Message> {
+        if let Some(keys) = &mut self.keys {
+            keys.menu = None;
+            // Not offered where every key must sign here.
+            if !keys.sources().contains(&source) {
+                return Task::none();
             }
         }
+        if let Some(slot) = self.key_slot(index) {
+            slot.source = source;
+            slot.check = 0;
+            slot.auto_checked = None;
+            slot.words = zeroize::Zeroizing::new(String::new());
+            slot.passphrase = zeroize::Zeroizing::new(String::new());
+            slot.status = if source == KeySource::Elsewhere {
+                KeyStatus::Verified
+            } else {
+                KeyStatus::Missing
+            };
+        }
+        if source == KeySource::Hardware {
+            if let Err(error) = self.ensure_review_hardware_wallets() {
+                self.error = Some(error);
+            }
+            // Its device may already be connected.
+            return self.auto_check_devices();
+        }
+        Task::none()
+    }
+
+    fn finish_adding_import_keys(&mut self) -> Task<Message> {
+        if self.keys_stored == KeysStored::Storing
+            || !self.keys.as_ref().is_some_and(KeysState::ready_to_add)
+        {
+            return Task::none();
+        }
+        if let Err(error) = self.storage_preflight() {
+            self.error = Some(error);
+            return Task::none();
+        }
+        self.keys_confirmed = true;
+        self.error = None;
+        self.store_keys()
+    }
+
+    fn begin_adding_import_keys(&mut self) -> Task<Message> {
+        let Some(wallet) = self.import.active_attachment() else {
+            return Task::none();
+        };
+        if self.stored_keys != Some(0) || self.adding_keys {
+            return Task::none();
+        }
+        // Only words are stored, so a device is not offered.
+        self.keys = Some(KeysState::new(&wallet.descriptor).starting_on(KeySource::Words));
+        self.keys_confirmed = false;
+        self.keys_stored = KeysStored::None;
+        self.adding_keys = true;
+        self.journey = true;
+        self.error = None;
+        Task::none()
+    }
+
+    fn confirm_import(
+        &mut self,
+        client: Option<&CoincubeClient>,
+        connect_epoch: u64,
+    ) -> Task<Message> {
+        if self.provider == Provider::Connect
+            && self
+                .review_connect_epoch
+                .is_some_and(|epoch| epoch != connect_epoch)
+        {
+            self.invalidate();
+            self.error = Some(
+                "Your Connect session changed. Review the Bitcoin server again before importing."
+                    .into(),
+            );
+            return Task::none();
+        }
+        if self.busy || self.import.is_ready() {
+            return Task::none();
+        }
+        let Some(wallet) = self.review.clone() else {
+            self.error = Some("Review a public Bitcoin wallet before importing it.".into());
+            return Task::none();
+        };
+        if self.keys.is_some() && !self.keys_confirmed {
+            self.error = Some("Add the wallet's keys before importing it.".into());
+            return Task::none();
+        }
+        // Installing cannot be undone, so the words must be storable
+        // before the wallet is attached.
+        if let Err(error) = self.storage_preflight() {
+            self.error = Some(error);
+            return Task::none();
+        }
+        let config = match self.config(&wallet, client) {
+            Ok(config) => config,
+            Err(error) => {
+                self.error = Some(error);
+                return Task::none();
+            }
+        };
+        self.busy = true;
+        self.error = None;
+        let generation = self.generation;
+        let directory = self.directory.clone();
+        let cube_id = self.cube_id.clone();
+        let operation_id = self.import.operation_id;
+        Task::perform(
+            async move {
+                bitcoin_import::install(&directory, &cube_id, operation_id, wallet, config)
+                    .await
+                    .map(|_| ())
+            },
+            move |result| {
+                Message::ImportedBitcoin(Box::new(ImportEvent::Installed(generation, result)))
+            },
+        )
+    }
+
+    fn request_import_refresh(&mut self) -> Task<Message> {
+        if self.busy {
+            Task::none()
+        } else {
+            // This is the deliberate/slow refresh path. A failed full
+            // snapshot must not be retried by each 2-second status tick.
+            self.snapshot_failed = false;
+            if self.daemon.is_some() {
+                self.refresh()
+            } else {
+                self.open_daemon()
+            }
+        }
+    }
+
+    fn expand_import_discovery(&mut self) -> Task<Message> {
+        let Some(wallet) = self.import.active_attachment().cloned() else {
+            return Task::none();
+        };
+        if self.verified_address_state().is_none() {
+            self.error = Some("Refresh this wallet before expanding its history search.".into());
+            return Task::none();
+        }
+        let Some(status) = self
+            .info
+            .as_ref()
+            .and_then(|info| info.imported_wallet.as_ref())
+        else {
+            return Task::none();
+        };
+        let target = status
+            .discovery_target
+            .max(wallet.initial_lookahead)
+            .saturating_add(200)
+            .min(10_000);
+        if target <= status.discovery_target {
+            self.error = Some("The maximum discovery range has been reached.".into());
+            return Task::none();
+        }
+        // Expansion requires the daemon to be stopped even when App
+        // owns the shared runtime. Revoke late callbacks first, then
+        // stop it in the task before changing its durable scan target.
+        self.generation = fresh_generation();
+        self.generation_gate
+            .store(self.generation, Ordering::SeqCst);
+        self.progress_polling = false;
+        self.sync_requesting = false;
+        self.address_reserving = false;
+        let daemon = self.daemon.take();
+        self.owns_daemon = false;
+        self.info = None;
+        self.coins = None;
+        self.address = None;
+        self.import.stage = BitcoinImportStage::Syncing {
+            wallet: wallet.clone(),
+        };
+        self.busy = true;
+        self.error = None;
+        let generation = self.generation;
+        let data_dir = self.directory.coincubed_data_directory(&wallet.wallet_id);
+        Task::perform(
+            async move {
+                if let Some(daemon) = daemon {
+                    daemon.stop().await.map_err(|error| error.to_string())?;
+                }
+                tokio::task::spawn_blocking(move || {
+                    let config = Config::from_file(Some(data_dir.path().join("daemon.toml")))
+                        .map_err(|error| error.to_string())?;
+                    coincubed::expand_imported_discovery(&config, &data_dir, target)
+                        .map_err(|error| error.to_string())
+                })
+                .await
+                .map_err(|error| error.to_string())?
+            },
+            move |result| {
+                Message::ImportedBitcoin(Box::new(ImportEvent::Expanded(generation, result)))
+            },
+        )
+    }
+
+    fn reserve_import_address(&mut self) -> Task<Message> {
+        if !self.is_ready() {
+            self.error =
+                Some("Wait for the complete Bitcoin history scan before receiving.".into());
+            return Task::none();
+        }
+        let Some(daemon) = self.daemon.clone() else {
+            return Task::none();
+        };
+        let Some(root) = self.hardware_root.clone() else {
+            self.error = Some("Reopen this Cube before reserving a receive address.".into());
+            return Task::none();
+        };
+        let Some(wallet) = self.import.active_attachment() else {
+            return Task::none();
+        };
+        let descriptor = WalletDescriptor::Imported(wallet.descriptor.clone());
+        // A successful reservation changes the Kit fingerprint. Hide
+        // the previous daemon snapshot until its new durable index is
+        // read back, even if the address request fails midway.
+        self.generation = fresh_generation();
+        self.generation_gate
+            .store(self.generation, Ordering::SeqCst);
+        self.progress_polling = false;
+        self.sync_requesting = false;
+        self.info = None;
+        self.address_reserving = true;
+        self.busy = true;
+        let generation = self.generation;
+        Task::perform(
+            async move { reserve_receive_address(root, descriptor, daemon).await },
+            move |result| {
+                Message::ImportedBitcoin(Box::new(ImportEvent::Address(generation, result)))
+            },
+        )
+    }
+
+    fn update_import_hardware(&mut self, message: HardwareWalletMessage) -> Task<Message> {
+        let Some(listing) = &mut self.hardware_wallets else {
+            return Task::none();
+        };
+        let task = match listing.update(message) {
+            Ok(task) => task.map(|message| {
+                Message::View(view::Message::ImportedBitcoin(ImportMessage::Hardware(
+                    message,
+                )))
+            }),
+            Err(error) => {
+                self.error = Some(format!("Hardware wallet: {error}"));
+                Task::none()
+            }
+        };
+        // The list may now hold the device a key is waiting for.
+        Task::batch([task, self.auto_check_devices()])
+    }
+
+    fn leave_import_journey(&mut self) -> Task<Message> {
+        if !self.writing_setup() && self.keys_stored != KeysStored::Storing {
+            // Closing an import that never installed its wallet
+            // abandons it: the Cube made for it goes too, through
+            // the Launcher's delete confirmation, where the user can
+            // still keep it. A finished import only closes.
+            let abandoned = !self.adding_keys && self.can_delete_cube();
+            self.journey = false;
+            // Typed words do not outlive the screen they were typed on.
+            if let Some(keys) = &mut self.keys {
+                keys.forget_words();
+            }
+            if self.import.active_attachment().is_none() {
+                self.keys_confirmed = false;
+            }
+            if self.adding_keys {
+                self.adding_keys = false;
+                self.keys = None;
+            }
+            if abandoned {
+                return Task::done(Message::View(view::Message::DeleteUnfinishedCube));
+            }
+        }
+        Task::none()
+    }
+
+    fn abandon_import(&mut self) -> Task<Message> {
+        if self.import.active_attachment().is_some() {
+            self.error = Some("An installed Bitcoin wallet cannot be replaced here.".into());
+            return Task::none();
+        }
+        self.busy = true;
+        let generation = self.generation;
+        let directory = self.directory.clone();
+        let cube_id = self.cube_id.clone();
+        let operation_id = self.import.operation_id;
+        Task::perform(
+            async move { bitcoin_import::abandon_pending(&directory, &cube_id, operation_id).await },
+            move |result| {
+                Message::ImportedBitcoin(Box::new(ImportEvent::Abandoned(generation, result)))
+            },
+        )
     }
 
     pub fn update_event(&mut self, event: ImportEvent) -> Task<Message> {
