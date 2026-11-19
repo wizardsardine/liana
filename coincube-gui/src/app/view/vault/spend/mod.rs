@@ -1074,7 +1074,11 @@ fn incomplete_spend_hint(
     drafting: bool,
     loading_fee_estimate: bool,
 ) -> Option<String> {
-    if loading_fee_estimate {
+    if duplicate && loading_fee_estimate {
+        // Something only the user can fix: named even while an estimate is
+        // on its way.
+        Some("Duplicate recipient address.".to_string())
+    } else if loading_fee_estimate {
         // A preset's estimate is on its way (a new or cleared form starts on
         // Normal, or the user switched presets): nothing for the user to set,
         // and the rate in the field is about to be replaced.
@@ -3022,6 +3026,12 @@ mod tests {
             )
             .as_deref(),
             Some(FETCHING_FEE_HINT)
+        );
+        // A duplicate recipient is the user's to fix: named over the fetch.
+        assert_eq!(
+            incomplete_spend_hint(&filled, true, &[], false, None, None, None, false, true)
+                .as_deref(),
+            Some("Duplicate recipient address.")
         );
     }
 
