@@ -664,19 +664,6 @@ pub struct RescanTimeBounds {
 }
 
 impl DaemonControl {
-    /// Ordinary imported-wallet spends have no BTCB2 authorization path yet.
-    /// Refuse before reservations, PSBT mutation, database writes or broadcast.
-    fn require_ordinary_imported_spend_support(&self) -> Result<(), CommandError> {
-        if self.config.bitcoin_config.chain.is_blake2b()
-            && self.config.main_descriptor.as_imported().is_some()
-        {
-            return Err(CommandError::ImportedSpendValidation(
-                "Ordinary spending from an imported Bitcoin Blake2b wallet is not available yet"
-                    .into(),
-            ));
-        }
-        Ok(())
-    }
     // Get the derived descriptor for this coin
     fn derived_desc(
         &self,
@@ -1624,7 +1611,6 @@ impl DaemonControl {
         change_address: Option<bitcoin::Address<bitcoin::address::NetworkUnchecked>>,
         max_fee_sats: Option<u64>,
     ) -> Result<CreateSpendResult, CommandError> {
-        self.require_ordinary_imported_spend_support()?;
         let is_self_send = destinations.is_empty();
         // For self-send, the coins must be specified.
         if is_self_send && coins_outpoints.is_empty() {
@@ -1735,7 +1721,6 @@ impl DaemonControl {
     }
 
     pub fn update_spend(&self, mut psbt: Psbt) -> Result<(), CommandError> {
-        self.require_ordinary_imported_spend_support()?;
         if let Some(imported) = self.config.main_descriptor.as_imported() {
             return self.update_imported_spend(imported, &mut psbt);
         }
@@ -1833,7 +1818,6 @@ impl DaemonControl {
 
     /// Finalize and broadcast this stored Spend transaction.
     pub fn broadcast_spend(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
-        self.require_ordinary_imported_spend_support()?;
         let mut db_conn = self.db.connection();
 
         // First, try to finalize the spending transaction with the elements contained
@@ -1937,7 +1921,6 @@ impl DaemonControl {
         is_cancel: bool,
         feerate_vb: Option<u64>,
     ) -> Result<CreateSpendResult, CommandError> {
-        self.require_ordinary_imported_spend_support()?;
         let mut db_conn = self.db.connection();
         let mut tx_getter = DbTxGetter::new(&self.db);
 
@@ -6366,8 +6349,12 @@ mod tests {
             (signers, descriptor, psbt)
         }
 
+        /// An imported Bitcoin Blake2b wallet's spend commands reach the
+        /// ordinary wallet checks like a Bitcoin import's: none refuses with
+        /// the old "not available yet" gate (Robert, 2026-11-17). Replay is
+        /// the spend screen's warning, not a daemon refusal.
         #[test]
-        fn imported_blake2b_ordinary_spend_commands_refuse_before_side_effects() {
+        fn imported_blake2b_spend_commands_reach_the_wallet_checks() {
             let (signers, descriptor, psbt) = vault_fixture();
             let secp = secp256k1::Secp256k1::new();
             let key = descriptor_key(&signers[0], 0, &secp);
@@ -6381,44 +6368,20 @@ mod tests {
             .unwrap();
             let mut control = blake2b_control(descriptor);
             control.config.main_descriptor = WalletDescriptor::Imported(imported);
-            let backend = std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
-            control.bitcoin = backend.clone();
+            control.bitcoin = std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
             let txid = psbt.unsigned_tx.compute_txid();
-            let refused = |result: Result<(), CommandError>| {
-                assert!(
-                    matches!(result, Err(CommandError::ImportedSpendValidation(message)) if message.contains("not available yet"))
-                )
-            };
-            // No coins, no stored spend and an unsigned PSBT still reach the
-            // policy refusal first, before ordinary wallet state is consulted.
-            assert!(matches!(
-                control.create_spend(&HashMap::new(), &[], 1, None),
-                Err(CommandError::ImportedSpendValidation(_))
-            ));
-            refused(control.update_spend(psbt.clone()));
-            refused(control.broadcast_spend(&txid));
-            assert!(matches!(
-                control.rbf_psbt(&txid, false, Some(1)),
-                Err(CommandError::ImportedSpendValidation(_))
-            ));
-            assert!(control
-                .db()
-                .lock()
-                .unwrap()
-                .connection()
-                .spend_tx(&txid)
-                .is_none());
-            assert!(backend
-                .lock()
-                .unwrap()
-                .broadcasted
-                .lock()
-                .unwrap()
-                .is_empty());
-            assert!(psbt
-                .inputs
-                .iter()
-                .all(|input| input.partial_sigs.is_empty()));
+            let gated = |result: &Result<(), CommandError>| matches!(result, Err(CommandError::ImportedSpendValidation(message)) if message.contains("not available yet"));
+            let create = control
+                .create_spend(&HashMap::new(), &[], 1, None)
+                .map(|_| ());
+            assert!(!gated(&create), "{:?}", create);
+            let update = control.update_spend(psbt.clone());
+            assert!(!gated(&update), "{:?}", update);
+            let broadcast = control.broadcast_spend(&txid);
+            assert!(!gated(&broadcast), "{:?}", broadcast);
+            assert!(matches!(broadcast, Err(CommandError::UnknownSpend(_))));
+            let rbf = control.rbf_psbt(&txid, false, Some(1)).map(|_| ());
+            assert!(!gated(&rbf), "{:?}", rbf);
         }
 
         fn unified(psbt: &Psbt, signer: &MasterSigner) -> Psbt {

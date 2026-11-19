@@ -72,6 +72,9 @@ fn update(s: &mut MeldState, message: MeldMessage) {
         &crate::app::Cache::default(),
         None,
         &CoincubeClient::new(),
+        &std::sync::Arc::new(crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::SHAPES[0],
+        )),
     );
 }
 
@@ -336,5 +339,131 @@ fn received_quotes_and_form_edits_preserve_back_navigation() {
     assert!(matches!(
         s.steps.last(),
         Some(MeldFlowStep::AmountInputForm { .. })
+    ));
+}
+
+#[test]
+fn sell_quote_failure_clears_amount_form_loading_state() {
+    let mut s = state(
+        BuyOrSell::Sell,
+        MeldFlowStep::AmountInputForm {
+            amount: "0.0005".into(),
+            limits: limits(),
+            btc_balance: Amount::from_sat(100000),
+            processing_request: true,
+        },
+    );
+    update(
+        &mut s,
+        MeldMessage::SessionError("synthetic failure".into(), "QUOTE_ACQUISITION_FAILED"),
+    );
+    assert!(matches!(
+        s.steps.last(),
+        Some(MeldFlowStep::AmountInputForm {
+            processing_request: false,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn empty_region_list_skips_region_selection() {
+    let mut s = state(BuyOrSell::Buy, MeldFlowStep::RegionChecks);
+    update(
+        &mut s,
+        MeldMessage::InitializeCountryData(limits(), Some(vec![])),
+    );
+    assert!(
+        matches!(s.steps.last(), Some(MeldFlowStep::AmountInputForm { amount, .. }) if amount == "10")
+    );
+}
+
+#[test]
+fn address_pick_is_ignored_while_quote_request_is_in_flight() {
+    let mut s = state(
+        BuyOrSell::Buy,
+        MeldFlowStep::AddressSelection {
+            amount: 100.0,
+            deposit_address: None,
+            was_picked_from_existing_addresses: false,
+            existing_addresses: Some(vec![address()]),
+            addresses_continue_from: None,
+            address_picker_open: true,
+            processing_request: true,
+        },
+    );
+    update(&mut s, MeldMessage::SelectExistingAddress(0));
+    assert!(matches!(
+        s.steps.last(),
+        Some(MeldFlowStep::AddressSelection {
+            deposit_address: None,
+            was_picked_from_existing_addresses: false,
+            address_picker_open: true,
+            ..
+        })
+    ));
+    if let Some(MeldFlowStep::AddressSelection {
+        processing_request, ..
+    }) = s.steps.last_mut()
+    {
+        *processing_request = false;
+    }
+    update(&mut s, MeldMessage::SelectExistingAddress(0));
+    assert!(matches!(
+        s.steps.last(),
+        Some(MeldFlowStep::AddressSelection {
+            deposit_address: Some(_),
+            was_picked_from_existing_addresses: true,
+            ..
+        })
+    ));
+}
+
+#[test]
+fn sse_events_without_an_active_session_schedule_nothing() {
+    let mut s = state(
+        BuyOrSell::Buy,
+        MeldFlowStep::QuoteSelection {
+            quotes: vec![quote(), quote()],
+            selected: Some(0),
+            webview_pending: false,
+        },
+    );
+    for (event_type, status) in [
+        ("TRANSACTION_CRYPTO_COMPLETE", "SETTLED"),
+        ("TRANSACTION_CRYPTO_FAILED", "ERROR"),
+    ] {
+        let data = serde_json::json!({
+            "eventType": event_type,
+            "eventId": format!("synthetic-{status}"),
+            "meldSessionId": "synthetic-session",
+            "transactionType": "CRYPTO_PURCHASE",
+            "status": status,
+        })
+        .to_string();
+        // guard against a vacuous pass through the malformed-event branch
+        assert!(serde_json::from_str::<crate::services::meld::api::MeldEvent>(&data).is_ok());
+        let task = s.update(
+            MeldMessage::SseEvent(reqwest_sse::Event {
+                event_type: "message".into(),
+                data,
+                last_event_id: None,
+                retry: None,
+            }),
+            &crate::app::Cache::default(),
+            None,
+            &CoincubeClient::new(),
+            &std::sync::Arc::new(crate::services::split_test_wallets::imported_vault(
+                crate::services::split_test_wallets::SHAPES[0],
+            )),
+        );
+        assert!(task.is_none(), "{}", status);
+    }
+    assert!(matches!(
+        s.steps.last(),
+        Some(MeldFlowStep::QuoteSelection {
+            selected: Some(0),
+            ..
+        })
     ));
 }

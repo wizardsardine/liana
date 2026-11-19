@@ -460,7 +460,7 @@ async fn restrict_settings_permissions(path: &std::path::Path) {
 ///
 /// All fields are non-secret: the credential_id is a public identifier and the
 /// rp_id is the relying party domain. The actual PRF output (secret) is never stored.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct PasskeyMetadata {
     /// Base64-encoded WebAuthn credential ID
     pub credential_id: String,

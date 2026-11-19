@@ -149,31 +149,42 @@ pub fn decrypt_descriptor_with_pk(bytes: &[u8], pk: secp256k1::PublicKey) -> Opt
                 };
                 Some(Decrypt::Backup(Backup::from_descriptor(descr, network)))
             }
-            Decrypted::WalletBackup(backup_bytes) => {
-                let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
-                let backup: Backup = serde_json::from_str(&backup_str).ok()?;
-                // The pinned decoder does not emit WalletBackup yet. Keep this
-                // future payload boundary fail-closed before generic restore.
-                if !matches!(backup.chain_identity(), Ok(chain) if !chain.is_blake2b()) {
-                    return Some(Decrypt::ContentNotSupported);
-                }
-                if backup.accounts.len() != 1 {
-                    return None;
-                }
-                let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
-                let _ = match CoincubeDescriptor::from_str(descriptor_str) {
-                    Ok(descr) => descr,
-                    Err(_) => {
-                        return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
-                            backup_bytes,
-                        )))
-                    }
-                };
-                Some(Decrypt::Backup(backup))
-            }
+            Decrypted::WalletBackup(backup_bytes) => decode_wallet_backup(backup_bytes),
             decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),
         },
         Err(_) => None,
+    }
+}
+
+fn decode_wallet_backup(backup_bytes: Vec<u8>) -> Option<Decrypt> {
+    let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
+    let backup: Backup = serde_json::from_str(&backup_str).ok()?;
+    // The pinned decoder does not emit WalletBackup yet. Keep this
+    // future payload boundary fail-closed before generic restore.
+    if !matches!(backup.chain_identity(), Ok(chain) if !chain.is_blake2b()) {
+        return Some(Decrypt::ContentNotSupported);
+    }
+    if backup.accounts.len() != 1 {
+        return None;
+    }
+    let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
+    let _ = match CoincubeDescriptor::from_str(descriptor_str) {
+        Ok(descr) => descr,
+        Err(_) => {
+            return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
+                backup_bytes,
+            )))
+        }
+    };
+    Some(Decrypt::Backup(backup))
+}
+
+fn decrypt_device_name(kind: DeviceKind, version: Option<Version>) -> String {
+    // FIXME: Capitalize first letter
+    if let Some(v) = version {
+        format!("{kind} {v}")
+    } else {
+        kind.to_string()
     }
 }
 
@@ -354,15 +365,6 @@ impl DecryptModal {
         &mut self,
         devices: &mut HardwareWallets,
     ) -> Option<Task<installer::Message>> {
-        fn name(kind: DeviceKind, version: Option<Version>) -> String {
-            // FIXME: Capitalize first letter
-            if let Some(v) = version {
-                format!("{kind} {v}")
-            } else {
-                kind.to_string()
-            }
-        }
-
         let mut new_cant_fetch = BTreeMap::new();
         let mut to_fetch = vec![];
         for d in &devices.list {
@@ -370,7 +372,10 @@ impl DecryptModal {
                 HardwareWallet::Unsupported {
                     id, kind, version, ..
                 } => {
-                    new_cant_fetch.insert(id.clone(), (name(*kind, version.clone()), None));
+                    new_cant_fetch.insert(
+                        id.clone(),
+                        (decrypt_device_name(*kind, version.clone()), None),
+                    );
                 }
                 HardwareWallet::Locked {
                     id,
@@ -378,7 +383,10 @@ impl DecryptModal {
                     pairing_code,
                     ..
                 } => {
-                    new_cant_fetch.insert(id.clone(), (name(*kind, None), pairing_code.clone()));
+                    new_cant_fetch.insert(
+                        id.clone(),
+                        (decrypt_device_name(*kind, None), pairing_code.clone()),
+                    );
                 }
                 d => {
                     if let HardwareWallet::Supported { fingerprint, .. } = d {
@@ -393,6 +401,13 @@ impl DecryptModal {
         }
         self.cant_fetch = new_cant_fetch;
 
+        self.fetch_new_devices(to_fetch)
+    }
+
+    fn fetch_new_devices(
+        &mut self,
+        to_fetch: Vec<&HardwareWallet>,
+    ) -> Option<Task<installer::Message>> {
         let mut batch = vec![];
         for i in to_fetch {
             if let HardwareWallet::Supported {
@@ -403,7 +418,7 @@ impl DecryptModal {
                 ..
             } = i
             {
-                let name = name(*kind, version.clone());
+                let name = decrypt_device_name(*kind, version.clone());
                 self.fetching.insert(*fingerprint, name.clone());
                 batch.push(self.fetch(device.clone(), *fingerprint, name));
             }

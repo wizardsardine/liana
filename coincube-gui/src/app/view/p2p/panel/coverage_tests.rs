@@ -1145,13 +1145,17 @@ fn trade_updates_reconstruct_invoice_status_and_preserve_status_for_chat() {
     assert_eq!(p.trades[0].status, TradeStatus::WaitingPayment);
     p.selected_trade = Some("synthetic-trade".into());
     p.trade_action_loading = true;
+    p.trade_action_order_id = Some("synthetic-trade".into());
     p.trade_rating = 5;
     update(
         &mut p,
         &cache,
-        P2PMessage::TradeActionResult(Ok(super::super::mostro::TradeActionResponse::Success {
-            new_status: "FiatSent".into(),
-        })),
+        P2PMessage::TradeActionResult(
+            "synthetic-trade".into(),
+            Ok(super::super::mostro::TradeActionResponse::Success {
+                new_status: "FiatSent".into(),
+            }),
+        ),
     );
     assert_eq!(p.trades[0].status, TradeStatus::FiatSent);
     assert!(p.trades[0].countdown_start_ts.is_none());
@@ -1609,4 +1613,100 @@ fn acknowledged_conversations_appear_in_their_lists_and_open_with_the_right_cont
         update(&mut p, &cache, P2PMessage::CloseChat);
         assert!(p.chat_selected_trade.is_none());
     }
+}
+
+#[test]
+fn trade_action_result_applies_to_the_originating_trade_only() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    let mut a = trade(TradeStatus::Active, OrderType::Sell);
+    a.id = "trade-a".into();
+    let mut b = trade(TradeStatus::Active, OrderType::Sell);
+    b.id = "trade-b".into();
+    p.trades = vec![a, b];
+    // User moved on to B and started an action there while A's was pending.
+    p.selected_trade = Some("trade-b".into());
+    p.trade_action_loading = true;
+    p.trade_action_order_id = Some("trade-b".into());
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::TradeActionResult(
+            "trade-a".into(),
+            Ok(super::super::mostro::TradeActionResponse::Success {
+                new_status: "FiatSentOk".into(),
+            }),
+        ),
+    );
+    assert_eq!(p.trades[0].status, TradeStatus::FiatSent);
+    assert_eq!(p.trades[1].status, TradeStatus::Active);
+    assert!(p.trades[1].last_dm_action.is_none());
+    // B's action is still in flight.
+    assert!(p.trade_action_loading);
+    assert_eq!(p.trade_action_order_id.as_deref(), Some("trade-b"));
+}
+
+#[test]
+fn cancel_result_keeps_spark_state_of_another_trade() {
+    let mut p = panel();
+    let cache = enabled_cache();
+    p.spark_pay_session_id = Some("trade-b".into());
+    p.spark_pay_phase = SparkPayPhase::Sending;
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::CancelOrderResult("trade-a".into(), Ok(())),
+    );
+    assert_eq!(p.spark_pay_session_id.as_deref(), Some("trade-b"));
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Sending));
+
+    update(
+        &mut p,
+        &cache,
+        P2PMessage::CancelOrderResult("trade-b".into(), Ok(())),
+    );
+    assert!(p.spark_pay_session_id.is_none());
+    assert!(matches!(p.spark_pay_phase, SparkPayPhase::Idle));
+}
+
+#[test]
+fn spark_session_ownership_and_failed_draft_restore() {
+    assert!(spark_session_owned_by(None, "a"));
+    assert!(spark_session_owned_by(Some("a"), "a"));
+    assert!(!spark_session_owned_by(Some("b"), "a"));
+
+    let mut input = String::new();
+    assert!(restore_failed_draft(&mut input, "message A".into()));
+    assert_eq!(input, "message A");
+
+    let mut input = "draft B".to_string();
+    assert!(!restore_failed_draft(&mut input, "message A".into()));
+    assert_eq!(input, "draft B");
+
+    assert!(chat_send_failed_message("Chat", "boom", true).contains("draft was kept"));
+    assert_eq!(
+        chat_send_failed_message("Chat", "boom", false),
+        "Chat send failed: boom"
+    );
+}
+
+#[test]
+fn chat_list_reads_conversations_from_the_state_cache() {
+    let mut p = panel();
+    p.trades = vec![trade(TradeStatus::Active, OrderType::Buy)];
+    assert!(p.chat_list_entries(&["SendDm"]).is_empty());
+    p.chat_history_cache.insert(
+        "synthetic-trade".into(),
+        vec![super::super::mostro::TradeMessage {
+            timestamp: 7,
+            action: "SendDm".into(),
+            payload_json: String::new(),
+            is_own: true,
+        }],
+    );
+    let entries = p.chat_list_entries(&["SendDm"]);
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].2, 7);
+    assert!(entries[0].1.starts_with("You: "));
+    assert!(p.chat_list_entries(&["AdminDm"]).is_empty());
 }

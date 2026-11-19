@@ -1,5 +1,9 @@
 //! In-app Connect authentication completion and cache-commit lifecycle.
 use super::*;
+use crate::{
+    dir::NetworkDirectory,
+    services::connect::client::{auth::AccessTokenResponse, cache},
+};
 
 impl App {
     pub(super) fn connect_auth_ready(
@@ -19,25 +23,11 @@ impl App {
         } else {
             None
         };
-        if let Some(snapshot) = restore_snapshot.as_ref() {
-            let same_arc = match (&snapshot.auth, &self.connect_auth) {
-                (Some((captured, _)), Some(current)) => Arc::ptr_eq(captured, current),
-                (None, None) => true,
-                _ => false,
-            };
-            if snapshot.email != self.connect_email || !same_arc {
-                return Task::done(Message::View(view::Message::ConnectAccount(
-                    view::ConnectAccountMessage::AuthCommitRejected { epoch },
-                )));
-            }
-        }
-        if previous_refresh_token.is_some()
-            && restore_snapshot.is_none()
-            && self
-                .connect_email
-                .as_deref()
-                .is_some_and(|email| email != login.user.email.as_str())
-        {
+        if !self.connect_restore_can_commit(
+            restore_snapshot.as_ref(),
+            previous_refresh_token.as_deref(),
+            &login.user.email,
+        ) {
             return Task::done(Message::View(view::Message::ConnectAccount(
                 view::ConnectAccountMessage::AuthCommitRejected { epoch },
             )));
@@ -59,8 +49,6 @@ impl App {
         }
         Task::perform(
             async move {
-                use crate::services::connect::client::auth::AccessTokenResponse;
-                use crate::services::connect::client::cache;
                 let tokens = AccessTokenResponse {
                     access_token: login.token.clone(),
                     refresh_token: login.refresh_token.clone(),
@@ -71,64 +59,15 @@ impl App {
                     if let Err(error) = tokio::fs::create_dir_all(network_dir.path()).await {
                         Err(cache::ConnectCacheError::WritingFile(error.to_string()))
                     } else if let Some(previous) = previous_refresh_token.as_deref() {
-                        if let Some(current_auth) = current_auth {
-                            let mut current = current_auth.write().await;
-                            let unchanged = restore_snapshot.as_ref().map_or_else(
-                                || current.refresh_token == previous,
-                                |snapshot| {
-                                    snapshot.auth.as_ref().is_some_and(|(_, captured)| {
-                                        current.access_token == captured.access_token
-                                            && current.refresh_token == captured.refresh_token
-                                            && current.expires_at == captured.expires_at
-                                    })
-                                },
-                            );
-                            if !unchanged {
-                                Err(cache::ConnectCacheError::Unexpected(
-                                    "Connect refresh was superseded in memory".into(),
-                                ))
-                            } else {
-                                let result = if let Some(snapshot) = restore_snapshot.as_ref() {
-                                    cache::persist_restored_tokens(
-                                        &network_dir,
-                                        &login.user.email,
-                                        &tokens,
-                                        &snapshot.cache,
-                                    )
-                                    .await
-                                } else {
-                                    cache::persist_refreshed_tokens(
-                                        &network_dir,
-                                        &login.user.email,
-                                        previous,
-                                        &tokens,
-                                    )
-                                    .await
-                                };
-                                if let Ok(accepted) = &result {
-                                    *current = accepted.clone();
-                                }
-                                result
-                            }
-                        } else {
-                            if let Some(snapshot) = restore_snapshot.as_ref() {
-                                cache::persist_restored_tokens(
-                                    &network_dir,
-                                    &login.user.email,
-                                    &tokens,
-                                    &snapshot.cache,
-                                )
-                                .await
-                            } else {
-                                cache::persist_refreshed_tokens(
-                                    &network_dir,
-                                    &login.user.email,
-                                    previous,
-                                    &tokens,
-                                )
-                                .await
-                            }
-                        }
+                        persist_in_app_refresh(
+                            &network_dir,
+                            &login.user.email,
+                            &tokens,
+                            previous,
+                            current_auth,
+                            restore_snapshot.as_ref(),
+                        )
+                        .await
                     } else if let Some(snapshot) = snapshot.as_ref() {
                         cache::update_connect_cache_for_login(
                             &network_dir,
@@ -154,6 +93,34 @@ impl App {
             },
             |message| message,
         )
+    }
+
+    fn connect_restore_can_commit(
+        &self,
+        restore_snapshot: Option<&RestoreAuthSnapshot>,
+        previous_refresh_token: Option<&str>,
+        email: &str,
+    ) -> bool {
+        if let Some(snapshot) = restore_snapshot {
+            let same_arc = match (&snapshot.auth, &self.connect_auth) {
+                (Some((captured, _)), Some(current)) => Arc::ptr_eq(captured, current),
+                (None, None) => true,
+                _ => false,
+            };
+            if snapshot.email != self.connect_email || !same_arc {
+                return false;
+            }
+        }
+        if previous_refresh_token.is_some()
+            && restore_snapshot.is_none()
+            && self
+                .connect_email
+                .as_deref()
+                .is_some_and(|current_email| current_email != email)
+        {
+            return false;
+        }
+        true
     }
 
     pub(super) fn connect_auth_persisted(
@@ -313,5 +280,62 @@ impl App {
                 }
             },
         )
+    }
+}
+
+async fn persist_in_app_refresh(
+    network_dir: &NetworkDirectory,
+    email: &str,
+    tokens: &AccessTokenResponse,
+    previous: &str,
+    current_auth: Option<Arc<tokio::sync::RwLock<AccessTokenResponse>>>,
+    restore_snapshot: Option<&RestoreAuthSnapshot>,
+) -> Result<AccessTokenResponse, cache::ConnectCacheError> {
+    if let Some(current_auth) = current_auth {
+        let mut current = current_auth.write().await;
+        let unchanged = restore_snapshot.map_or_else(
+            || current.refresh_token == previous,
+            |snapshot| {
+                snapshot.auth.as_ref().is_some_and(|(_, captured)| {
+                    current.access_token == captured.access_token
+                        && current.refresh_token == captured.refresh_token
+                        && current.expires_at == captured.expires_at
+                })
+            },
+        );
+        if !unchanged {
+            Err(cache::ConnectCacheError::Unexpected(
+                "Connect refresh was superseded in memory".into(),
+            ))
+        } else {
+            let result = persist_in_app_refresh_tokens(
+                network_dir,
+                email,
+                tokens,
+                previous,
+                restore_snapshot,
+            )
+            .await;
+            if let Ok(accepted) = &result {
+                *current = accepted.clone();
+            }
+            result
+        }
+    } else {
+        persist_in_app_refresh_tokens(network_dir, email, tokens, previous, restore_snapshot).await
+    }
+}
+
+async fn persist_in_app_refresh_tokens(
+    network_dir: &NetworkDirectory,
+    email: &str,
+    tokens: &AccessTokenResponse,
+    previous: &str,
+    restore_snapshot: Option<&RestoreAuthSnapshot>,
+) -> Result<AccessTokenResponse, cache::ConnectCacheError> {
+    if let Some(snapshot) = restore_snapshot {
+        cache::persist_restored_tokens(network_dir, email, tokens, &snapshot.cache).await
+    } else {
+        cache::persist_refreshed_tokens(network_dir, email, previous, tokens).await
     }
 }

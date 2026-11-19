@@ -122,12 +122,12 @@ impl Activity {
         }
     }
 
-    /// The Vault screen offers Bump fee and Cancel only on a wallet with
-    /// an inheritance path (`state/vault/transactions.rs`).
+    /// Whether the Vault screen offers Bump fee and Cancel for this wallet
+    /// (`state/vault/transactions.rs`).
     pub fn vault_supports_replacement(&self) -> bool {
         self.wallet
             .as_ref()
-            .is_some_and(|wallet| wallet.supports_inheritance())
+            .is_some_and(|wallet| wallet.supports_replacement())
     }
 
     #[cfg(test)]
@@ -775,10 +775,7 @@ impl State for Activity {
         self.spark.clear();
         let generation = self.generation;
         self.vault_loading = daemon.is_some();
-        self.psbt_loading = daemon.is_some()
-            && wallet
-                .as_ref()
-                .is_some_and(|wallet| wallet.supports_inheritance());
+        self.psbt_loading = daemon.is_some() && wallet.is_some();
         self.spark_loading = self.spark_backend.is_some();
         self.vault_error = None;
         self.psbt_error = None;

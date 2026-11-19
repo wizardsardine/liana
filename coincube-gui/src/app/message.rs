@@ -85,6 +85,10 @@ pub enum Message {
         enabled: bool,
     },
     UpdateDaemonCache(Result<DaemonCache, Error>),
+    UpdateImportedDaemonCache {
+        generation: u64,
+        result: Result<DaemonCache, Error>,
+    },
     CacheUpdated,
     /// Outcome of clearing a restored Vault's pending-rescan marker after a
     /// completed full scan: `Err` carries why the settings write failed, and the
@@ -100,6 +104,15 @@ pub enum Message {
     /// PLAN-duress-vault-gate PR 3). The result is logged inside the task and
     /// discarded here — it must never block or affect the UI.
     CubeVaultReported,
+    /// An imported Vault's Bitcoin Blake2b copy (its paired Cube) was
+    /// created, or why not. Carries the attempt it answers, so a result
+    /// from a predecessor `App` in the same tab is ignored.
+    /// `Ok(Some(reason))`: the copy exists but its stored recovery words
+    /// weren't copied.
+    ImportedCopyCreated(
+        crate::app::cache::AppGeneration,
+        Result<Option<String>, String>,
+    ),
     /// Terminal no-op for the fire-and-forget push of a Spark Stable Balance
     /// decision to the Cube's Connect record
     /// (`ConnectCubePanel::report_spark_stable_balance`). Logged inside the
@@ -149,8 +162,20 @@ pub enum Message {
     RbfPsbt(Result<Txid, Error>),
     Recovery(Result<SpendTx, Error>),
     Signed(Fingerprint, Result<Psbt, Error>),
+    /// An imported wallet's keys stored in this Cube, for the signer picker.
+    CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
+    /// The result of one imported Vault registration in Vault Settings.
+    DeviceRegistered {
+        attempt: uuid::Uuid,
+        fingerprint: Fingerprint,
+        result: Result<(), Error>,
+    },
     Updated(Result<(), Error>),
+    /// The save result of work the current route's own panel started while
+    /// the import panel stood in for it (a forwarded signature). Delivered to
+    /// that panel, never to the import panel; see `App::update_dispatch`.
+    RoutePanelResult(Box<Message>),
     /// UI-only signal to recompute collected signatures and re-evaluate the
     /// Sign picker's close/broadcast state after an in-memory PSBT merge —
     /// distinct from `Updated(Ok)`, which additionally marks the spend tx as

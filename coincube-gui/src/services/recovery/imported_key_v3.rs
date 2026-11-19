@@ -124,8 +124,7 @@ impl io::Write for BoundedSecretWriter<'_> {
 impl ImportedKeyKitV3 {
     pub fn validate(&self) -> Result<(), String> {
         let chain = self.public.wallet.descriptor.chain();
-        if chain.is_blake2b()
-            || self.public.validate(chain).is_err()
+        if self.public.validate(chain).is_err()
             || self.public.cube.uuid.len() > 128
             || self.operation_id.is_nil()
             || self.public.import_operation_id != Some(self.operation_id)
@@ -313,29 +312,7 @@ fn decode_secret_json(raw: &RawValue) -> Result<Zeroizing<String>, String> {
                     b'n' => secret.push('\n'),
                     b'r' => secret.push('\r'),
                     b't' => secret.push('\t'),
-                    b'u' => {
-                        let first = decode_json_hex4(bytes, index, end).ok_or_else(invalid)?;
-                        index += 4;
-                        let scalar = if (0xD800..=0xDBFF).contains(&first) {
-                            if bytes.get(index..index + 2) != Some(&b"\\u"[..]) {
-                                return Err(invalid());
-                            }
-                            index += 2;
-                            let second = decode_json_hex4(bytes, index, end).ok_or_else(invalid)?;
-                            index += 4;
-                            if !(0xDC00..=0xDFFF).contains(&second) {
-                                return Err(invalid());
-                            }
-                            0x10000
-                                + ((u32::from(first) - 0xD800) << 10)
-                                + (u32::from(second) - 0xDC00)
-                        } else if (0xDC00..=0xDFFF).contains(&first) {
-                            return Err(invalid());
-                        } else {
-                            u32::from(first)
-                        };
-                        secret.push(char::from_u32(scalar).ok_or_else(invalid)?);
-                    }
+                    b'u' => secret.push(decode_unicode_escape(bytes, &mut index, end, invalid)?),
                     _ => return Err(invalid()),
                 }
                 start = index;
@@ -346,6 +323,33 @@ fn decode_secret_json(raw: &RawValue) -> Result<Zeroizing<String>, String> {
     }
     secret.push_str(std::str::from_utf8(&bytes[start..end]).map_err(|_| invalid())?);
     Ok(secret)
+}
+
+fn decode_unicode_escape(
+    bytes: &[u8],
+    index: &mut usize,
+    end: usize,
+    invalid: fn() -> String,
+) -> Result<char, String> {
+    let first = decode_json_hex4(bytes, *index, end).ok_or_else(invalid)?;
+    *index += 4;
+    let scalar = if (0xD800..=0xDBFF).contains(&first) {
+        if bytes.get(*index..*index + 2) != Some(&b"\\u"[..]) {
+            return Err(invalid());
+        }
+        *index += 2;
+        let second = decode_json_hex4(bytes, *index, end).ok_or_else(invalid)?;
+        *index += 4;
+        if !(0xDC00..=0xDFFF).contains(&second) {
+            return Err(invalid());
+        }
+        0x10000 + ((u32::from(first) - 0xD800) << 10) + (u32::from(second) - 0xDC00)
+    } else if (0xDC00..=0xDFFF).contains(&first) {
+        return Err(invalid());
+    } else {
+        u32::from(first)
+    };
+    char::from_u32(scalar).ok_or_else(invalid)
 }
 
 fn decode_json_hex4(bytes: &[u8], start: usize, end: usize) -> Option<u16> {

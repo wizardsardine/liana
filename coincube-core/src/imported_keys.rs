@@ -33,7 +33,6 @@ pub struct ImportedAccount {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImportedKeyError {
-    UnsupportedChain,
     InvalidMnemonic,
     SecretTooLong,
     KeyDoesNotMatchWallet,
@@ -47,7 +46,6 @@ pub enum ImportedKeyError {
 impl fmt::Display for ImportedKeyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::UnsupportedChain => "Imported signing is available only on Bitcoin chains.",
             Self::InvalidMnemonic => "The imported recovery phrase is invalid.",
             Self::SecretTooLong => "The imported recovery phrase or passphrase is too long.",
             Self::KeyDoesNotMatchWallet => "This key does not match the selected wallet account.",
@@ -158,9 +156,6 @@ pub fn verify_imported_account(
     words: Zeroizing<String>,
     passphrase: Zeroizing<String>,
 ) -> Result<VerifiedImportedKey, ImportedKeyError> {
-    if wallet.chain().is_blake2b() {
-        return Err(ImportedKeyError::UnsupportedChain);
-    }
     if words.len() > MAX_MNEMONIC_BYTES || passphrase.len() > MAX_PASSPHRASE_BYTES {
         return Err(ImportedKeyError::SecretTooLong);
     }

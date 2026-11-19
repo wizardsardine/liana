@@ -136,21 +136,15 @@ impl ImportedPairingScope {
         xpub: &str,
         fingerprint: Fingerprint,
     ) -> Result<Self, String> {
-        use coincube_core::miniscript::{DescriptorPublicKey, ForEachKey};
+        use coincube_core::miniscript::ForEachKey;
         let error = "The selected phone account is not an exact imported wallet key.";
         if *wallet_id != WalletId::for_imported(wallet, wallet.chain()).map_err(|_| error)? {
             return Err(error.into());
         }
         let mut origins = Vec::new();
         wallet.receive_descriptor().for_each_key(|key| {
-            if let DescriptorPublicKey::XPub(account) = key {
-                if account.xkey.to_string() == xpub {
-                    if let Some((origin_fp, path)) = &account.origin {
-                        if *origin_fp == fingerprint {
-                            origins.push(path.clone());
-                        }
-                    }
-                }
+            if let Some(origin) = exact_account_origin(key, xpub, fingerprint) {
+                origins.push(origin);
             }
             true
         });
@@ -164,6 +158,24 @@ impl ImportedPairingScope {
             pairing_revision: Some(uuid::Uuid::new_v4().to_string()),
         })
     }
+}
+
+fn exact_account_origin(
+    key: &coincube_core::miniscript::DescriptorPublicKey,
+    xpub: &str,
+    fingerprint: Fingerprint,
+) -> Option<DerivationPath> {
+    use coincube_core::miniscript::DescriptorPublicKey;
+    if let DescriptorPublicKey::XPub(account) = key {
+        if account.xkey.to_string() == xpub {
+            if let Some((origin_fp, path)) = &account.origin {
+                if *origin_fp == fingerprint {
+                    return Some(path.clone());
+                }
+            }
+        }
+    }
+    None
 }
 
 impl PairedPhone {

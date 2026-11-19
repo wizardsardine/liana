@@ -290,6 +290,8 @@ impl Fixture {
                 cube_name: "Synthetic Cube".to_owned(),
                 has_vault: scenario != "wallet_imported",
                 has_imported_bitcoin: scenario == "wallet_imported",
+                // As the App sets it: an imported wallet has no Keychain key.
+                vault_lacks_keychain_key: scenario == "wallet_imported",
                 ..Cache::default()
             },
             pairing: pair_state(scenario),
@@ -565,8 +567,44 @@ fn assert_mounted_wallet_policy(labels: &Labels, width: u32) {
     }
 }
 
+/// An imported Vault's Wallet tab names its policy and the keys stored in
+/// the Cube, offering Add recovery words only when none are stored.
 #[tokio::test]
-async fn mounted_settings_pair_route_accepts_vault_and_denies_imported_wallet() {
+async fn imported_wallet_tab_shows_its_policy_and_stored_keys() {
+    use crate::home::restore_frame::rendered_labels;
+    for (stored, add, count) in [
+        (Some(0), true, None),
+        (Some(1), false, Some("1 from recovery words")),
+        (None, false, None),
+    ] {
+        let mut fixture = Fixture::new("wallet_imported", SettingsOption::Wallet);
+        fixture.cache.imported_stored_keys = stored;
+        let shown = rendered_labels(fixture.render("wallet_imported")).await;
+        assert!(
+            shown.iter().any(|label| label == "Normal spending"),
+            "{:?}",
+            shown
+        );
+        assert_eq!(
+            shown.iter().any(|label| label == "Add recovery words"),
+            add,
+            "{:?}: {:?}",
+            stored,
+            shown
+        );
+        if let Some(count) = count {
+            assert!(
+                shown.iter().any(|label| label.contains(count)),
+                "{:?}",
+                shown
+            );
+        }
+        assert!(!shown.iter().any(|label| label.contains("no local keys")));
+    }
+}
+
+#[tokio::test]
+async fn mounted_settings_pair_route_accepts_vault_and_hides_it_for_imported_wallet() {
     // Settings routes are tabs on the pinned page head's rule (W5); the Cube
     // sidebar contains only the Settings entry. Exercise the mounted choice
     // in its actual location.
@@ -593,6 +631,13 @@ async fn mounted_settings_pair_route_accepts_vault_and_denies_imported_wallet() 
         element
             .as_widget_mut()
             .operate(&mut tree, Layout::new(&node), &renderer, &mut labels);
+        if scenario == "wallet_imported" {
+            // No phone can pair for an imported wallet, as for a Vault
+            // without a Keychain key: it has no Mobile tab
+            // (`frame::tests::imported_bitcoin_has_the_vault_tabs_without_phone_pairing`).
+            // "Mobile" here is the Wallet page's own Unavailable row.
+            continue;
+        }
         let pair_bounds = labels
             .0
             .iter()
@@ -651,24 +696,16 @@ async fn mounted_settings_pair_route_accepts_vault_and_denies_imported_wallet() 
                 &viewport,
             );
         }
-        if scenario == "wallet_imported" {
-            assert!(
-                messages.is_empty(),
-                "disabled imported Pair settings choice emitted an intent: {:?}",
-                messages
-            );
-        } else {
-            assert!(
-                matches!(
-                    messages.as_slice(),
-                    [Message::FocusAction(id), Message::Menu(Menu::Vault(
-                        VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))
-                    ))] if id == &Id::new("tenshu.settings.route.vault.pair")
-                ),
-                "eligible Pair settings choice must focus and route once: {:?}",
-                messages
-            );
-        }
+        assert!(
+            matches!(
+                messages.as_slice(),
+                [Message::FocusAction(id), Message::Menu(Menu::Vault(
+                    VaultSubMenu::Settings(Some(SettingsOption::LocalSigning))
+                ))] if id == &Id::new("tenshu.settings.route.vault.pair")
+            ),
+            "eligible Pair settings choice must focus and route once: {:?}",
+            messages
+        );
     }
 }
 

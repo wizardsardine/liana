@@ -194,6 +194,30 @@ impl SplitPolicyBinding {
     }
 }
 
+/// The device policy binding for an imported wallet: `None` for a Vault, or
+/// when the imported descriptor has no device policy (its signing session
+/// then refuses with the reason).
+fn imported_wallet_binding(wallet: &Wallet) -> Option<SplitPolicyBinding> {
+    let imported = wallet.main_descriptor.as_imported()?;
+    let policy = crate::split_hardware::policy::imported_policy(imported).ok()?;
+    Some(SplitPolicyBinding {
+        name: policy.name().to_owned(),
+        descriptor: policy.descriptor().to_owned(),
+    })
+}
+
+/// The registration a listed device reports. An imported wallet's signing
+/// session (`split_hardware`) checks its device policy and registers it when
+/// needed, so the listing doesn't know and must not report `Some(false)`,
+/// which the signer picker treats as blocked. Jade reports the same.
+fn listed_registration(wallet: Option<&Wallet>, registered: bool) -> Option<bool> {
+    if wallet.is_some_and(|wallet| wallet.main_descriptor.as_imported().is_some()) {
+        None
+    } else {
+        Some(registered)
+    }
+}
+
 /// No descriptor (xpubs) in logs or message traces.
 impl std::fmt::Debug for SplitPolicyBinding {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -213,7 +237,8 @@ pub struct HardwareWallets {
     /// then stays in memory and nothing is written under `datadir_path`.
     persist_pairing: bool,
     /// The Split policy bound into Coldcard and BitBox02 handles at listing
-    /// (#568 B4b-2); used only when no wallet is loaded.
+    /// (#568 B4b-2), or a loaded imported wallet's device policy; never used
+    /// for a loaded Vault, which binds its own descriptor.
     split_policy: Option<SplitPolicyBinding>,
     /// Devices whose unlock failed, shared with the refresh stream. The
     /// stream counts such a device as still connected and would never list
@@ -317,8 +342,13 @@ impl HardwareWallets {
         self.persist_pairing
     }
 
+    /// Loads the wallet whose devices this listing shows. An imported wallet
+    /// has no Vault descriptor to bind, so its device policy (the one its
+    /// signing session registers) is bound into Coldcard and BitBox02
+    /// handles instead, as for a Split listing. Pairing still persists.
     pub fn with_wallet(mut self, wallet: Arc<Wallet>) -> Self {
         self.aliases.clone_from(&wallet.keys_aliases);
+        self.split_policy = imported_wallet_binding(&wallet).or(self.split_policy);
         self.wallet = Some(wallet);
         self
     }
@@ -534,7 +564,7 @@ async fn unlock_bitbox(
             fingerprint,
             device: bitbox2.into(),
             version,
-            registered: Some(registered),
+            registered: listed_registration(wallet.as_deref(), registered),
             alias: None,
         })
     }
@@ -821,7 +851,10 @@ fn refresh(mut state: State) -> impl Stream<Item = HardwareWalletMessage> {
                     if let Ok((cc, _)) =
                         coldcard::api::Coldcard::open(AsRefWrap { inner: api }, sn, None)
                     {
-                        let device: Arc<dyn HWI + Send + Sync> = if let Some(wallet) = &state.wallet
+                        let device: Arc<dyn HWI + Send + Sync> = if let Some(wallet) = state
+                            .wallet
+                            .as_ref()
+                            .filter(|wallet| wallet.inheritance_descriptor().is_some())
                         {
                             coldcard::Coldcard::from(cc)
                                 .with_wallet_name(wallet.name.clone())
@@ -1274,7 +1307,7 @@ async fn handle_ledger_device<'a, T: async_hwi::ledger::Transport + Sync + Send 
                     fingerprint,
                     device: Arc::new(device),
                     version: Some(version),
-                    registered: Some(registered),
+                    registered: listed_registration(wallet, registered),
                     alias: keys_aliases.get(&fingerprint).cloned(),
                 })
             } else {
@@ -1351,11 +1384,17 @@ async fn handle_jade_device(
                 if let Some(wallet) = &wallet {
                     if wallet.descriptor_keys().contains(&fingerprint) {
                         let Some(descriptor) = wallet.inheritance_descriptor() else {
-                            return Ok(HardwareWallet::Unsupported {
+                            // An imported wallet registers its own device
+                            // policy when it signs (`split_hardware`), so
+                            // whether it is registered is not known here.
+                            return Ok(HardwareWallet::Supported {
                                 id: id.clone(),
                                 kind,
+                                fingerprint,
+                                device: Arc::new(device),
                                 version,
-                                reason: UnsupportedReason::NotPartOfWallet(fingerprint),
+                                registered: None,
+                                alias,
                             });
                         };
                         let desc = descriptor.to_string();
@@ -1575,6 +1614,25 @@ mod tests {
 
     const DESC: &str = "wsh(or_d(multi(2,[ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<0;1>/*,[de6eb005/48'/1'/0'/2']tpubDFGuYfS2JwiUSEXiQuNGdT3R7WTDhbaE6jbUhgYSSdhmfQcSx7ZntMPPv7nrkvAqjpj3jX9wbhSGMeKVao4qAzhbNyBi7iQmv5xxQk6H6jz/<0;1>/*),and_v(v:pkh([ffd63c8d/48'/1'/0'/2']tpubDExA3EC3iAsPxPhFn4j6gMiVup6V2eH3qKyk69RcTc9TTNRfFYVPad8bJD5FCHVQxyBT4izKsvr7Btd2R4xmQ1hZkvsqGBaeE82J71uTK4N/<2;3>/*),older(3))))#p9ax3xxp";
 
+    /// An imported wallet's devices are never listed as unregistered: its
+    /// signing session registers the policy, and the picker would otherwise
+    /// disable them. A Vault and a wallet-less listing keep the device's
+    /// answer.
+    #[test]
+    fn an_imported_wallets_devices_are_not_listed_as_unregistered() {
+        let imported = crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::Shape::WshSortedMulti,
+        );
+        assert_eq!(listed_registration(Some(&imported), false), None);
+        assert_eq!(listed_registration(Some(&imported), true), None);
+        use coincube_core::descriptors::CoincubeDescriptor;
+        use std::str::FromStr;
+        let vault = Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap());
+        assert_eq!(listed_registration(Some(&vault), false), Some(false));
+        assert_eq!(listed_registration(Some(&vault), true), Some(true));
+        assert_eq!(listed_registration(None, false), Some(false));
+    }
+
     fn refresh_hash(wallet: Option<Arc<Wallet>>, root: &str) -> u64 {
         refresh_hash_with(wallet, root, None)
     }
@@ -1706,6 +1764,43 @@ mod tests {
         assert_eq!(binding.bound(), None);
         assert_eq!(binding.descriptor(), DESC);
         assert!(!format!("{binding:?}").contains("tpub"));
+    }
+
+    /// An imported Vault's device list binds the device policy its signing
+    /// session registers, so Coldcard and BitBox02 multisig handles can sign
+    /// it; singlesig binds nothing; pairing still persists; a Vault binds
+    /// its own descriptor, not a Split policy.
+    #[test]
+    fn an_imported_vaults_device_list_binds_its_device_policy() {
+        use crate::services::split_test_wallets::{imported_vault, Shape, SHAPES};
+        let root = || CoincubeDirectory::new("/synthetic/imported".into());
+        for shape in SHAPES {
+            let wallet = Arc::new(imported_vault(shape));
+            let policy = crate::split_hardware::policy::imported_policy(
+                wallet.main_descriptor.as_imported().unwrap(),
+            )
+            .unwrap();
+            let listing = HardwareWallets::new(root(), Network::Bitcoin).with_wallet(wallet);
+            assert!(listing.persists_pairing(), "{:?}", shape);
+            let binding = listing.split_policy_binding().unwrap();
+            assert_eq!(binding.descriptor(), policy.descriptor(), "{:?}", shape);
+            if matches!(shape, Shape::WshMulti | Shape::WshSortedMulti) {
+                assert_eq!(
+                    binding.bound(),
+                    Some((policy.name(), policy.descriptor())),
+                    "{:?}",
+                    shape
+                );
+            } else {
+                assert_eq!(binding.bound(), None, "{:?}", shape);
+            }
+        }
+
+        let vault = Arc::new(Wallet::new(
+            crate::app::state::vault::test_support::unified::fixture().descriptor,
+        ));
+        let listing = HardwareWallets::new(root(), Network::Bitcoin).with_wallet(vault);
+        assert!(listing.split_policy_binding().is_none());
     }
 
     #[test]

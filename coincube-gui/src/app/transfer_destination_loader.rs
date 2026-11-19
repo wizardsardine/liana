@@ -107,10 +107,7 @@ fn selected(
     let Some(wallet_id) = wallet_id else {
         return Ok((cube, None));
     };
-    if cube.bitcoin_import.is_some()
-        || cube.vault_wallet_id.as_ref() != Some(wallet_id)
-        || cube.vault_fingerprint.as_deref().is_none_or(str::is_empty)
-    {
+    if receiving_wallet_id(&cube).as_ref() != Some(wallet_id) {
         return Err(Refusal::Unsupported);
     }
     let wallet = settings
@@ -119,6 +116,22 @@ fn selected(
         .find(|wallet| wallet.wallet_id() == *wallet_id)
         .ok_or(Refusal::IdentityChanged)?;
     Ok((cube, Some(wallet)))
+}
+
+/// The Vault that can receive a cross-Cube transfer in `cube`: a Vault with
+/// its descriptor fingerprint recorded, or a fully scanned imported Vault.
+fn receiving_wallet_id(cube: &CubeSettings) -> Option<WalletId> {
+    match cube.bitcoin_import.as_deref() {
+        None => cube.vault_wallet_id.clone().filter(|_| {
+            cube.vault_fingerprint
+                .as_deref()
+                .is_some_and(|fp| !fp.is_empty())
+        }),
+        Some(import) if cube.vault_wallet_id.is_none() && import.is_ready() => import
+            .active_attachment()
+            .map(|wallet| wallet.wallet_id.clone()),
+        Some(_) => None,
+    }
 }
 
 /// One row of the Other Cube picker, read without unlocking anything.
@@ -154,21 +167,18 @@ pub(crate) fn other_cubes(root: &CoincubeDirectory, source: &Source) -> Vec<Cube
         .into_iter()
         .filter(|cube| cube.id != source.cube_id && cube.network == source.chain)
         .map(|cube| {
-            let has_vault = cube.vault_wallet_id.is_some() && cube.bitcoin_import.is_none();
-            let shares_source = cube.vault_wallet_id.as_ref().is_some_and(|id| {
+            // A Vault, or an imported Vault (once its scan has finished).
+            let has_vault = cube.vault_wallet_id.is_some() || cube.has_imported_bitcoin();
+            let receiving = receiving_wallet_id(&cube);
+            let shares_source = receiving.as_ref().is_some_and(|id| {
                 source
                     .wallet
                     .shares_vault_descriptor(&WalletIdentity::Vault(id.clone()))
             });
             let has_spark =
                 cube.network == ChainId::Bitcoin && cube.master_signer_fingerprint.is_some();
-            let vault_ready = has_vault
-                && !shares_source
-                && cube.master_signer_fingerprint.is_some()
-                && cube
-                    .vault_fingerprint
-                    .as_deref()
-                    .is_some_and(|fp| !fp.is_empty());
+            let vault_ready =
+                receiving.is_some() && !shares_source && cube.master_signer_fingerprint.is_some();
             let refusal = if has_spark || vault_ready {
                 None
             } else if !has_vault {
@@ -177,9 +187,7 @@ pub(crate) fn other_cubes(root: &CoincubeDirectory, source: &Source) -> Vec<Cube
                 ))
             } else if shares_source {
                 Some(coincube_ui::locale::copy("Same Vault as the source"))
-            } else if cube.master_signer_fingerprint.is_none()
-                || cube.vault_fingerprint.as_deref().is_none_or(str::is_empty)
-            {
+            } else if cube.master_signer_fingerprint.is_none() || receiving.is_none() {
                 Some(coincube_ui::locale::copy(
                     "Not ready for a cross-Cube transfer",
                 ))
@@ -192,7 +200,7 @@ pub(crate) fn other_cubes(root: &CoincubeDirectory, source: &Source) -> Vec<Cube
                 has_vault,
                 has_spark,
                 passkey: cube.is_passkey_cube(),
-                vault_wallet_id: cube.vault_wallet_id.filter(|_| vault_ready),
+                vault_wallet_id: receiving.filter(|_| vault_ready),
                 cube_id: cube.id,
                 refusal,
             }
@@ -498,6 +506,8 @@ impl ScopedDestination {
             return Err(Refusal::WrongCredential);
         }
         Ok(AddressRequest {
+            root: self.root.clone(),
+            descriptor: backend.descriptor.clone(),
             daemon: Arc::clone(&backend.daemon),
             generation: self.generation,
             cancelled: Arc::clone(&self.cancelled),
@@ -525,19 +535,22 @@ impl ScopedDestination {
 /// The address is B's only if B's verified descriptor derives it, as a
 /// receive (not change) address, at the reported normal index.
 fn derived_receive_address(
-    descriptor: &coincube_core::descriptors::CoincubeDescriptor,
+    descriptor: &coincube_core::wallet_descriptor::WalletDescriptor,
     address: coincube_core::miniscript::bitcoin::Address,
     index: coincube_core::miniscript::bitcoin::bip32::ChildNumber,
 ) -> Result<DestinationAddress, Refusal> {
     if !index.is_normal() {
         return Err(Refusal::IdentityChanged);
     }
-    let secp = coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::verification_only();
     let expected = descriptor
         .receive_descriptor()
-        .derive(index, &secp)
-        .address(Network::Bitcoin);
-    if expected != address {
+        .script_pubkey(u32::from(index))
+        .map_err(|_| Refusal::IdentityChanged)?;
+    if expected != address.script_pubkey()
+        || !address
+            .as_unchecked()
+            .is_valid_for_network(Network::Bitcoin)
+    {
         return Err(Refusal::IdentityChanged);
     }
     Ok(DestinationAddress { address, index })
@@ -740,17 +753,33 @@ impl BackendRequest {
         if info.chain_id != Some(ChainId::Bitcoin) || info.network != Network::Bitcoin {
             return Err(Refusal::IdentityChanged);
         }
-        let descriptor = info
-            .descriptors
-            .main
-            .as_vault()
-            .ok_or(Refusal::Unsupported)?;
-        if config.main_descriptor != info.descriptors.main {
+        let descriptor = &info.descriptors.main;
+        if config.main_descriptor != *descriptor {
             return Err(Refusal::IdentityChanged);
         }
-        let fingerprint = descriptor_id_fingerprint(descriptor).to_string();
-        if latest.vault_fingerprint.as_deref() != Some(fingerprint.as_str()) {
-            return Err(Refusal::IdentityChanged);
+        match descriptor {
+            // A Vault is identified by its recorded descriptor fingerprint.
+            coincube_core::wallet_descriptor::WalletDescriptor::Vault(vault) => {
+                let fingerprint = descriptor_id_fingerprint(vault).to_string();
+                if latest.vault_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                    return Err(Refusal::IdentityChanged);
+                }
+            }
+            // An imported Vault's wallet id is its descriptor's identity.
+            coincube_core::wallet_descriptor::WalletDescriptor::Imported(imported) => {
+                if WalletId::for_imported(imported, ChainId::Bitcoin)
+                    .ok()
+                    .as_ref()
+                    != Some(&self.wallet_id)
+                    || latest
+                        .bitcoin_import
+                        .as_deref()
+                        .and_then(crate::app::settings::BitcoinImport::active_attachment)
+                        .is_none_or(|wallet| wallet.descriptor != *imported)
+                {
+                    return Err(Refusal::IdentityChanged);
+                }
+            }
         }
         Wallet::new(descriptor.clone())
             .load_from_settings(latest_wallet)
@@ -815,6 +844,8 @@ impl ScopedDestination {
 
 /// One `get_new_address` call on B's bound daemon.
 pub(crate) struct AddressRequest {
+    root: CoincubeDirectory,
+    descriptor: coincube_core::wallet_descriptor::WalletDescriptor,
     daemon: Arc<dyn Daemon + Send + Sync>,
     generation: AppGeneration,
     cancelled: Arc<AtomicBool>,
@@ -839,11 +870,16 @@ impl AddressRequest {
         let result = if self.cancelled.load(Ordering::Acquire) {
             Err(Refusal::Stale)
         } else {
-            self.daemon
-                .get_new_address()
-                .await
-                .map(|res| (res.address, res.derivation_index))
-                .map_err(|_| Refusal::BackendUnavailable)
+            // An imported Vault allocates under its source reservation lock,
+            // like its own Receive screen.
+            crate::app::state::imported_bitcoin::reserve_receive_address(
+                self.root,
+                self.descriptor,
+                self.daemon,
+            )
+            .await
+            .map(|res| (res.address, res.derivation_index))
+            .map_err(|_| Refusal::BackendUnavailable)
         };
         AddressReply {
             generation: self.generation,
@@ -1085,8 +1121,9 @@ impl Drop for OwnedEmbeddedDestination {
 /// daemons carry a guard that stops them at the operation boundary.
 pub(crate) struct BoundBackend {
     wallet_id: WalletId,
-    /// B's descriptor as checked against its settings and fingerprint.
-    descriptor: coincube_core::descriptors::CoincubeDescriptor,
+    /// B's descriptor as checked against its settings: a Vault's
+    /// fingerprint, or an imported Vault's wallet identity.
+    descriptor: coincube_core::wallet_descriptor::WalletDescriptor,
     daemon: Arc<dyn Daemon + Send + Sync>,
     _lease: BackendLease,
 }
@@ -1594,13 +1631,14 @@ mod tests {
         use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, secp256k1::Secp256k1};
         use std::str::FromStr;
         let descriptor = CoincubeDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
+        let wallet = coincube_core::wallet_descriptor::WalletDescriptor::Vault(descriptor.clone());
         let secp = Secp256k1::verification_only();
         let index = ChildNumber::from(3);
         let receive = descriptor
             .receive_descriptor()
             .derive(index, &secp)
             .address(Network::Bitcoin);
-        let accepted = derived_receive_address(&descriptor, receive.clone(), index).unwrap();
+        let accepted = derived_receive_address(&wallet, receive.clone(), index).unwrap();
         assert_eq!(accepted.address, receive);
 
         // Same descriptor, other index: not the reported address.
@@ -1609,7 +1647,7 @@ mod tests {
             .derive(ChildNumber::from(4), &secp)
             .address(Network::Bitcoin);
         assert_eq!(
-            derived_receive_address(&descriptor, other_index, index).unwrap_err(),
+            derived_receive_address(&wallet, other_index, index).unwrap_err(),
             Refusal::IdentityChanged
         );
         // A change address at the same index is not a receive address.
@@ -1618,18 +1656,88 @@ mod tests {
             .derive(index, &secp)
             .address(Network::Bitcoin);
         assert_eq!(
-            derived_receive_address(&descriptor, change, index).unwrap_err(),
+            derived_receive_address(&wallet, change, index).unwrap_err(),
             Refusal::IdentityChanged
         );
         // Hardened indexes are never receive indexes.
         assert_eq!(
-            derived_receive_address(
-                &descriptor,
-                receive,
-                ChildNumber::from_hardened_idx(3).unwrap()
-            )
-            .unwrap_err(),
+            derived_receive_address(&wallet, receive, ChildNumber::from_hardened_idx(3).unwrap())
+                .unwrap_err(),
             Refusal::IdentityChanged
+        );
+    }
+
+    /// An imported Vault's address is checked the same way: it must derive
+    /// from the verified imported descriptor's receive branch at the index.
+    #[test]
+    fn an_imported_destination_address_must_derive_from_its_descriptor() {
+        use crate::services::split_test_wallets::{imported_vault, SHAPES};
+        use coincube_core::miniscript::bitcoin::{bip32::ChildNumber, Address};
+        for shape in SHAPES {
+            let wallet = imported_vault(shape).main_descriptor;
+            let imported = wallet.as_imported().unwrap();
+            let at = |branch: coincube_core::wallet_descriptor::PublicBranchRef<'_>, index| {
+                Address::from_script(&branch.script_pubkey(index).unwrap(), Network::Bitcoin)
+                    .unwrap()
+            };
+            let index = ChildNumber::from(3);
+            let receive = at(wallet.receive_descriptor(), 3);
+            assert_eq!(
+                derived_receive_address(&wallet, receive.clone(), index)
+                    .unwrap()
+                    .address,
+                receive,
+                "{:?}",
+                shape
+            );
+            assert_eq!(
+                derived_receive_address(&wallet, at(wallet.receive_descriptor(), 4), index)
+                    .unwrap_err(),
+                Refusal::IdentityChanged
+            );
+            assert_eq!(
+                derived_receive_address(&wallet, at(wallet.change_descriptor(), 3), index)
+                    .unwrap_err(),
+                Refusal::IdentityChanged
+            );
+            assert!(imported.chain() == ChainId::Bitcoin);
+        }
+    }
+
+    /// Which Cubes can receive into their Vault: a Vault with its fingerprint
+    /// recorded, or an imported Vault once its scan has finished.
+    #[test]
+    fn a_ready_imported_vault_can_receive_a_cross_cube_transfer() {
+        use crate::app::settings::{BitcoinImport, BitcoinImportStage, ImportedWalletAttachment};
+        let mut vault = CubeSettings::new("Vault".into(), ChainId::Bitcoin);
+        vault.vault_wallet_id = Some(WalletId::new("abcd1234".into(), Some(1)));
+        assert_eq!(receiving_wallet_id(&vault), None, "no fingerprint yet");
+        vault.vault_fingerprint = Some("abcd1234".into());
+        assert_eq!(receiving_wallet_id(&vault), vault.vault_wallet_id);
+
+        let descriptor = crate::services::split_test_wallets::imported_vault(
+            crate::services::split_test_wallets::SHAPES[0],
+        )
+        .main_descriptor
+        .as_imported()
+        .unwrap()
+        .clone();
+        let wallet = ImportedWalletAttachment::new(descriptor, ChainId::Bitcoin, 0, 20).unwrap();
+        let mut imported = CubeSettings::new("Imported".into(), ChainId::Bitcoin);
+        imported.bitcoin_import = Some(Box::new(BitcoinImport {
+            operation_id: uuid::Uuid::new_v4(),
+            stage: BitcoinImportStage::Syncing {
+                wallet: wallet.clone(),
+            },
+            last_error: None,
+        }));
+        assert_eq!(receiving_wallet_id(&imported), None, "still scanning");
+        imported.bitcoin_import.as_mut().unwrap().stage = BitcoinImportStage::Ready {
+            wallet: wallet.clone(),
+        };
+        assert_eq!(
+            receiving_wallet_id(&imported),
+            Some(wallet.wallet_id.clone())
         );
     }
 

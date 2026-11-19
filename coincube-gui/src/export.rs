@@ -707,10 +707,8 @@ pub async fn import_psbt(
 
     let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
     send_progress!(sender, Progress(50.0));
-    descr
-        .as_vault()
-        .ok_or(Error::InsanePsbt)?
-        .partial_spend_info(&psbt)
+    // A Vault or an imported wallet: both read the PSBT's signatures.
+    coincube_core::wallet_descriptor::SpendAnalysis::spend_info(&descr, &psbt)
         .map_err(|_| Error::InsanePsbt)?;
 
     if let Some(txid) = &txid {

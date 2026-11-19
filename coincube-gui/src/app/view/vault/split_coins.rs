@@ -39,6 +39,8 @@ pub struct SplitOverlay {
     pub here: ChainId,
     pub method: Method,
     pub signature_available: bool,
+    /// An imported Vault, whose signers make only ordinary signatures.
+    pub imported: bool,
     pub inputs: Vec<InputRow>,
     pub key_needed: bool,
     pub address: Option<String>,
@@ -162,17 +164,25 @@ pub fn selection_bar<'a>(count: usize, total: Amount, mask_amounts: bool) -> Ele
 }
 
 /// The warning before Send selected spends coins that are on both chains.
-/// On Bitcoin it can be acknowledged; on Bitcoin Blake2b (a Vault that can't
-/// make the replay-protected signature) the only way on is to split first.
-pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, Message> {
+/// Either chain can send anyway after the acknowledgement; replay is the
+/// user's choice, never a block. `imported` names an imported Vault's reason:
+/// its signers make only ordinary signatures.
+pub fn send_warning<'a>(
+    here: ChainId,
+    count: usize,
+    ack: bool,
+    imported: bool,
+) -> Element<'a, Message> {
     let other = chain_name(twin(here));
     let question = if count == 1 {
         format!("1 selected coin also exists on {}", other)
     } else {
         format!("{} selected coins also exist on {}", count, other)
     };
-    let body = if here.is_blake2b() {
-        localized_copy("Your hardware signer can't make a replay-protected signature, so this transaction could be copied to Bitcoin and move your bitcoin too. Split these coins first.")
+    let body = if here.is_blake2b() && imported {
+        localized_copy("This imported wallet signs the standard Bitcoin way, so this transaction could be copied to Bitcoin and move your bitcoin too. Split these coins first, or continue if that doesn't matter to you.")
+    } else if here.is_blake2b() {
+        localized_copy("A Bitcoin Blake2b transaction that spends them can be copied to Bitcoin and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
     } else {
         localized_copy("A Bitcoin transaction that spends them can be copied to Bitcoin Blake2b and move those coins too, to the same recipient. Split them first, or continue if that doesn't matter to you.")
     };
@@ -186,17 +196,16 @@ pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, M
             1,
         )))
         .push(p1_regular(body).style(theme::text::secondary));
-    if !here.is_blake2b() {
-        column = column.push(
-            checkbox(ack)
-                .label(localized_copy(
-                    "I understand the Bitcoin Blake2b copies may move too",
-                ))
-                .on_toggle(|ack| {
-                    Message::CoinControl(CoinControlMessage::AcknowledgeBothChains(ack))
-                }),
-        );
-    }
+    let ack_label = if here.is_blake2b() {
+        localized_copy("I understand the Bitcoin copies may move too")
+    } else {
+        localized_copy("I understand the Bitcoin Blake2b copies may move too")
+    };
+    column = column.push(
+        checkbox(ack)
+            .label(ack_label)
+            .on_toggle(|ack| Message::CoinControl(CoinControlMessage::AcknowledgeBothChains(ack))),
+    );
     let mut footer = Row::new()
         .spacing(12)
         .align_y(Alignment::Center)
@@ -205,14 +214,12 @@ pub fn send_warning<'a>(here: ChainId, count: usize, ack: bool) -> Element<'a, M
             button::secondary(None, CopyText::Cancel.get())
                 .on_press(Message::CoinControl(CoinControlMessage::CloseWarning)),
         );
-    if !here.is_blake2b() {
-        footer = footer.push(if ack {
-            button::secondary(None, localized_copy("Send anyway"))
-                .on_press(Message::CoinControl(CoinControlMessage::SendAnyway))
-        } else {
-            button::secondary(None, localized_copy("Send anyway"))
-        });
-    }
+    footer = footer.push(if ack {
+        button::secondary(None, localized_copy("Send anyway"))
+            .on_press(Message::CoinControl(CoinControlMessage::SendAnyway))
+    } else {
+        button::secondary(None, localized_copy("Send anyway"))
+    });
     footer = footer.push(
         button::primary(None, localized_copy("Split first"))
             .on_press(Message::CoinControl(CoinControlMessage::OpenSplit)),
@@ -386,9 +393,13 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     "Replay-protected signature",
                     if overlay.signature_available {
                         "Signed so that Bitcoin rejects it. No extra coin needed.".to_string()
+                    } else if overlay.imported {
+                        localized_copy("Not available: this imported wallet signs the standard Bitcoin way, so it can't make this signature.").to_string()
                     } else {
-                        "Not available: this Vault has a hardware signer that can't make this signature."
-                            .to_string()
+                        localized_copy(
+                            "Not available: this Vault's signers can't make this signature.",
+                        )
+                        .to_string()
                     },
                     Method::Signature,
                 ))
@@ -396,7 +407,10 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
                     overlay.method == Method::SplitKey,
                     true,
                     "Split key",
-                    format!("Spends a coin found only on {} with these coins.", chain_name(here)),
+                    format!(
+                        "Spends a coin found only on {} with these coins.",
+                        chain_name(here)
+                    ),
                     Method::SplitKey,
                 )),
         );
@@ -423,46 +437,7 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
         });
     }
 
-    let fee = match (overlay.fee(), overlay.feerate) {
-        (Some(fee), Some(rate)) => {
-            localized_format!(
-                "Fee ≈ {} at {} sat/vB",
-                "Comisión ≈ {} a {} sat/vB",
-                sats(fee),
-                rate
-            )
-        }
-        _ if overlay.fee_failed => localized_copy("Fee rate unavailable").to_string(),
-        _ => localized_copy("Getting the fee rate…").to_string(),
-    };
-    let back = overlay
-        .fee()
-        .map(|fee| spent.checked_sub(fee).unwrap_or(Amount::ZERO));
-    body = body.push(
-        Column::new()
-            .spacing(6)
-            .push(p1_bold(localized_copy("Result")))
-            .push(p2_regular(localized_format!(
-                "Spends {} · {}{}",
-                "Gasta {} · {}{}",
-                coins_count(coins),
-                sats(spent),
-                if overlay.method == Method::SplitKey && overlay.has_key() {
-                    localized_copy(" including the split key")
-                } else {
-                    ""
-                }
-            )))
-            .push(p2_regular(match back {
-                Some(back) => localized_format!(
-                    "Back to this Vault · fresh address · ≈ {}",
-                    "Volver a este Vault · dirección nueva · ≈ {}",
-                    sats(back)
-                ),
-                None => localized_copy("Back to this Vault · fresh address").to_string(),
-            }))
-            .push(p2_regular(fee).style(theme::text::secondary)),
-    );
+    body = body.push(split_result(overlay, coins, spent));
     body = body
         .push(
             p2_regular(localized_format!(
@@ -513,6 +488,47 @@ pub fn split_overlay<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
     .max_height(720)
     .style(theme::card::modal)
     .into()
+}
+
+fn split_result<'a>(overlay: &SplitOverlay, coins: usize, spent: Amount) -> Column<'a, Message> {
+    let fee = match (overlay.fee(), overlay.feerate) {
+        (Some(fee), Some(rate)) => {
+            localized_format!(
+                "Fee ≈ {} at {} sat/vB",
+                "Comisión ≈ {} a {} sat/vB",
+                sats(fee),
+                rate
+            )
+        }
+        _ if overlay.fee_failed => localized_copy("Fee rate unavailable").to_string(),
+        _ => localized_copy("Getting the fee rate…").to_string(),
+    };
+    let back = overlay
+        .fee()
+        .map(|fee| spent.checked_sub(fee).unwrap_or(Amount::ZERO));
+    Column::new()
+        .spacing(6)
+        .push(p1_bold(localized_copy("Result")))
+        .push(p2_regular(localized_format!(
+            "Spends {} · {}{}",
+            "Gasta {} · {}{}",
+            coins_count(coins),
+            sats(spent),
+            if overlay.method == Method::SplitKey && overlay.has_key() {
+                localized_copy(" including the split key")
+            } else {
+                ""
+            }
+        )))
+        .push(p2_regular(match back {
+            Some(back) => localized_format!(
+                "Back to this Vault · fresh address · ≈ {}",
+                "Volver a este Vault · dirección nueva · ≈ {}",
+                sats(back)
+            ),
+            None => localized_copy("Back to this Vault · fresh address").to_string(),
+        }))
+        .push(p2_regular(fee).style(theme::text::secondary))
 }
 
 fn key_needed_box<'a>(overlay: &SplitOverlay) -> Element<'a, Message> {
@@ -571,6 +587,7 @@ mod tests {
             here: ChainId::Bitcoin,
             method: Method::SplitKey,
             signature_available: false,
+            imported: false,
             inputs: vec![
                 row(1, 100_000, false),
                 row(2, 100_000, false),
@@ -647,6 +664,54 @@ mod tests {
             coincube_ui::theme::Theme::light(),
         );
         assert!(mounted.contains("How to split"));
-        assert!(mounted.contains("Not available: this Vault has a hardware signer"));
+        assert!(mounted.contains("Not available: this Vault's signers can't make this signature."));
+
+        // An imported Vault names its own reason.
+        blake2b.imported = true;
+        let mounted = capture::inspect(
+            "vault-split-coins-overlay-imported",
+            split_overlay(&blake2b),
+            (1280, 900),
+            "light",
+            coincube_ui::theme::Theme::light(),
+        );
+        assert!(
+            mounted.contains("Not available: this imported wallet signs the standard Bitcoin way")
+        );
+    }
+
+    /// The Blake2b send warning names an imported Vault's reason, in English
+    /// and Spanish, and still lets it send after the tick.
+    #[test]
+    fn blake2b_send_warning_words_the_reason_for_an_imported_vault() {
+        use crate::app::view::shared::landing::capture;
+        let vault = capture::inspect(
+            "vault-split-coins-send-warning",
+            send_warning(ChainId::BitcoinBlake2b, 2, false, false),
+            (1024, 768),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+        );
+        assert!(vault.contains("A Bitcoin Blake2b transaction that spends them"));
+        let imported = capture::inspect(
+            "vault-split-coins-send-warning-imported",
+            send_warning(ChainId::BitcoinBlake2b, 2, true, true),
+            (1024, 768),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+        );
+        assert!(imported.contains("This imported wallet signs the standard Bitcoin way"));
+        assert!(imported.contains("Send anyway"));
+        let spanish =
+            coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+                capture::inspect(
+                    "vault-split-coins-send-warning-imported-es",
+                    send_warning(ChainId::BitcoinBlake2b, 2, true, true),
+                    (1024, 768),
+                    "dark",
+                    coincube_ui::theme::Theme::dark(),
+                )
+            });
+        assert!(spanish.contains("Esta cartera importada firma de la forma estándar de Bitcoin"));
     }
 }

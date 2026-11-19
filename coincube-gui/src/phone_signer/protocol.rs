@@ -160,6 +160,52 @@ pub enum SignResponse {
     Disconnected,
 }
 
+async fn dispatch_read_action(
+    action: DispatchAction,
+    in_flight: &Mutex<HashMap<String, oneshot::Sender<SignResponse>>>,
+    unpaired: &AtomicBool,
+) -> bool {
+    match action {
+        DispatchAction::Partial {
+            session_id,
+            partial,
+        } => {
+            let tx = {
+                let mut waiters = in_flight.lock().await;
+                waiters.remove(&session_id)
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(SignResponse::Partial(partial));
+            }
+        }
+        DispatchAction::TargetedError { session_id, text } => {
+            let tx = {
+                let mut waiters = in_flight.lock().await;
+                waiters.remove(&session_id)
+            };
+            if let Some(tx) = tx {
+                let _ = tx.send(SignResponse::Error(text));
+            }
+        }
+        DispatchAction::BroadcastError(text) => {
+            let mut waiters = in_flight.lock().await;
+            for (_, tx) in waiters.drain() {
+                let _ = tx.send(SignResponse::Error(text.clone()));
+            }
+        }
+        DispatchAction::Unpaired => {
+            unpaired.store(true, Ordering::SeqCst);
+            let mut waiters = in_flight.lock().await;
+            for (_, tx) in waiters.drain() {
+                let _ = tx.send(SignResponse::Error(phone_unpaired_text()));
+            }
+            return false;
+        }
+        DispatchAction::Ignore => {}
+    }
+    true
+}
+
 impl Correlator {
     /// Spawn a reader task that owns `reader` outright and dispatches
     /// each `session_id`-tagged payload to its registered receiver.
@@ -186,43 +232,14 @@ impl Correlator {
                         return;
                     }
                 };
-                match classify_envelope(envelope) {
-                    DispatchAction::Partial {
-                        session_id,
-                        partial,
-                    } => {
-                        let tx = {
-                            let mut waiters = in_flight_for_reader.lock().await;
-                            waiters.remove(&session_id)
-                        };
-                        if let Some(tx) = tx {
-                            let _ = tx.send(SignResponse::Partial(partial));
-                        }
-                    }
-                    DispatchAction::TargetedError { session_id, text } => {
-                        let tx = {
-                            let mut waiters = in_flight_for_reader.lock().await;
-                            waiters.remove(&session_id)
-                        };
-                        if let Some(tx) = tx {
-                            let _ = tx.send(SignResponse::Error(text));
-                        }
-                    }
-                    DispatchAction::BroadcastError(text) => {
-                        let mut waiters = in_flight_for_reader.lock().await;
-                        for (_, tx) in waiters.drain() {
-                            let _ = tx.send(SignResponse::Error(text.clone()));
-                        }
-                    }
-                    DispatchAction::Unpaired => {
-                        unpaired_for_reader.store(true, Ordering::SeqCst);
-                        let mut waiters = in_flight_for_reader.lock().await;
-                        for (_, tx) in waiters.drain() {
-                            let _ = tx.send(SignResponse::Error(phone_unpaired_text()));
-                        }
-                        return;
-                    }
-                    DispatchAction::Ignore => {}
+                if !dispatch_read_action(
+                    classify_envelope(envelope),
+                    &in_flight_for_reader,
+                    &unpaired_for_reader,
+                )
+                .await
+                {
+                    return;
                 }
             }
         });

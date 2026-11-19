@@ -635,6 +635,26 @@ pub struct User {
     pub email_verified: Option<bool>,
 }
 
+/// The `source` this app reports when it asks for account deletion.
+pub const ACCOUNT_DELETION_SOURCE: &str = "desktop";
+
+/// `POST /api/v1/user/deletion-request` body.
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountDeletionRequestBody<'a> {
+    pub source: &'a str,
+}
+
+/// A request to delete the COINCUBE account, as `GET`/`POST
+/// /api/v1/user/deletion-request` return it (plain JSON, no `data` envelope).
+/// An operator completes the deletion; until then `status` is `"pending"`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountDeletionRequest {
+    pub status: String,
+    /// RFC 3339, UTC.
+    pub requested_at: String,
+    pub source: String,
+}
+
 #[derive(Deserialize, Serialize, Debug, Clone)]
 pub struct LoginResponse {
     pub requires_2fa: bool,

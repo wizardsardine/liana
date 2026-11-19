@@ -564,6 +564,45 @@ fn validate(
         }
     }
     let secp = secp256k1::Secp256k1::verification_only();
+    let total_in = validated_input_total(psbt, coins, descriptor, &secp)?;
+    let mut expected = BTreeMap::new();
+    for r in &input.recipients {
+        let script = Address::from_str(&r.address)
+            .map_err(|_| Error::InvalidInput)?
+            .require_network(chain.bitcoin_network())
+            .map_err(|_| Error::InvalidInput)?
+            .script_pubkey();
+        if expected.insert(script, r.amount_sats).is_some() {
+            return Err(Error::InvalidInput);
+        }
+    }
+    let (total_out, change) = validated_output_totals(psbt, descriptor, &secp, expected)?;
+    let fee = total_in
+        .checked_sub(total_out)
+        .filter(|f| *f > 0)
+        .ok_or(Error::Unavailable)?;
+    if fee > input.max_fee_sats {
+        return Err(Error::FeeLimitExceeded);
+    }
+    // Match the spend engine's maximum signed size, including SegWit framing.
+    let vsize = descriptor.unsigned_tx_max_vbytes(&psbt.unsigned_tx, true);
+    if vsize == 0 {
+        return Err(Error::Unavailable);
+    }
+    let measured_rate = fee.div_ceil(vsize);
+    if measured_rate > input.fee_rate_sat_vb {
+        return Err(Error::FeeRateExceeded);
+    }
+    Ok((fee, change, measured_rate))
+}
+
+fn validated_input_total(
+    psbt: &Psbt,
+    coins: &[Coin],
+    descriptor: &CoincubeDescriptor,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+) -> Result<u64, wire::Error> {
+    use wire::Error;
     let mut seen = HashSet::new();
     let mut total_in = 0u64;
     for (txin, metadata) in psbt.unsigned_tx.input.iter().zip(&psbt.inputs) {
@@ -576,7 +615,7 @@ fn validate(
         } else {
             descriptor.receive_descriptor()
         }
-        .derive(coin.derivation_index, &secp)
+        .derive(coin.derivation_index, secp)
         .script_pubkey();
         let prevout = metadata.witness_utxo.as_ref().ok_or(Error::Unavailable)?;
         if !seen.insert(coin.outpoint)
@@ -593,18 +632,17 @@ fn validate(
             .filter(|v| *v <= wire::transaction::MAX_SATS)
             .ok_or(Error::Unavailable)?;
     }
-    let mut expected = BTreeMap::new();
-    for r in &input.recipients {
-        let script = Address::from_str(&r.address)
-            .map_err(|_| Error::InvalidInput)?
-            .require_network(chain.bitcoin_network())
-            .map_err(|_| Error::InvalidInput)?
-            .script_pubkey();
-        if expected.insert(script, r.amount_sats).is_some() {
-            return Err(Error::InvalidInput);
-        }
-    }
-    let change_indexes = descriptor.change_indexes(psbt, &secp);
+    Ok(total_in)
+}
+
+fn validated_output_totals(
+    psbt: &Psbt,
+    descriptor: &CoincubeDescriptor,
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    mut expected: BTreeMap<coincube_core::miniscript::bitcoin::ScriptBuf, u64>,
+) -> Result<(u64, u64), wire::Error> {
+    use wire::Error;
+    let change_indexes = descriptor.change_indexes(psbt, secp);
     let mut total_out = 0u64;
     let mut change = 0u64;
     let mut changes = 0;
@@ -636,23 +674,7 @@ fn validate(
     if !expected.is_empty() {
         return Err(Error::Unavailable);
     }
-    let fee = total_in
-        .checked_sub(total_out)
-        .filter(|f| *f > 0)
-        .ok_or(Error::Unavailable)?;
-    if fee > input.max_fee_sats {
-        return Err(Error::FeeLimitExceeded);
-    }
-    // Match the spend engine's maximum signed size, including SegWit framing.
-    let vsize = descriptor.unsigned_tx_max_vbytes(&psbt.unsigned_tx, true);
-    if vsize == 0 {
-        return Err(Error::Unavailable);
-    }
-    let measured_rate = fee.div_ceil(vsize);
-    if measured_rate > input.fee_rate_sat_vb {
-        return Err(Error::FeeRateExceeded);
-    }
-    Ok((fee, change, measured_rate))
+    Ok((total_out, change))
 }
 
 #[cfg(test)]

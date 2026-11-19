@@ -47,6 +47,7 @@ use coincube_core::{
     miniscript::bitcoin::{
         consensus::serialize, psbt::Psbt, BlockHash, OutPoint, Transaction, Txid,
     },
+    wallet_descriptor::{SpendAnalysis, WalletDescriptor},
 };
 use coincubed::commands::CoinStatus;
 use serde::{Deserialize, Serialize};
@@ -155,10 +156,7 @@ pub fn derive(
             .iter()
             .filter(|coin| coin.outpoint.txid == record.txid)
             .collect();
-        let confirmations = match outputs.iter().find_map(|coin| coin.block_height) {
-            Some(height) if height >= 0 && height <= tip => (tip - height + 1) as u32,
-            _ => 0,
-        };
+        let confirmations = split_confirmations(&outputs, tip);
         // Follow the chain both ways: a reorg that drops the split takes its
         // confirmations with it.
         if confirmations != record.confirmations {
@@ -177,32 +175,48 @@ pub fn derive(
             }
             continue;
         }
-        match record.method {
-            // Not a proof for these outputs: the Vault holds the inputs' keys
-            // on Bitcoin too and could still confirm a legacy-signed copy of
-            // this transaction there, which would put the outputs on both
-            // chains. They are shown as split but unconfirmed, never proven.
-            // The twin Cube's inputs are another matter: see `twin_confirmed`.
-            Method::Signature => {
-                derived
-                    .unconfirmed
-                    .extend(outputs.iter().map(|coin| coin.outpoint));
-            }
-            Method::SplitKey => {
-                let Some(tx) = transactions.get(&record.txid) else {
-                    continue;
-                };
-                for coin in &outputs {
-                    if let Some(path) = extended_path(record, tx, coin.outpoint) {
-                        derived
-                            .proofs
-                            .push((coin.outpoint, ProofEntry::Saved(path)));
-                    }
+        record_confirmed_split_outputs(&mut derived, record, &outputs, transactions);
+    }
+    derived
+}
+
+fn split_confirmations(outputs: &[&Coin], tip: i32) -> u32 {
+    match outputs.iter().find_map(|coin| coin.block_height) {
+        Some(height) if height >= 0 && height <= tip => (tip - height + 1) as u32,
+        _ => 0,
+    }
+}
+
+fn record_confirmed_split_outputs(
+    derived: &mut Derived,
+    record: &SplitRecord,
+    outputs: &[&Coin],
+    transactions: &HashMap<Txid, Transaction>,
+) {
+    match record.method {
+        // Not a proof for these outputs: the Vault holds the inputs' keys
+        // on Bitcoin too and could still confirm a legacy-signed copy of
+        // this transaction there, which would put the outputs on both
+        // chains. They are shown as split but unconfirmed, never proven.
+        // The twin Cube's inputs are another matter: see `twin_confirmed`.
+        Method::Signature => {
+            derived
+                .unconfirmed
+                .extend(outputs.iter().map(|coin| coin.outpoint));
+        }
+        Method::SplitKey => {
+            let Some(tx) = transactions.get(&record.txid) else {
+                return;
+            };
+            for coin in outputs {
+                if let Some(path) = extended_path(record, tx, coin.outpoint) {
+                    derived
+                        .proofs
+                        .push((coin.outpoint, ProofEntry::Saved(path)));
                 }
             }
         }
     }
-    derived
 }
 
 /// The proof of a split-key split's output: the split transaction, linked
@@ -371,26 +385,27 @@ pub fn is_separated(
 
 /// Upper bound, in vbytes, of a split spending `shared_count` both-chain
 /// coins plus one more input (the split key, or for a signature split an
-/// overestimate by one input) to one change output of `descriptor`'s Vault.
-/// A funding estimate only, not authorization to construct, sign or
-/// broadcast anything. `None` for a Taproot Vault, no coins, or more inputs
-/// than the estimate covers. Moved from the removed Claim engine
+/// overestimate by one input) to one change output of `descriptor`'s wallet:
+/// a Vault, or an imported wallet of any supported shape. A funding estimate
+/// only, not authorization to construct, sign or broadcast anything. `None`
+/// for a Taproot Vault, no coins, or more inputs than the estimate covers.
+/// Moved from the removed Claim engine
 /// (`coincube_core::claim_spend::estimate_ancestry_self_transfer_vbytes`).
-pub fn estimate_split_vbytes(descriptor: &CoincubeDescriptor, shared_count: usize) -> Option<u64> {
+pub fn estimate_split_vbytes(descriptor: &WalletDescriptor, shared_count: usize) -> Option<u64> {
     use coincube_core::miniscript::bitcoin::{
-        absolute::LockTime, bip32::ChildNumber, secp256k1, transaction, Amount, TxIn, TxOut,
+        absolute::LockTime, transaction, Amount, TxIn, TxOut,
     };
-    if descriptor.is_taproot() || shared_count == 0 {
+    if descriptor
+        .as_vault()
+        .is_some_and(CoincubeDescriptor::is_taproot)
+        || shared_count == 0
+    {
         return None;
     }
     let input_count = shared_count
         .checked_add(1)
         .filter(|count| *count <= 20_001)?;
-    let secp = secp256k1::Secp256k1::verification_only();
-    let change_script = descriptor
-        .change_descriptor()
-        .derive(ChildNumber::Normal { index: 0 }, &secp)
-        .script_pubkey();
+    let change_script = descriptor.change_descriptor().script_pubkey(0).ok()?;
     let tx = Transaction {
         version: transaction::Version::TWO,
         lock_time: LockTime::ZERO,
@@ -400,13 +415,15 @@ pub fn estimate_split_vbytes(descriptor: &CoincubeDescriptor, shared_count: usiz
             script_pubkey: change_script,
         }],
     };
-    Some(descriptor.unsigned_tx_max_vbytes(&tx, true))
+    Some(descriptor.spend_max_vbytes(&tx, true))
 }
 
 /// Whether this Vault can split with a replay-protected signature: Bitcoin
 /// Blake2b, and every primary-path signer either signs in process or is a
 /// recorded Keychain key. Any other signer is treated as a hardware device,
-/// which can't make the signature (decision item 3).
+/// which can't make the signature (decision item 3). Never for an imported
+/// Vault: its signers (hardware, the original wallet, words stored in the
+/// Cube) make ordinary signatures only, so it splits with a split key.
 pub fn signature_available(wallet: &Wallet) -> bool {
     if !wallet.chain.is_blake2b() {
         return false;
@@ -866,6 +883,7 @@ mod tests {
     #[test]
     fn split_vbytes_estimate_bounds_and_refusals() {
         let wsh = CoincubeDescriptor::from_str("wsh(or_d(pk([f5acc2fd]tpubD6NzVbkrYhZ4YgUx2ZLNt2rLYAMTdYysCRzKoLu2BeSHKvzqPaBDvf17GeBPnExUVPkuBpx4kniP964e2MxyzzazcXLptxLXModSVCVEV1T/<0;1>/*),and_v(v:pkh([8a64f2a9]tpubD6NzVbkrYhZ4WmzFjvQrp7sDa4ECUxTi9oby8K4FZkd3XCBtEdKwUiQyYJaxiJo5y42gyDWEczrFpozEjeLxMPxjf2WtkfcbpUdfvNnozWF/<0;1>/*),older(10))))#d72le4dr").unwrap();
+        let wsh = WalletDescriptor::Vault(wsh);
         assert_eq!(estimate_split_vbytes(&wsh, 0), None);
         let one = estimate_split_vbytes(&wsh, 1).unwrap();
         let two = estimate_split_vbytes(&wsh, 2).unwrap();
@@ -874,6 +892,187 @@ mod tests {
         // Each input adds at least its outpoint, sequence and a signature.
         assert!(two >= one + 41 + 18, "{} {}", one, two);
         assert_eq!(estimate_split_vbytes(&wsh, 20_001), None);
+    }
+
+    /// An imported Vault's split is sized from its own shape: each extra
+    /// input costs what that shape's input costs once signed, and the one
+    /// output is a change address of the wallet. The same bounds hold on
+    /// Bitcoin Blake2b, where the wallet's scripts are identical.
+    #[test]
+    fn split_vbytes_estimate_covers_every_imported_shape() {
+        use crate::services::split_test_wallets::{
+            imported_fork_vault, imported_vault, Shape, SHAPES,
+        };
+        for shape in SHAPES {
+            let bitcoin = imported_vault(shape).main_descriptor;
+            let fork = imported_fork_vault(shape).main_descriptor;
+            for descriptor in [&bitcoin, &fork] {
+                assert_eq!(estimate_split_vbytes(descriptor, 0), None, "{shape:?}");
+                assert_eq!(estimate_split_vbytes(descriptor, 20_001), None, "{shape:?}");
+                let one = estimate_split_vbytes(descriptor, 1).unwrap();
+                let two = estimate_split_vbytes(descriptor, 2).unwrap();
+                let three = estimate_split_vbytes(descriptor, 3).unwrap();
+                let input = two - one;
+                // A signed input of this shape, in vbytes, rounded either way.
+                let expected = match shape {
+                    Shape::Wpkh => 68..=69,
+                    Shape::ShWpkh => 91..=92,
+                    Shape::Pkh => 148..=149,
+                    Shape::WshSortedMulti | Shape::WshMulti => 104..=105,
+                };
+                for step in [input, three - two] {
+                    assert!(expected.contains(&step), "{:?}: {}", shape, step);
+                }
+                // Version, locktime, counts, one change output and the
+                // segwit marker around the two inputs.
+                let output = match shape {
+                    Shape::Wpkh => 31,
+                    Shape::ShWpkh => 32,
+                    Shape::Pkh => 34,
+                    Shape::WshSortedMulti | Shape::WshMulti => 43,
+                };
+                let skeleton = one - 2 * input;
+                assert!(
+                    (9 + output..=13 + output).contains(&skeleton),
+                    "{:?}: {}",
+                    shape,
+                    skeleton
+                );
+            }
+        }
+    }
+
+    /// An imported Vault never offers the replay-protected signature, on
+    /// either chain, whatever its signers: it splits with a split key.
+    #[test]
+    fn an_imported_vault_splits_only_with_a_key() {
+        use crate::services::split_test_wallets::{imported_fork_vault, imported_vault, SHAPES};
+        for shape in SHAPES {
+            for mut wallet in [imported_vault(shape), imported_fork_vault(shape)] {
+                wallet.keychain_keys_recorded = true;
+                if let Some(policy) = wallet.policy() {
+                    wallet
+                        .border_wallet_fingerprints
+                        .extend(policy.primary_path().thresh_origins().1.keys().copied());
+                }
+                assert!(
+                    !signature_available(&wallet),
+                    "{shape:?} {:?}",
+                    wallet.chain
+                );
+            }
+        }
+    }
+
+    /// The daemon's imported self-send is what a split builds: for every
+    /// imported shape, on both chains, sweeping the coins and the key into one
+    /// change output passes the split's construction check, and the overlay's
+    /// estimate covers the fee the daemon charged at the same rate.
+    #[test]
+    fn an_imported_sweep_is_a_valid_split_for_every_shape() {
+        use crate::services::split_test_wallets::{imported_fork_vault, imported_vault, SHAPES};
+        use coincube_core::spend::{
+            AddrInfo, CandidateCoin, SpendOutputAddress, SpendTxFees, TxGetter,
+        };
+        struct Txs(Vec<Transaction>);
+        impl TxGetter for Txs {
+            fn get_tx(&mut self, txid: &Txid) -> Option<Transaction> {
+                self.0.iter().find(|tx| tx.compute_txid() == *txid).cloned()
+            }
+        }
+        const FEERATE: u64 = 5;
+        for shape in SHAPES {
+            for wallet in [imported_vault(shape), imported_fork_vault(shape)] {
+                let imported = wallet.main_descriptor.as_imported().unwrap();
+                let network = wallet.chain.bitcoin_network();
+                // A both-chain coin on the receive branch and a split key on
+                // the change branch.
+                let funding = |change: bool, index: u32, sats: u64| {
+                    let descriptor = if change {
+                        imported.change_descriptor()
+                    } else {
+                        imported.receive_descriptor()
+                    };
+                    let previous = Transaction {
+                        version: transaction::Version::TWO,
+                        lock_time: absolute::LockTime::ZERO,
+                        input: vec![TxIn {
+                            previous_output: OutPoint::new(
+                                Txid::from_str(&format!("{:064x}", index + 1)).unwrap(),
+                                0,
+                            ),
+                            ..TxIn::default()
+                        }],
+                        output: vec![TxOut {
+                            value: Amount::from_sat(sats),
+                            script_pubkey: descriptor
+                                .at_derivation_index(index)
+                                .unwrap()
+                                .script_pubkey(),
+                        }],
+                    };
+                    let candidate = CandidateCoin {
+                        outpoint: OutPoint::new(previous.compute_txid(), 0),
+                        amount: Amount::from_sat(sats),
+                        deriv_index: ChildNumber::Normal { index },
+                        is_change: change,
+                        must_select: true,
+                        sequence: None,
+                        ancestor_info: None,
+                    };
+                    (previous, candidate)
+                };
+                let (coin_tx, coin) = funding(false, 0, 100_000);
+                let (key_tx, key) = funding(true, 3, 20_000);
+                let change = SpendOutputAddress {
+                    addr: Address::from_script(
+                        &wallet
+                            .main_descriptor
+                            .change_descriptor()
+                            .script_pubkey(4)
+                            .unwrap(),
+                        network,
+                    )
+                    .unwrap(),
+                    info: Some(AddrInfo {
+                        index: ChildNumber::Normal { index: 4 },
+                        is_change: true,
+                    }),
+                };
+                let secp =
+                    coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::verification_only();
+                let created = coincube_core::imported_spend::create_imported_spend(
+                    imported,
+                    &secp,
+                    &mut Txs(vec![coin_tx, key_tx]),
+                    &[],
+                    &[coin, key],
+                    SpendTxFees::Regular(FEERATE),
+                    change,
+                    absolute::LockTime::ZERO,
+                )
+                .unwrap();
+                let requested = [coin.outpoint, key.outpoint];
+                check_construction(&created.psbt, &requested)
+                    .unwrap_or_else(|e| panic!("{shape:?} {:?}: {e}", wallet.chain));
+                let out: u64 = created
+                    .psbt
+                    .unsigned_tx
+                    .output
+                    .iter()
+                    .map(|output| output.value.to_sat())
+                    .sum();
+                let fee = 120_000 - out;
+                let estimate = estimate_split_vbytes(&wallet.main_descriptor, 1).unwrap();
+                assert!(
+                    fee <= FEERATE * estimate && fee + 2 * FEERATE >= FEERATE * estimate,
+                    "{shape:?} {:?}: fee {fee} for an estimate of {estimate} vbytes",
+                    wallet.chain
+                );
+                // The split must not reach past the two coins.
+                assert!(check_construction(&created.psbt, &requested[..1]).is_err());
+            }
+        }
     }
 
     fn tx(inputs: Vec<OutPoint>, coinbase_height: Option<i64>) -> Transaction {

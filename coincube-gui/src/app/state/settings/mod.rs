@@ -115,6 +115,23 @@ impl SettingsState {
         }
     }
 
+    fn reload_saved_display_settings(&mut self, cache: &Cache) {
+        let chain = if cache.fiat_chain.is_blake2b() {
+            cache.fiat_chain
+        } else {
+            cache.network.into()
+        };
+        let network_dir = cache.datadir_path.network_directory(chain);
+        if let Ok(settings) = crate::app::settings::Settings::from_file(&network_dir) {
+            if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
+                self.current_unit_setting = cube.unit_setting.clone();
+                if let Some(price_setting) = cube.fiat_price.clone() {
+                    self.current_price_setting = price_setting;
+                }
+            }
+        }
+    }
+
     fn switch_section(
         &mut self,
         daemon: Option<Arc<dyn Daemon + Sync + Send>>,
@@ -228,23 +245,7 @@ impl SettingsState {
                     .unwrap_or_else(Task::none)
             }
             Message::SettingsSaved => {
-                // Update tracked price and unit settings when saved
-                if let Ok(settings) = crate::app::settings::Settings::from_file(
-                    &cache
-                        .datadir_path
-                        .network_directory(if cache.fiat_chain.is_blake2b() {
-                            cache.fiat_chain
-                        } else {
-                            cache.network.into()
-                        }),
-                ) {
-                    if let Some(cube) = settings.cubes.iter().find(|c| c.id == self.cube_id) {
-                        self.current_unit_setting = cube.unit_setting.clone();
-                        if let Some(price_setting) = cube.fiat_price.clone() {
-                            self.current_price_setting = price_setting;
-                        }
-                    }
-                }
+                self.reload_saved_display_settings(cache);
                 self.setting
                     .as_mut()
                     .map(|s| s.update(daemon, cache, message))
@@ -359,6 +360,53 @@ mod btcb2_price_settings_tests {
         dir::CoincubeDirectory,
         services::fiat::{currency::Currency, PriceSource},
     };
+
+    #[test]
+    fn app_settings_saved_refreshes_the_current_panel_before_returning_its_task() {
+        let _guard = crate::app::session::test_guard();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _entered = runtime.enter();
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = crate::app::shell_tests::bitcoin_app(root.path());
+        app.panels.current = Menu::Cube(crate::app::menu::CubeSubMenu::Settings(
+            crate::app::menu::CubeSettingsOption::General,
+        ));
+        let mut cube = app.cube_settings.clone();
+        cube.unit_setting.display_unit = settings::unit::BitcoinDisplayUnit::BTC;
+        cube.fiat_price = Some(PriceSetting {
+            currency: Currency::EUR,
+            ..Default::default()
+        });
+        let directory = app.cache.datadir_path.network_directory(ChainId::Bitcoin);
+        std::fs::create_dir_all(directory.path()).unwrap();
+        std::fs::write(
+            directory.path().join(settings::SETTINGS_FILE_NAME),
+            serde_json::to_vec(&settings::Settings {
+                cubes: vec![cube],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        app.panels.global_settings.current_unit_setting.display_unit =
+            settings::unit::BitcoinDisplayUnit::Sats;
+        app.panels.global_settings.current_price_setting.currency = Currency::USD;
+        let task = app.update(Message::SettingsSaved);
+        // These are panel-owned preferences, not the App cache. No task has
+        // been polled: forwarding must already have refreshed them.
+        assert_eq!(
+            app.panels.global_settings.current_unit_setting.display_unit,
+            settings::unit::BitcoinDisplayUnit::BTC
+        );
+        assert_eq!(
+            app.panels.global_settings.current_price_setting.currency,
+            Currency::EUR
+        );
+        drop(task);
+    }
 
     #[tokio::test]
     async fn reopening_and_save_refresh_load_only_the_cubes_chain_preferences() {

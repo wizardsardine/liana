@@ -371,19 +371,16 @@ fn recovery_kit_route() -> Menu {
     Menu::Cube(CubeSubMenu::Settings(CubeSettingsOption::Recovery))
 }
 
-/// Imported Bitcoin has a Vault scope, but it has no `VaultSettingsState` or
-/// `ImportExportSettingsState`. Keep its route unavailable until it has a
-/// dedicated data export flow.
+/// A Vault's data exports, including an imported Vault's, live in Vault
+/// Settings → Data & exports.
 fn vault_data_route(cache: &cache::Cache) -> Option<Menu> {
-    (cache.has_vault && !cache.has_imported_bitcoin).then_some(Menu::Vault(VaultSubMenu::Settings(
+    (cache.has_vault || cache.has_imported_bitcoin).then_some(Menu::Vault(VaultSubMenu::Settings(
         Some(SettingsOption::ImportExport),
     )))
 }
 
 fn data_exports_section<'a>(menu: &'a Menu, cache: &'a cache::Cache) -> Element<'a, Message> {
-    let vault_detail = if cache.has_imported_bitcoin {
-        "Imported Bitcoin data exports are unavailable in this version."
-    } else if cache.has_vault {
+    let vault_detail = if cache.has_vault || cache.has_imported_bitcoin {
         "Exported per Vault."
     } else {
         "No Vault in this Cube."
@@ -502,7 +499,7 @@ fn recovery_overview<'a>(
         page::rows(methods),
     ));
 
-    let path_row = if cache.has_vault {
+    let path_row = if cache.has_inheritance_vault() {
         page::row(localized_copy("Recovery path"))
             .description(localized_copy(
                 "Review the Vault's recovery spending path and timelocks in its tools.",
@@ -511,6 +508,13 @@ fn recovery_overview<'a>(
                 RECOVERY_TOOLS_ID,
                 localized_copy("Open recovery tools"),
                 Some(Message::Menu(Menu::Vault(VaultSubMenu::Recovery))),
+            ))
+    } else if cache.has_vault {
+        page::row(localized_copy("Recovery path"))
+            .description(localized_copy("An imported Vault has no recovery path."))
+            .control(page::status(
+                page::Status::Off,
+                localized_copy("Not applicable"),
             ))
     } else {
         page::row(localized_copy("Recovery path"))
@@ -523,8 +527,13 @@ fn recovery_overview<'a>(
     let mut path_rows = vec![path_row.into()];
     let mut alerts_controls = None;
     if let Some(ra) = recovery_alerts {
-        path_rows.push(recovery_alerts_row(ra, cache.has_vault));
-        if ra.managing && cache.has_vault && ra.entitled && !ra.no_vault && ra.status.is_some() {
+        path_rows.push(recovery_alerts_row(ra, cache.has_inheritance_vault()));
+        if ra.managing
+            && cache.has_inheritance_vault()
+            && ra.entitled
+            && !ra.no_vault
+            && ra.status.is_some()
+        {
             let spark = crate::app::features::spark(cache.chain()).is_available();
             alerts_controls = Some(recovery_alerts_card(ra, spark));
         }
@@ -2240,20 +2249,18 @@ mod tests {
         ));
         let no_vault = cache::Cache::default();
         assert!(vault_data_route(&no_vault).is_none());
+        // An imported Vault's exports live in its Vault Settings too.
         let imported = cache::Cache {
             has_vault: false,
             has_imported_bitcoin: true,
             ..cache::Cache::default()
         };
-        assert!(vault_data_route(&imported).is_none());
-        // A stale cache must still fail closed instead of dispatching into an
-        // export panel that imported Bitcoin never constructs.
-        let inconsistent = cache::Cache {
-            has_vault: true,
-            has_imported_bitcoin: true,
-            ..cache::Cache::default()
-        };
-        assert!(vault_data_route(&inconsistent).is_none());
+        assert!(matches!(
+            vault_data_route(&imported),
+            Some(Menu::Vault(VaultSubMenu::Settings(Some(
+                SettingsOption::ImportExport
+            ))))
+        ));
     }
 
     #[test]

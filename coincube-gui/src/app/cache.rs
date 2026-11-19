@@ -244,10 +244,17 @@ pub struct Cache {
     pub has_connect_session: bool,
     /// The account panel can restore its own keyring session in this Cube.
     pub restorable_connect_session: bool,
-    /// Whether this cube has a vault wallet configured
+    /// Whether this Cube's Bitcoin Vault is loaded: a Vault or an imported
+    /// Vault. Inheritance-only screens use [`Self::has_inheritance_vault`].
     pub has_vault: bool,
     /// This Cube owns a pending or installed public Bitcoin wallet import.
     pub has_imported_bitcoin: bool,
+    /// Keys from recovery words stored in this Cube for its imported wallet,
+    /// once read. Vault Settings shows them.
+    pub imported_stored_keys: Option<usize>,
+    /// The imported wallet's server and history scan, for Vault Settings →
+    /// Node.
+    pub imported_node: Option<crate::app::state::imported_bitcoin::ImportedNodeSummary>,
     /// The loaded Vault records which of its keys came from the COINCUBE
     /// Keychain, and none did. A Keychain key can only enter a Vault when it
     /// is created, so no phone can ever pair for it and Settings hides the
@@ -527,6 +534,8 @@ impl std::default::Default for Cache {
             restorable_connect_session: false,
             has_vault: false,
             has_imported_bitcoin: false,
+            imported_stored_keys: None,
+            imported_node: None,
             vault_lacks_keychain_key: false,
             cube_name: String::new(),
             cube_name_sync: CubeNameSync::Idle,
@@ -579,6 +588,12 @@ impl std::default::Default for Cache {
 }
 
 impl Cache {
+    /// A Vault with recovery paths (inheritance, recovery alerts), not an
+    /// imported Vault.
+    pub fn has_inheritance_vault(&self) -> bool {
+        self.has_vault && !self.has_imported_bitcoin
+    }
+
     /// Passive amounts are visible only after the GUI has published an
     /// accepted installation-wide Show receipt. Missing or unresolved state
     /// always masks, including the first frame of a newly opened Cube.

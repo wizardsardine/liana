@@ -108,43 +108,15 @@ impl<'a> SparkReceiveView<'a> {
 
         // ── Payment result: the receipt first, the worldview art beside it ──
         if let SparkReceivePhase::Received { count, .. } = self.phase {
-            use coincube_ui::component::payment_result::{
-                payment_result, short_id, Outcome, ReceiptRow,
-            };
-            let id_row = self.received_payment_id.filter(|_| *count == 1).map(|id| {
-                ReceiptRow::new(localized_copy("Payment ID"), short_id(id))
-                    .mono()
-                    .on_copy(Message::CopyWithToast(
-                        id.to_string(),
-                        "Payment ID copied to clipboard".to_string(),
-                    ))
-            });
-            let detail = if *count > 1 {
-                coincube_ui::localized_format!(
-                    "Into Spark · {} payments",
-                    "En Spark · {} pagos",
-                    count
-                )
-            } else {
-                localized_copy("Into Spark").to_string()
-            };
-            return payment_result(
-                Outcome::Received,
-                if self.mask_amounts {
-                    "••••••"
-                } else {
-                    self.received_amount_display
-                },
+            return received_payment_result(
+                count,
+                self.mask_amounts,
+                self.received_amount_display,
                 self.received_celebration_context,
                 self.received_quote,
                 self.received_image_handle,
-                Message::SparkReceive(SparkReceiveMessage::Reset),
-            )
-            .detail(detail)
-            .rows(id_row)
-            .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
-            .on_activity(Message::SparkReceive(SparkReceiveMessage::ViewActivity))
-            .into();
+                self.received_payment_id,
+            );
         }
 
         // What the payer sends — asset and network, Bitcoin rail or stablecoin
@@ -199,88 +171,13 @@ impl<'a> SparkReceiveView<'a> {
                     .padding([18, 24]),
                 );
             } else {
-                // ── Bitcoin rail: method-specific inputs ──────────────────
-                let method_form: Element<'a, Message> = if self.method == SparkReceiveMethod::Bolt11
-                {
-                    let amount = text_input("Amount in sats (optional)", self.amount_input)
-                        .on_input(|v| {
-                            Message::SparkReceive(
-                                crate::app::view::SparkReceiveMessage::AmountInputChanged(v),
-                            )
-                        })
-                        .padding(10);
-
-                    let description = text_input(
-                        "Description shown to the payer (optional)",
-                        self.description_input,
-                    )
-                    .on_input(|v| {
-                        Message::SparkReceive(
-                            crate::app::view::SparkReceiveMessage::DescriptionInputChanged(v),
-                        )
-                    })
-                    .padding(10);
-
-                    Container::new(
-                        Column::new()
-                            .spacing(10)
-                            .push(h4_bold(localized_copy("Invoice details")))
-                            .push(amount)
-                            .push(Space::new().height(Length::Fixed(6.0)))
-                            .push(description),
-                    )
-                    .padding(16)
-                    .style(theme::card::simple)
-                    .into()
-                } else if self.method == SparkReceiveMethod::OnchainBitcoin {
-                    // On-chain: nothing to configure. Explain the deposit
-                    // model so the user knows what to expect.
-                    Container::new(
-                        Column::new()
-                            .spacing(8)
-                            .push(h4_bold(localized_copy("Spark on-chain receive")))
-                            .push(p2_regular(localized_format!(
-                                "Deposits become spendable after {} on-chain confirmations.", "Puedes gastar los depósitos después de {} confirmaciones en la cadena.",
-                                DEPOSIT_MATURITY_CONFIRMATIONS,
-                            ))),
-                    )
-                    .padding(16)
-                    .style(theme::card::simple)
-                    .into()
-                } else {
-                    // Spark: static, reusable, identity-bound address. No
-                    // amount/invoice form — mirrors the on-chain UX.
-                    Container::new(
-                        Column::new()
-                            .spacing(8)
-                            .push(h4_bold(localized_copy("Spark address")))
-                            .push(p2_regular(localized_copy(
-                                "Share this reusable address to receive Bitcoin on Spark.",
-                            ))),
-                    )
-                    .padding(16)
-                    .style(theme::card::simple)
-                    .into()
-                };
-                // Spark and on-chain addresses need no input: their generated
-                // panel says what they are, so no explainer card goes first.
-                let auto_address = crate::app::state::spark::receive::auto_generates(self.method);
-                if !auto_address && !matches!(self.phase, SparkReceivePhase::Generated(_)) {
-                    form = form
-                        .push(iced::widget::rule::horizontal(1))
-                        .push(Container::new(method_form).padding([18, 24]));
-                }
-
-                // ── Phase-specific body ───────────────────────────────────
-                form = form.push(iced::widget::rule::horizontal(1)).push(
-                    Container::new(phase_body(
-                        self.phase,
-                        self.qr_data,
-                        self.method,
-                        self.amount_input,
-                        self.description_input,
-                    ))
-                    .padding([18, 24]),
+                form = append_bitcoin_receive_rail(
+                    form,
+                    self.method,
+                    self.amount_input,
+                    self.description_input,
+                    self.phase,
+                    self.qr_data,
                 );
             }
         }
@@ -786,7 +683,6 @@ fn spark_receive_cards<'a>(
     network: Network,
     open: Option<ReceiveMenu>,
 ) -> Element<'a, Message> {
-    use crate::app::view::shared::picker::{anchored_dropdown, open_tile_style};
     let sender_open = open == Some(ReceiveMenu::TheySend);
     // Where conversions run, YOU RECEIVE is a choice too: keep bitcoin, or
     // convert it to US Dollar as it arrives (auto-convert).
@@ -795,105 +691,10 @@ fn spark_receive_cards<'a>(
     let choosable = crate::app::state::spark::swap::swap_available(network) && !usdb_sent;
     let receiver_open = choosable && open == Some(ReceiveMenu::YouReceive);
     let receive_usd = (receive_usd && choosable) || usdb_sent;
-    let you_receive_body = Container::new(super::route_tile_body(
-        if receive_usd {
-            asset_network_logo("usdb", "spark", 36.0)
-        } else {
-            asset_network_logo("btc", "spark", 36.0)
-        },
-        "You receive",
-        None,
-        if receive_usd {
-            localized_copy("US Dollar").to_string()
-        } else {
-            "Bitcoin".to_string()
-        },
-        localized_copy("in Spark").to_string(),
-        choosable.then_some(receiver_open),
-    ))
-    .width(Length::Fill)
-    .style(if receiver_open {
-        open_route_card_style
-    } else {
-        route_card_style
-    });
-    let you_receive: Element<'a, Message> = if choosable {
-        anchored_dropdown(
-            coincube_ui::widget::action::Action::new(
-                iced::advanced::widget::Id::new(RECEIVER_PICKER_ACTION_ID),
-                you_receive_body,
-                Message::FocusAction,
-            )
-            .padding(0)
-            .width(Length::Fill)
-            .focus_radius(8.0)
-            .style(if receiver_open {
-                open_tile_style
-            } else {
-                card_button_style
-            })
-            .on_press(Message::SparkReceive(
-                SparkReceiveMessage::OpenReceiverPicker,
-            )),
-            receiver_open.then(|| receiver_picker_menu(receive_usd)),
-            Message::SparkReceive(SparkReceiveMessage::CloseReceiverPicker),
-        )
-    } else {
-        you_receive_body.into()
-    };
+    let you_receive: Element<'a, Message> =
+        receiver_route_tile(choosable, receiver_open, receive_usd);
 
-    // THEY SEND reflects the current pick: a Bitcoin rail, or a cross-network
-    // asset while the SideShift flow is active.
-    let they_send_body = match cross {
-        Some(option) => super::route_tile_body(
-            cross_network_logo(&option, 36.0),
-            "They send",
-            None,
-            asset_display_name(option.coin).to_string(),
-            localized_format!("on {}", "en {}", option.network.network_name()),
-            Some(sender_open),
-        ),
-        None => {
-            let (net_slug, place) = rail_display(method);
-            let (asset, name) = if method == SparkReceiveMethod::UsdbSpark {
-                ("usdb", localized_copy("US Dollar"))
-            } else {
-                ("btc", "Bitcoin")
-            };
-            super::route_tile_body(
-                asset_network_logo(asset, net_slug, 36.0),
-                "They send",
-                None,
-                name.to_string(),
-                localized_copy(place).to_string(),
-                Some(sender_open),
-            )
-        }
-    };
-    let they_send = anchored_dropdown(
-        coincube_ui::widget::action::Action::new(
-            iced::advanced::widget::Id::new(SENDER_PICKER_ACTION_ID),
-            Container::new(they_send_body)
-                .width(Length::Fill)
-                .style(if sender_open {
-                    open_route_card_style
-                } else {
-                    route_card_style
-                }),
-            Message::FocusAction,
-        )
-        .padding(0)
-        .width(Length::Fill)
-        .focus_radius(8.0)
-        .style(if sender_open {
-            open_tile_style
-        } else {
-            card_button_style
-        })
-        .on_press(Message::SparkReceive(SparkReceiveMessage::OpenSenderPicker)),
-        sender_open.then(|| sender_picker_menu(method, cross, network)),
-        Message::SparkReceive(SparkReceiveMessage::CloseSenderPicker),
-    );
+    let they_send = sender_route_tile(method, cross, sender_open, network);
 
     // An open menu floats under its tile and takes no room, so the pair
     // keeps its height and the arrow stays centred either way.
@@ -1165,127 +966,7 @@ fn phase_body<'a>(
         .into(),
 
         SparkReceivePhase::Generated(ok) => {
-            // QR code block — rendered only if we successfully
-            // encoded the payment request in state. Falls back to a
-            // plain "QR unavailable" note if encoding failed; for
-            // typical BOLT11 / BTC address payloads this branch
-            // should never fire in practice.
-            let qr_block: Element<'_, Message> = if let Some(qr) = qr_data {
-                Container::new(QRCode::<coincube_ui::theme::Theme>::new(qr).total_size(160))
-                    .align_x(iced::alignment::Horizontal::Center)
-                    .into()
-            } else {
-                p2_regular(localized_copy("QR code unavailable for this payload.")).into()
-            };
-
-            let payment_request = ok.payment_request.clone();
-            let (label, guidance) = match method {
-                SparkReceiveMethod::Bolt11 => (
-                    localized_copy("Lightning invoice"),
-                    localized_copy("Share this invoice to receive sats via Lightning."),
-                ),
-                SparkReceiveMethod::LightningAddress => (
-                    localized_copy("Lightning address"),
-                    localized_copy("Anyone with a Lightning wallet can pay this address, even while COINCUBE Desktop is closed."),
-                ),
-                SparkReceiveMethod::Spark => (
-                    localized_copy("Spark address"),
-                    localized_copy("Share this address to receive Bitcoin from another Spark wallet."),
-                ),
-                SparkReceiveMethod::UsdbSpark => (
-                    localized_copy("Spark address"),
-                    localized_copy("Share this address to receive USDB from another Spark wallet."),
-                ),
-                SparkReceiveMethod::OnchainBitcoin => (
-                    localized_copy("Bitcoin deposit address"),
-                    localized_copy("Deposits arrive in Spark after on-chain confirmation."),
-                ),
-            };
-            let mut details = Column::new()
-                .spacing(10)
-                .width(Length::Fill)
-                .push(p1_bold(label))
-                .push(
-                    Row::new()
-                        .spacing(8)
-                        .align_y(Alignment::Center)
-                        .push(
-                            text_input("", &ok.payment_request)
-                                .padding(10)
-                                .width(Length::Fill),
-                        )
-                        .push(
-                            button::primary(None, localized_copy("Copy"))
-                                .on_press(Message::SparkReceive(
-                                    SparkReceiveMessage::CopyPaymentRequest(payment_request),
-                                ))
-                                .width(Length::Fixed(80.0)),
-                        ),
-                )
-                .push(p2_regular(guidance).style(theme::text::secondary));
-            if method == SparkReceiveMethod::Bolt11 {
-                details = details.push(kv_row(
-                    localized_copy("Amount"),
-                    if amount_input.trim().is_empty() {
-                        "Any amount".to_owned()
-                    } else {
-                        format!("{} sats", amount_input.trim())
-                    },
-                ));
-                if !description_input.is_empty() {
-                    details = details.push(kv_row(
-                        localized_copy("Description"),
-                        description_input.to_owned(),
-                    ));
-                }
-            }
-            if ok.fee_sat > 0 {
-                details = details.push(kv_row(
-                    localized_copy("Fee"),
-                    format!("{} sats", ok.fee_sat),
-                ));
-            }
-            let ready_body: Element<'_, Message> = if qr_data.is_some() {
-                Row::new()
-                    .spacing(24)
-                    .align_y(Alignment::Start)
-                    .width(Length::Fill)
-                    .push(qr_block)
-                    .push(details)
-                    .into()
-            } else {
-                Column::new()
-                    .spacing(10)
-                    .push(qr_block)
-                    .push(details)
-                    .into()
-            };
-            // An invoice is single-use, so offer another. The on-chain
-            // address is reused for every payer; a fresh one keeps payers from
-            // seeing each other's deposits. A Spark address has neither.
-            let follow_up = match method {
-                SparkReceiveMethod::Bolt11 => Some(
-                    button::transparent_border(None, localized_copy("Create another invoice"))
-                        .on_press(Message::SparkReceive(SparkReceiveMessage::Reset)),
-                ),
-                SparkReceiveMethod::OnchainBitcoin => Some(
-                    button::transparent_border(None, localized_copy("Use a new address")).on_press(
-                        Message::SparkReceive(SparkReceiveMessage::NewOnchainAddress),
-                    ),
-                ),
-                SparkReceiveMethod::Spark
-                | SparkReceiveMethod::UsdbSpark
-                | SparkReceiveMethod::LightningAddress => None,
-            };
-            Container::new(
-                Column::new()
-                    .spacing(16)
-                    .push(ready_body)
-                    .push_maybe(follow_up),
-            )
-            .padding(16)
-            .style(theme::card::simple)
-            .into()
+            generated_receive_body(ok, qr_data, method, amount_input, description_input)
         }
 
         SparkReceivePhase::Received { .. } => {
@@ -1378,12 +1059,453 @@ fn conversion_notice_style(theme: &theme::Theme) -> container::Style {
     }
 }
 
+fn received_payment_result<'a>(
+    count: &u32,
+    mask_amounts: bool,
+    received_amount_display: &'a str,
+    received_celebration_context: &'a str,
+    received_quote: &'a coincube_ui::component::quote_display::Quote,
+    received_image_handle: &'a iced::widget::image::Handle,
+    received_payment_id: Option<&'a str>,
+) -> Element<'a, Message> {
+    use coincube_ui::component::payment_result::{payment_result, short_id, Outcome, ReceiptRow};
+    let id_row = received_payment_id.filter(|_| *count == 1).map(|id| {
+        ReceiptRow::new(localized_copy("Payment ID"), short_id(id))
+            .mono()
+            .on_copy(Message::CopyWithToast(
+                id.to_string(),
+                "Payment ID copied to clipboard".to_string(),
+            ))
+    });
+    let detail = if *count > 1 {
+        coincube_ui::localized_format!("Into Spark · {} payments", "En Spark · {} pagos", count)
+    } else {
+        localized_copy("Into Spark").to_string()
+    };
+    payment_result(
+        Outcome::Received,
+        if mask_amounts {
+            "••••••"
+        } else {
+            received_amount_display
+        },
+        received_celebration_context,
+        received_quote,
+        received_image_handle,
+        Message::SparkReceive(SparkReceiveMessage::Reset),
+    )
+    .detail(detail)
+    .rows(id_row)
+    .voice(coincube_ui::worldview_copy::VoiceLine::PaymentReceived.get())
+    .on_activity(Message::SparkReceive(SparkReceiveMessage::ViewActivity))
+    .into()
+}
+
+fn append_bitcoin_receive_rail<'a>(
+    mut form: Column<'a, Message>,
+    method: SparkReceiveMethod,
+    amount_input: &'a str,
+    description_input: &'a str,
+    phase: &'a SparkReceivePhase,
+    qr_data: Option<&'a qr_code::Data>,
+) -> Column<'a, Message> {
+    // ── Bitcoin rail: method-specific inputs ──────────────────
+    let method_form: Element<'a, Message> = if method == SparkReceiveMethod::Bolt11 {
+        let amount = text_input("Amount in sats (optional)", amount_input)
+            .on_input(|v| {
+                Message::SparkReceive(crate::app::view::SparkReceiveMessage::AmountInputChanged(v))
+            })
+            .padding(10);
+
+        let description = text_input(
+            "Description shown to the payer (optional)",
+            description_input,
+        )
+        .on_input(|v| {
+            Message::SparkReceive(crate::app::view::SparkReceiveMessage::DescriptionInputChanged(v))
+        })
+        .padding(10);
+
+        Container::new(
+            Column::new()
+                .spacing(10)
+                .push(h4_bold(localized_copy("Invoice details")))
+                .push(amount)
+                .push(Space::new().height(Length::Fixed(6.0)))
+                .push(description),
+        )
+        .padding(16)
+        .style(theme::card::simple)
+        .into()
+    } else if method == SparkReceiveMethod::OnchainBitcoin {
+        // On-chain: nothing to configure. Explain the deposit
+        // model so the user knows what to expect.
+        Container::new(
+            Column::new()
+                .spacing(8)
+                .push(h4_bold(localized_copy("Spark on-chain receive")))
+                .push(p2_regular(localized_format!(
+                    "Deposits become spendable after {} on-chain confirmations.",
+                    "Puedes gastar los depósitos después de {} confirmaciones en la cadena.",
+                    DEPOSIT_MATURITY_CONFIRMATIONS,
+                ))),
+        )
+        .padding(16)
+        .style(theme::card::simple)
+        .into()
+    } else {
+        // Spark: static, reusable, identity-bound address. No
+        // amount/invoice form — mirrors the on-chain UX.
+        Container::new(
+            Column::new()
+                .spacing(8)
+                .push(h4_bold(localized_copy("Spark address")))
+                .push(p2_regular(localized_copy(
+                    "Share this reusable address to receive Bitcoin on Spark.",
+                ))),
+        )
+        .padding(16)
+        .style(theme::card::simple)
+        .into()
+    };
+    // Spark and on-chain addresses need no input: their generated
+    // panel says what they are, so no explainer card goes first.
+    let auto_address = crate::app::state::spark::receive::auto_generates(method);
+    if !auto_address && !matches!(phase, SparkReceivePhase::Generated(_)) {
+        form = form
+            .push(iced::widget::rule::horizontal(1))
+            .push(Container::new(method_form).padding([18, 24]));
+    }
+
+    // ── Phase-specific body ───────────────────────────────────
+    form.push(iced::widget::rule::horizontal(1)).push(
+        Container::new(phase_body(
+            phase,
+            qr_data,
+            method,
+            amount_input,
+            description_input,
+        ))
+        .padding([18, 24]),
+    )
+}
+
+fn receiver_route_tile<'a>(
+    choosable: bool,
+    receiver_open: bool,
+    receive_usd: bool,
+) -> Element<'a, Message> {
+    use crate::app::view::shared::picker::{anchored_dropdown, open_tile_style};
+    let you_receive_body = Container::new(super::route_tile_body(
+        if receive_usd {
+            asset_network_logo("usdb", "spark", 36.0)
+        } else {
+            asset_network_logo("btc", "spark", 36.0)
+        },
+        "You receive",
+        None,
+        if receive_usd {
+            localized_copy("US Dollar").to_string()
+        } else {
+            "Bitcoin".to_string()
+        },
+        localized_copy("in Spark").to_string(),
+        choosable.then_some(receiver_open),
+    ))
+    .width(Length::Fill)
+    .style(if receiver_open {
+        open_route_card_style
+    } else {
+        route_card_style
+    });
+    if choosable {
+        anchored_dropdown(
+            coincube_ui::widget::action::Action::new(
+                iced::advanced::widget::Id::new(RECEIVER_PICKER_ACTION_ID),
+                you_receive_body,
+                Message::FocusAction,
+            )
+            .padding(0)
+            .width(Length::Fill)
+            .focus_radius(8.0)
+            .style(if receiver_open {
+                open_tile_style
+            } else {
+                card_button_style
+            })
+            .on_press(Message::SparkReceive(
+                SparkReceiveMessage::OpenReceiverPicker,
+            )),
+            receiver_open.then(|| receiver_picker_menu(receive_usd)),
+            Message::SparkReceive(SparkReceiveMessage::CloseReceiverPicker),
+        )
+    } else {
+        you_receive_body.into()
+    }
+}
+
+fn sender_route_tile<'a>(
+    method: SparkReceiveMethod,
+    cross: Option<DepositOption>,
+    sender_open: bool,
+    network: Network,
+) -> Element<'a, Message> {
+    use crate::app::view::shared::picker::{anchored_dropdown, open_tile_style};
+    // THEY SEND reflects the current pick: a Bitcoin rail, or a cross-network
+    // asset while the SideShift flow is active.
+    let they_send_body = match cross {
+        Some(option) => super::route_tile_body(
+            cross_network_logo(&option, 36.0),
+            "They send",
+            None,
+            asset_display_name(option.coin).to_string(),
+            localized_format!("on {}", "en {}", option.network.network_name()),
+            Some(sender_open),
+        ),
+        None => {
+            let (net_slug, place) = rail_display(method);
+            let (asset, name) = if method == SparkReceiveMethod::UsdbSpark {
+                ("usdb", localized_copy("US Dollar"))
+            } else {
+                ("btc", "Bitcoin")
+            };
+            super::route_tile_body(
+                asset_network_logo(asset, net_slug, 36.0),
+                "They send",
+                None,
+                name.to_string(),
+                localized_copy(place).to_string(),
+                Some(sender_open),
+            )
+        }
+    };
+    anchored_dropdown(
+        coincube_ui::widget::action::Action::new(
+            iced::advanced::widget::Id::new(SENDER_PICKER_ACTION_ID),
+            Container::new(they_send_body)
+                .width(Length::Fill)
+                .style(if sender_open {
+                    open_route_card_style
+                } else {
+                    route_card_style
+                }),
+            Message::FocusAction,
+        )
+        .padding(0)
+        .width(Length::Fill)
+        .focus_radius(8.0)
+        .style(if sender_open {
+            open_tile_style
+        } else {
+            card_button_style
+        })
+        .on_press(Message::SparkReceive(SparkReceiveMessage::OpenSenderPicker)),
+        sender_open.then(|| sender_picker_menu(method, cross, network)),
+        Message::SparkReceive(SparkReceiveMessage::CloseSenderPicker),
+    )
+}
+
+fn generated_receive_body<'a>(
+    ok: &'a coincube_spark_protocol::ReceivePaymentOk,
+    qr_data: Option<&'a qr_code::Data>,
+    method: SparkReceiveMethod,
+    amount_input: &'a str,
+    description_input: &'a str,
+) -> Element<'a, Message> {
+    use crate::app::view::SparkReceiveMessage;
+    // QR code block — rendered only if we successfully
+    // encoded the payment request in state. Falls back to a
+    // plain "QR unavailable" note if encoding failed; for
+    // typical BOLT11 / BTC address payloads this branch
+    // should never fire in practice.
+    let qr_block: Element<'_, Message> = if let Some(qr) = qr_data {
+        Container::new(QRCode::<coincube_ui::theme::Theme>::new(qr).total_size(160))
+            .align_x(iced::alignment::Horizontal::Center)
+            .into()
+    } else {
+        p2_regular(localized_copy("QR code unavailable for this payload.")).into()
+    };
+
+    let payment_request = ok.payment_request.clone();
+    let (label, guidance) = match method {
+        SparkReceiveMethod::Bolt11 => (
+            localized_copy("Lightning invoice"),
+            localized_copy("Share this invoice to receive sats via Lightning."),
+        ),
+        SparkReceiveMethod::LightningAddress => (
+            localized_copy("Lightning address"),
+            localized_copy("Anyone with a Lightning wallet can pay this address, even while COINCUBE Desktop is closed."),
+        ),
+        SparkReceiveMethod::Spark => (
+            localized_copy("Spark address"),
+            localized_copy("Share this address to receive Bitcoin from another Spark wallet."),
+        ),
+        SparkReceiveMethod::UsdbSpark => (
+            localized_copy("Spark address"),
+            localized_copy("Share this address to receive USDB from another Spark wallet."),
+        ),
+        SparkReceiveMethod::OnchainBitcoin => (
+            localized_copy("Bitcoin deposit address"),
+            localized_copy("Deposits arrive in Spark after on-chain confirmation."),
+        ),
+    };
+    let mut details = Column::new()
+        .spacing(10)
+        .width(Length::Fill)
+        .push(p1_bold(label))
+        .push(
+            Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(
+                    text_input("", &ok.payment_request)
+                        .padding(10)
+                        .width(Length::Fill),
+                )
+                .push(
+                    button::primary(None, localized_copy("Copy"))
+                        .on_press(Message::SparkReceive(
+                            SparkReceiveMessage::CopyPaymentRequest(payment_request),
+                        ))
+                        .width(Length::Fixed(80.0)),
+                ),
+        )
+        .push(p2_regular(guidance).style(theme::text::secondary));
+    if method == SparkReceiveMethod::Bolt11 {
+        details = details.push(kv_row(
+            localized_copy("Amount"),
+            if amount_input.trim().is_empty() {
+                "Any amount".to_owned()
+            } else {
+                format!("{} sats", amount_input.trim())
+            },
+        ));
+        if !description_input.is_empty() {
+            details = details.push(kv_row(
+                localized_copy("Description"),
+                description_input.to_owned(),
+            ));
+        }
+    }
+    if ok.fee_sat > 0 {
+        details = details.push(kv_row(
+            localized_copy("Fee"),
+            format!("{} sats", ok.fee_sat),
+        ));
+    }
+    let ready_body: Element<'_, Message> = if qr_data.is_some() {
+        Row::new()
+            .spacing(24)
+            .align_y(Alignment::Start)
+            .width(Length::Fill)
+            .push(qr_block)
+            .push(details)
+            .into()
+    } else {
+        Column::new()
+            .spacing(10)
+            .push(qr_block)
+            .push(details)
+            .into()
+    };
+    // An invoice is single-use, so offer another. The on-chain
+    // address is reused for every payer; a fresh one keeps payers from
+    // seeing each other's deposits. A Spark address has neither.
+    let follow_up = match method {
+        SparkReceiveMethod::Bolt11 => Some(
+            button::transparent_border(None, localized_copy("Create another invoice"))
+                .on_press(Message::SparkReceive(SparkReceiveMessage::Reset)),
+        ),
+        SparkReceiveMethod::OnchainBitcoin => Some(
+            button::transparent_border(None, localized_copy("Use a new address")).on_press(
+                Message::SparkReceive(SparkReceiveMessage::NewOnchainAddress),
+            ),
+        ),
+        SparkReceiveMethod::Spark
+        | SparkReceiveMethod::UsdbSpark
+        | SparkReceiveMethod::LightningAddress => None,
+    };
+    Container::new(
+        Column::new()
+            .spacing(16)
+            .push(ready_body)
+            .push_maybe(follow_up),
+    )
+    .padding(16)
+    .style(theme::card::simple)
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::app::cache::Cache;
     use crate::app::state::preferences::{BalancePrivacy, BalancePrivacyChrome};
     use crate::app::view::shared::landing::capture;
+
+    fn assert_receive_hierarchy(
+        mounted: &capture::Inspection,
+        appearance: &str,
+        outer: (u32, u32),
+    ) {
+        // The title, the Cube line and the back link are in the page
+        // head now, not the body.
+        for moved in ["‹ Spark", "Back to Spark", "Everyday · Bitcoin mainnet"] {
+            assert!(!mounted.contains(moved), "{} left in the body", moved);
+        }
+        for label in [
+            "Payment details",
+            "Payments arrive as bitcoin.",
+            "Wallet settings",
+            "Available in Spark",
+            "They send",
+            "You receive",
+            "on-chain",
+        ] {
+            assert!(
+                mounted.contains(label),
+                "{} missing at {} {:?}",
+                label,
+                appearance,
+                outer
+            );
+        }
+        // No kind toggle or method row: the THEY SEND tile's picker
+        // holds every rail and stablecoin.
+        for gone in ["Method", "Bitcoin address · deposit"] {
+            assert!(!mounted.contains(gone), "{} still in the body", gone);
+        }
+        for id in [
+            "spark-receive-kind-bitcoin",
+            "spark-receive-kind-stablecoin",
+            "spark-receive-method-lightning",
+            "spark-receive-method-deposit",
+        ] {
+            assert!(
+                !mounted.has_focus(iced::advanced::widget::Id::new(id)),
+                "{} left in the body",
+                id
+            );
+        }
+        for id in [WALLET_SETTINGS_ID, SENDER_PICKER_ACTION_ID] {
+            assert!(
+                mounted.has_focus(iced::advanced::widget::Id::new(id)),
+                "{} not focusable",
+                id
+            );
+        }
+        assert!(!mounted.contains("✓"));
+        let x = |label| {
+            mounted
+                .text
+                .iter()
+                .find(|(value, _)| value == label)
+                .unwrap()
+                .1
+                .x
+        };
+        assert!(x("They send") < x("You receive"));
+    }
 
     #[test]
     fn the_they_send_picker_offers_bitcoin_rails_then_mainnet_stablecoins() {
@@ -2092,63 +2214,7 @@ mod tests {
                     theme,
                     outer.0 - 248 - 48,
                 );
-                // The title, the Cube line and the back link are in the page
-                // head now, not the body.
-                for moved in ["‹ Spark", "Back to Spark", "Everyday · Bitcoin mainnet"] {
-                    assert!(!mounted.contains(moved), "{} left in the body", moved);
-                }
-                for label in [
-                    "Payment details",
-                    "Payments arrive as bitcoin.",
-                    "Wallet settings",
-                    "Available in Spark",
-                    "They send",
-                    "You receive",
-                    "on-chain",
-                ] {
-                    assert!(
-                        mounted.contains(label),
-                        "{} missing at {} {:?}",
-                        label,
-                        appearance,
-                        outer
-                    );
-                }
-                // No kind toggle or method row: the THEY SEND tile's picker
-                // holds every rail and stablecoin.
-                for gone in ["Method", "Bitcoin address · deposit"] {
-                    assert!(!mounted.contains(gone), "{} still in the body", gone);
-                }
-                for id in [
-                    "spark-receive-kind-bitcoin",
-                    "spark-receive-kind-stablecoin",
-                    "spark-receive-method-lightning",
-                    "spark-receive-method-deposit",
-                ] {
-                    assert!(
-                        !mounted.has_focus(iced::advanced::widget::Id::new(id)),
-                        "{} left in the body",
-                        id
-                    );
-                }
-                for id in [WALLET_SETTINGS_ID, SENDER_PICKER_ACTION_ID] {
-                    assert!(
-                        mounted.has_focus(iced::advanced::widget::Id::new(id)),
-                        "{} not focusable",
-                        id
-                    );
-                }
-                assert!(!mounted.contains("✓"));
-                let x = |label| {
-                    mounted
-                        .text
-                        .iter()
-                        .find(|(value, _)| value == label)
-                        .unwrap()
-                        .1
-                        .x
-                };
-                assert!(x("They send") < x("You receive"));
+                assert_receive_hierarchy(&mounted, appearance, outer);
             }
         }
     }

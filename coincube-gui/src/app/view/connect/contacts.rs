@@ -11,7 +11,7 @@ use iced::{widget::container, Alignment, Length};
 
 use crate::{
     app::{
-        state::connect::{ConnectAccountPanel, ContactsStep},
+        state::connect::{account::ContactsState, ConnectAccountPanel, ContactsStep},
         view::{ConnectAccountMessage, ContactsMessage},
     },
     services::coincube::{ContactRole, Invite, ReceivedInvite},
@@ -93,23 +93,7 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
         return col.into();
     }
 
-    // Show error on the list view only when not loading
-    // (errors during initial load are silently swallowed — the empty state is shown instead)
-    if !cs.loading {
-        if let Some(err) = cs.error.as_deref() {
-            if cs.contacts.is_some() || cs.invites.is_some() || cs.received_invites.is_some() {
-                col = col.push(
-                    container(
-                        text::p2_regular(coincube_ui::locale::notice(err.to_owned()))
-                            .color(color::RED),
-                    )
-                    .padding(8)
-                    .width(Length::Fill),
-                );
-                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
-            }
-        }
-    }
+    col = append_contacts_error(col, cs);
 
     // Received invites section (invites addressed to this user).
     // Rendered above "Pending Invites" so a freshly-arrived invite is
@@ -193,6 +177,30 @@ fn contacts_list_ux<'a>(state: &'a ConnectAccountPanel) -> Element<'a, ConnectAc
     }
 
     col.into()
+}
+
+fn append_contacts_error<'a>(
+    mut col: Column<'a, ConnectAccountMessage>,
+    cs: &ContactsState,
+) -> Column<'a, ConnectAccountMessage> {
+    // Show error on the list view only when not loading
+    // (errors during initial load are silently swallowed — the empty state is shown instead)
+    if !cs.loading {
+        if let Some(err) = cs.error.as_deref() {
+            if cs.contacts.is_some() || cs.invites.is_some() || cs.received_invites.is_some() {
+                col = col.push(
+                    container(
+                        text::p2_regular(coincube_ui::locale::notice(err.to_owned()))
+                            .color(color::RED),
+                    )
+                    .padding(8)
+                    .width(Length::Fill),
+                );
+                col = col.push(iced::widget::Space::new().height(Length::Fixed(10.0)));
+            }
+        }
+    }
+    col
 }
 
 fn invite_card<'a>(invite: &'a Invite) -> Element<'a, ConnectAccountMessage> {

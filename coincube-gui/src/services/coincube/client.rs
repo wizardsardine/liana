@@ -1,11 +1,12 @@
 mod avatar;
 
 use super::{
-    get_countries, AddVaultMemberRequest, ApiResponse, BillingHistoryEntry, CardCheckoutSession,
-    CardPortalSession, ChargeStatusResponse, CheckoutRequest, CheckoutResponse, CoincubeError,
-    ConnectPlan, ConnectVaultResponse, Contact, ContactCube, Country, CreateConnectVaultRequest,
-    CreateInviteRequest, CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw,
-    CubeLimitsResponse, CubeResponse, DownloadStats, FeaturesResponse, Invite, LightningAddress,
+    get_countries, AccountDeletionRequest, AccountDeletionRequestBody, AddVaultMemberRequest,
+    ApiResponse, BillingHistoryEntry, CardCheckoutSession, CardPortalSession, ChargeStatusResponse,
+    CheckoutRequest, CheckoutResponse, CoincubeError, ConnectPlan, ConnectVaultResponse, Contact,
+    ContactCube, Country, CreateConnectVaultRequest, CreateInviteRequest,
+    CubeEncryptionPubkeyResponse, CubeInviteOrAddResult, CubeKeyRaw, CubeLimitsResponse,
+    CubeResponse, DownloadStats, FeaturesResponse, Invite, LightningAddress,
     LightningAddressAvailability, LoginActivity, LoginResponse, OtpRequest, OtpVerifyRequest,
     PatchConnectVaultRequest, PlanChangePreview, PlanChangeRequest, PlanChangeResult,
     PutCubeEncryptionPubkeyRequest, ReceivedInvite, RecoveryKit, RecoveryKitStatus,
@@ -616,6 +617,44 @@ impl CoincubeClient {
         let res = res.check_success().await?;
         let resp: ApiResponse<RedeemCampaignResponse> = res.json().await?;
         Ok(resp.data)
+    }
+
+    /// `GET /api/v1/user/deletion-request` (authenticated). `Ok(None)` when
+    /// the account has no deletion request: a 404 carrying the standard error
+    /// envelope with code `NOT_FOUND`. Any other 404 (a missing route, a proxy
+    /// page) and every other failure, including 401, is returned as an error.
+    pub async fn get_account_deletion_request(
+        &self,
+    ) -> Result<Option<AccountDeletionRequest>, CoincubeError> {
+        let url = format!("{}/api/v1/user/deletion-request", self.base_url);
+        let res = self.client.get(&url).send().await?;
+        let res = match res.check_success().await {
+            Ok(res) => res,
+            Err(info) if info.status_code == 404 && info.code().as_deref() == Some("NOT_FOUND") => {
+                return Ok(None)
+            }
+            Err(info) => return Err(info.into()),
+        };
+        let body = res.text().await?;
+        Ok(Some(serde_json::from_str(&body)?))
+    }
+
+    /// `POST /api/v1/user/deletion-request` (authenticated) with
+    /// `{"source":"desktop"}`. The API answers 201 for a new request and 200
+    /// when one is already pending; both return the pending request.
+    pub async fn request_account_deletion(&self) -> Result<AccountDeletionRequest, CoincubeError> {
+        let url = format!("{}/api/v1/user/deletion-request", self.base_url);
+        let res = self
+            .client
+            .post(&url)
+            .json(&AccountDeletionRequestBody {
+                source: super::ACCOUNT_DELETION_SOURCE,
+            })
+            .send()
+            .await?;
+        let res = res.check_success().await?;
+        let body = res.text().await?;
+        Ok(serde_json::from_str(&body)?)
     }
 
     pub async fn get_verified_devices(&self) -> Result<Vec<VerifiedDevice>, CoincubeError> {
@@ -4563,6 +4602,178 @@ mod transport_identity_tests {
             avatar.delete();
             let mut normal = normal;
             normal.delete();
+        }
+    }
+}
+
+#[cfg(test)]
+mod account_deletion_tests {
+    use super::*;
+    use httpmock::{Method as MockMethod, MockServer};
+
+    const PENDING: &str =
+        r#"{"status":"pending","requested_at":"2026-11-18T12:34:56Z","source":"desktop"}"#;
+
+    fn pending() -> AccountDeletionRequest {
+        AccountDeletionRequest {
+            status: "pending".into(),
+            requested_at: "2026-11-18T12:34:56Z".into(),
+            source: "desktop".into(),
+        }
+    }
+
+    fn signed_in(server: &MockServer) -> CoincubeClient {
+        let mut client = CoincubeClient::for_test(server.base_url());
+        client.set_token("deletion-jwt");
+        client
+    }
+
+    #[tokio::test]
+    async fn status_returns_the_pending_request() {
+        let server = MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request")
+                .header("authorization", "Bearer deletion-jwt");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(PENDING);
+        });
+        let got = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap();
+        mock.assert();
+        assert_eq!(got, Some(pending()));
+    }
+
+    #[tokio::test]
+    async fn status_404_means_no_request() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(404).body(
+                r#"{"success":false,"error":{"code":"NOT_FOUND","message":"No deletion request"}}"#,
+            );
+        });
+        assert_eq!(
+            signed_in(&server)
+                .get_account_deletion_request()
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn status_plain_text_404_is_an_error_not_absence() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(404).body("404 page not found");
+        });
+        let err = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(ref info) if info.status_code == 404
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_401_is_an_auth_error() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(401).body(
+                r#"{"success":false,"error":{"code":"UNAUTHORIZED","message":"Unauthorized"}}"#,
+            );
+        });
+        let err = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(ref info) if info.status_code == 401
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_500_is_an_error_not_absence() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(500).body("{}");
+        });
+        let err = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            CoincubeError::Unsuccessful(ref info) if info.status_code == 500
+        ));
+    }
+
+    #[tokio::test]
+    async fn status_body_off_contract_is_a_parse_error() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(MockMethod::GET)
+                .path("/api/v1/user/deletion-request");
+            then.status(200).body(r#"{"data":{"status":"pending"}}"#);
+        });
+        let err = signed_in(&server)
+            .get_account_deletion_request()
+            .await
+            .unwrap_err();
+        assert!(matches!(err, CoincubeError::Parse(_)));
+    }
+
+    #[tokio::test]
+    async fn request_posts_desktop_source_and_accepts_created_or_existing() {
+        for status in [201, 200] {
+            let server = MockServer::start();
+            let mock = server.mock(|when, then| {
+                when.method(MockMethod::POST)
+                    .path("/api/v1/user/deletion-request")
+                    .header("authorization", "Bearer deletion-jwt")
+                    .json_body(serde_json::json!({ "source": "desktop" }));
+                then.status(status)
+                    .header("content-type", "application/json")
+                    .body(PENDING);
+            });
+            let got = signed_in(&server).request_account_deletion().await.unwrap();
+            mock.assert();
+            assert_eq!(got, pending());
+        }
+    }
+
+    #[tokio::test]
+    async fn request_failure_keeps_the_status_code() {
+        for code in [400, 401] {
+            let server = MockServer::start();
+            server.mock(|when, then| {
+                when.method(MockMethod::POST)
+                    .path("/api/v1/user/deletion-request");
+                then.status(code)
+                    .body(r#"{"success":false,"error":{"code":"BAD_REQUEST","message":"bad"}}"#);
+            });
+            let err = signed_in(&server)
+                .request_account_deletion()
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                CoincubeError::Unsuccessful(ref info) if info.status_code == code
+            ));
         }
     }
 }

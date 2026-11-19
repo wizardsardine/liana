@@ -714,7 +714,8 @@ impl State for BuySellPanel {
                         }
                     }
                     (BuySellFlowState::Meld(state), view::BuySellMessage::Meld(msg)) => {
-                        if let Some(task) = state.update(msg, cache, daemon, &self.coincube_client)
+                        if let Some(task) =
+                            state.update(msg, cache, daemon, &self.coincube_client, &self.wallet)
                         {
                             return task.map(Message::View);
                         }

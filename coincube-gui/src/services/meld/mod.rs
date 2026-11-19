@@ -5,8 +5,10 @@ use crate::{
     services::{coincube::CoincubeError, http::ResponseExt},
 };
 
-use iced::futures;
+use iced::futures::{self, channel::mpsc::Sender, SinkExt};
 use reqwest::Method;
+use reqwest_sse::{error::EventSourceError, Event, EventSource as _};
+use std::ops::ControlFlow;
 
 pub struct MeldClient<'client>(pub &'client super::coincube::CoincubeClient);
 
@@ -118,9 +120,6 @@ impl<'client> MeldClient<'client> {
 fn create_subscription(
     data: &(String, usize),
 ) -> impl iced::futures::Stream<Item = meld::MeldMessage> + 'static {
-    use futures::SinkExt;
-    use reqwest_sse::EventSource;
-
     let base_url = crate::services::coincube_api_base_url();
 
     let (token, retries) = data;
@@ -153,87 +152,97 @@ fn create_subscription(
         retries
     );
 
-    iced::stream::channel(
-        8,
-        |mut channel: futures::channel::mpsc::Sender<meld::MeldMessage>| async move {
-            if let Some(request) = init {
-                // send request
-                match reqwest::Client::new().execute(request).await {
-                    // query event source
-                    Ok(res) => {
-                        log::trace!("[MELD] EventSource pre-request was successful");
+    iced::stream::channel(8, |mut channel: Sender<meld::MeldMessage>| async move {
+        if let Some(request) = init {
+            // send request
+            match reqwest::Client::new().execute(request).await {
+                // query event source
+                Ok(res) => {
+                    log::trace!("[MELD] EventSource pre-request was successful");
 
-                        match res.events().await {
-                            Ok(mut source) => loop {
-                                // 30s heartbeat to ensure SSE is alive
-                                let timeout =
-                                    tokio::time::sleep(std::time::Duration::from_secs(60));
-                                let event = futures::TryStreamExt::try_next(&mut source);
-
-                                futures::pin_mut!(timeout);
-                                futures::pin_mut!(event);
-
-                                match futures::future::select(timeout, event).await {
-                                    futures::future::Either::Left(_) => {
-                                        let _ = channel
-                                        .send(meld::MeldMessage::EventSourceDisconnected(
-                                            "EventSource heartbeat failure, Client is probably offline".to_string(),
-                                        ))
-                                        .await;
-
-                                        break;
-                                    }
-                                    futures::future::Either::Right((event, _)) => match event {
-                                        Ok(Some(ev)) => {
-                                            if ev.event_type == "transactionUpdate" {
-                                                if let Err(err) = channel
-                                                    .send(meld::MeldMessage::SseEvent(ev))
-                                                    .await
-                                                {
-                                                    if err.is_disconnected() {
-                                                        log::trace!("[MELD] Exiting subscription, Meld state was dropped");
-                                                        break;
-                                                    }
-                                                }
-                                            } else {
-                                                log::trace!("[MELD] Got event from SSE: {:?}", ev)
-                                            }
-                                        }
-                                        Ok(None) => {
-                                            log::info!("[MELD] EventSource exiting safely");
-                                            break;
-                                        }
-                                        Err(err) => {
-                                            channel
-                                                .send(meld::MeldMessage::EventSourceDisconnected(
-                                                    err.to_string(),
-                                                ))
-                                                .await
-                                                .unwrap();
-
-                                            break;
-                                        }
-                                    },
-                                }
-                            },
-                            Err(err) => channel
-                                .send(meld::MeldMessage::SessionError(
-                                    err.to_string(),
-                                    "Unable to reach Coincube servers for SSE events",
-                                ))
-                                .await
-                                .unwrap(),
-                        }
+                    if let Err(err) = read_subscription_events(res, &mut channel).await {
+                        channel
+                            .send(meld::MeldMessage::SessionError(
+                                err.to_string(),
+                                "Unable to reach Coincube servers for SSE events",
+                            ))
+                            .await
+                            .unwrap();
                     }
-                    Err(err) => channel
-                        .send(meld::MeldMessage::SessionError(
-                            err.to_string(),
-                            "EventSource pre-request failed",
-                        ))
-                        .await
-                        .unwrap(),
                 }
+                Err(err) => channel
+                    .send(meld::MeldMessage::SessionError(
+                        err.to_string(),
+                        "EventSource pre-request failed",
+                    ))
+                    .await
+                    .unwrap(),
             }
-        },
-    )
+        }
+    })
+}
+
+async fn read_subscription_events(
+    res: reqwest::Response,
+    channel: &mut Sender<meld::MeldMessage>,
+) -> Result<(), EventSourceError> {
+    let mut source = res.events().await?;
+    loop {
+        // 30s heartbeat to ensure SSE is alive
+        let timeout = tokio::time::sleep(std::time::Duration::from_secs(60));
+        let event = futures::TryStreamExt::try_next(&mut source);
+
+        futures::pin_mut!(timeout);
+        futures::pin_mut!(event);
+
+        match futures::future::select(timeout, event).await {
+            futures::future::Either::Left(_) => {
+                let _ = channel
+                    .send(meld::MeldMessage::EventSourceDisconnected(
+                        "EventSource heartbeat failure, Client is probably offline".to_string(),
+                    ))
+                    .await;
+
+                break;
+            }
+            futures::future::Either::Right((event, _)) => match event {
+                Ok(Some(ev)) => {
+                    if forward_subscription_event(ev, channel).await.is_break() {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    log::info!("[MELD] EventSource exiting safely");
+                    break;
+                }
+                Err(err) => {
+                    channel
+                        .send(meld::MeldMessage::EventSourceDisconnected(err.to_string()))
+                        .await
+                        .unwrap();
+
+                    break;
+                }
+            },
+        }
+    }
+    Ok(())
+}
+
+async fn forward_subscription_event(
+    ev: Event,
+    channel: &mut Sender<meld::MeldMessage>,
+) -> ControlFlow<()> {
+    if ev.event_type == "transactionUpdate" {
+        if let Err(err) = channel.send(meld::MeldMessage::SseEvent(ev)).await {
+            if err.is_disconnected() {
+                log::trace!("[MELD] Exiting subscription, Meld state was dropped");
+                return ControlFlow::Break(());
+            }
+        }
+    } else {
+        log::trace!("[MELD] Got event from SSE: {:?}", ev)
+    }
+
+    ControlFlow::Continue(())
 }

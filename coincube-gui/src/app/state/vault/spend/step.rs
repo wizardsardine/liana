@@ -11,6 +11,7 @@ use std::{
 };
 
 use crate::services::branta::{self, LookupRequest, LookupResult, LookupTicket};
+use coincube_core::wallet_descriptor::SpendAnalysis;
 use coincube_core::{
     miniscript::bitcoin::{
         address,
@@ -329,9 +330,10 @@ impl DefineSpend {
         self.coins.sort_by(|(a, a_selected), (b, b_selected)| {
             if *a_selected && !b_selected || !a_selected && *b_selected {
                 b_selected.cmp(a_selected)
-            } else if remaining_sequence(a, blockheight, timelock)
-                == remaining_sequence(b, blockheight, timelock)
-            {
+            } else if timelock.is_none_or(|timelock| {
+                remaining_sequence(a, blockheight, timelock)
+                    == remaining_sequence(b, blockheight, timelock)
+            }) {
                 // bigger amount first
                 b.amount.cmp(&a.amount)
             } else {
@@ -350,13 +352,11 @@ impl DefineSpend {
     /// This is used for calculating a coin's remaining sequence.
     ///
     /// Use the first timelock if this is a primary path spend and otherwise the same
-    /// timelock as used for the recovery.
-    pub fn timelock(&self) -> u16 {
-        self.recovery_timelock.unwrap_or_else(|| {
-            self.wallet
-                .recovery_timelock()
-                .expect("legacy spend is Vault-only")
-        })
+    /// timelock as used for the recovery. `None` for an imported wallet, which
+    /// has no recovery clock.
+    pub fn timelock(&self) -> Option<u16> {
+        self.recovery_timelock
+            .or_else(|| self.wallet.recovery_timelock())
     }
 
     // If `is_redraft`, the validation of recipients will take into account
@@ -1043,11 +1043,8 @@ impl Step for DefineSpend {
                         self.lookup_ticket = if self.recipients.is_empty() { None } else { branta::begin(self.network) };
                         let ticket = self.lookup_ticket.clone();
                         let recipients = self.recipients.clone();
-                        let Some(descriptor) = self.wallet.inheritance_descriptor().cloned() else {
-                            return Task::done(Message::View(view::Message::ShowError(
-                                "Use the imported wallet Send screen for this account.".into(),
-                            )));
-                        };
+                        // A Vault or an imported wallet: both say which outputs are their own.
+                        let descriptor = self.wallet.main_descriptor.clone();
                         let requests: Vec<_> = self.recipients.iter().enumerate().filter_map(|(row, recipient)| {
                             let address = recipient.destination().ok()?.require_network(self.network).ok()?;
                             LookupRequest::bitcoin(&recipient.address.value, &address).map(|request| (row, request))
@@ -1078,8 +1075,8 @@ impl Step for DefineSpend {
                                     // can legitimately differ from the earlier redraft snapshot.
                                     return (result, Vec::new());
                                 };
-                                let owned: HashSet<_> = descriptor.change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
-                                    .into_iter().map(|output| output.index()).collect();
+                                let owned: HashSet<_> = descriptor.spend_change_indexes(psbt, &secp256k1::Secp256k1::verification_only())
+                                    .into_iter().collect();
                                 let requests = requests.into_iter().filter(|(row, _)|
                                     association.get(*row).is_some_and(|output| !owned.contains(output))).collect();
                                 ticket.lookup_many(requests).await
@@ -1408,8 +1405,8 @@ impl DefineSpend {
 
     /// The primary path's threshold and key count, for the Send footer.
     fn threshold(&self) -> Option<(usize, usize)> {
-        let descriptor = self.wallet.inheritance_descriptor()?;
-        Some(match descriptor.policy().primary_path() {
+        let policy = self.wallet.policy()?;
+        Some(match policy.primary_path() {
             coincube_core::descriptors::PathInfo::Single(_) => (1, 1),
             coincube_core::descriptors::PathInfo::Multi(threshold, keys) => {
                 (*threshold, keys.len())
@@ -1811,15 +1808,11 @@ impl SaveSpend {
 impl Step for SaveSpend {
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
-        let Some(descriptor) = self.wallet.inheritance_descriptor() else {
-            self.spend = None;
-            return;
-        };
         let mut tx = SpendTx::new(
             None,
             psbt,
             draft.inputs.clone(),
-            descriptor,
+            &self.wallet.main_descriptor,
             &self.curve,
             draft.network,
         );
@@ -1895,7 +1888,7 @@ impl Step for SaveSpend {
         let (psbt_state, warnings) = self.spend.as_ref().unwrap();
         let Some(policy) = psbt_state.desc_policy.as_ref() else {
             return iced::widget::text(coincube_ui::locale::copy(
-                "Use the imported wallet Send screen for this account.",
+                "This wallet's spending policy can't be shown.",
             ))
             .into();
         };
@@ -2204,7 +2197,7 @@ mod tests {
         assert_eq!(primary.send_max_to_recipient, None);
         assert!(primary.coins[0].1);
         assert_eq!(primary.coins[0].0.outpoint, coins[1].outpoint);
-        assert_eq!(primary.timelock(), wallet.recovery_timelock().unwrap());
+        assert_eq!(primary.timelock(), wallet.recovery_timelock());
 
         let recovery = DefineSpend::new(
             Network::Bitcoin,
@@ -2221,7 +2214,7 @@ mod tests {
         assert_eq!(recovery.send_max_to_recipient, Some(0));
         assert!(recovery.recipients[0].is_recovery);
         assert!(recovery.coins.iter().all(|(_, selected)| *selected));
-        assert_eq!(recovery.timelock(), 10);
+        assert_eq!(recovery.timelock(), Some(10));
 
         let self_send = recovery.self_send();
         assert!(self_send.recipients.is_empty());
@@ -2630,6 +2623,55 @@ mod tests {
                 .collect(),
         })
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn imported_single_recipient_max_drafts_a_sweep_to_the_recipient() {
+        use crate::services::split_test_wallets::{imported_vault, Shape};
+        use iced::futures::StreamExt;
+        use serde_json::json;
+
+        let mut state = branta_form();
+        state.wallet = Arc::new(imported_vault(Shape::Wpkh));
+        state.recipients[0] = Recipient::default();
+        state.recipients[0].update(
+            Network::Bitcoin,
+            BitcoinDisplayUnit::Sats,
+            view::CreateSpendMessage::RecipientEdited(0, "address", MAINNET_ADDR.into()),
+        );
+        state.send_max_to_recipient = Some(0);
+        let recipient = state.recipients[0].destination().unwrap();
+        let outpoint = state.coins[0].0.outpoint;
+        let mut psbt = prepared_outputs(&[49_000]);
+        psbt.unsigned_tx.output[0].script_pubkey =
+            recipient.clone().assume_checked().script_pubkey();
+        let response = serde_json::to_value(CreateSpendResult::Success {
+            psbt,
+            warnings: vec![],
+        })
+        .unwrap();
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![(
+                Some(json!({"method": "createspend", "params": [{}, [outpoint], 2, &recipient]})),
+                Ok(response),
+            )])
+            .run(),
+        ));
+
+        let mut stream = iced_runtime::task::into_stream(state.run_redraft(daemon, 7)).unwrap();
+        let Some(iced_runtime::Action::Output(Message::RedraftResult {
+            result: Ok(CreateSpendResult::Success { psbt, .. }),
+            ..
+        })) = stream.next().await
+        else {
+            panic!("expected a successful MAX draft");
+        };
+        let output = &psbt.unsigned_tx.output[0];
+        assert_eq!(
+            output.script_pubkey,
+            recipient.assume_checked().script_pubkey()
+        );
+        assert_eq!(output.value.to_sat(), 49_000);
     }
 
     #[test]

@@ -204,6 +204,149 @@ impl<'a> SparkSendView<'a> {
         }
     }
 
+    fn sent_payment_result(
+        &self,
+        ok: &'a coincube_spark_protocol::SendPaymentOk,
+    ) -> Element<'a, Message> {
+        use coincube_ui::component::payment_result::{
+            payment_result, short_id, Outcome, ReceiptRow,
+        };
+        // An on-chain exit is broadcast, not settled: Activity carries
+        // the confirmation.
+        let outcome = if self.sent_celebration_context == "bitcoin-send" {
+            Outcome::Confirming
+        } else {
+            Outcome::Sent
+        };
+        let recipient = self.sent_recipient;
+        // A Lightning address reads in full; an invoice or address is cut
+        // to its ends, with Copy for the whole value.
+        let to = if recipient.contains('@') {
+            ReceiptRow::new(localized_copy("To"), recipient)
+        } else {
+            ReceiptRow::new(localized_copy("To"), short_id(recipient))
+                .mono()
+                .on_copy(Message::CopyWithToast(
+                    recipient.to_string(),
+                    recipient_copied_notice(recipient).to_string(),
+                ))
+                .copy_tip(recipient_copy_tip(recipient))
+        };
+        let mut rows = Vec::new();
+        if !recipient.is_empty() {
+            rows.push(to);
+        }
+        rows.push(ReceiptRow::new(localized_copy("Paid from"), "Spark"));
+        if !self.sent_fee_display.is_empty() {
+            rows.push(ReceiptRow::new(
+                localized_copy("Fee"),
+                self.sent_fee_display,
+            ));
+            rows.push(ReceiptRow::new(
+                localized_copy("Total"),
+                self.sent_total_display,
+            ));
+        }
+        if !ok.payment_id.is_empty() {
+            rows.push(
+                ReceiptRow::new(localized_copy("Payment ID"), short_id(&ok.payment_id))
+                    .mono()
+                    .on_copy(Message::CopyWithToast(
+                        ok.payment_id.clone(),
+                        "Payment ID copied to clipboard".to_string(),
+                    )),
+            );
+        }
+        payment_result(
+            outcome,
+            self.sent_amount_display,
+            self.sent_celebration_context,
+            self.sent_quote,
+            self.sent_image_handle,
+            Message::SparkSend(crate::app::view::SparkSendMessage::Reset),
+        )
+        .rows(rows)
+        .voice(coincube_ui::worldview_copy::VoiceLine::PaymentSent.get())
+        .on_activity(Message::SparkSend(
+            crate::app::view::SparkSendMessage::ViewActivity,
+        ))
+        .into()
+    }
+
+    fn amount_editor(
+        &self,
+        amount_placeholder: &'static str,
+    ) -> iced::widget::TextInput<'a, Message, theme::Theme, iced::Renderer> {
+        let mut amount = text_input(amount_placeholder, self.amount_input)
+            .id(AMOUNT_INPUT_ID)
+            .padding(12);
+        if !self.amount_set_by_invoice {
+            amount = amount.on_input(|v| {
+                Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v))
+            });
+        }
+        amount
+    }
+
+    fn amount_notes(&self, usd_send: bool) -> Column<'a, Message> {
+        // Both notes share one slot below the field, never above it.
+        Column::new()
+            .spacing(6)
+            .push_maybe(self.amount_set_by_invoice.then(|| {
+                p2_regular(localized_copy("This invoice sets its own amount."))
+                    .style(theme::text::secondary)
+            }))
+            .push_maybe(
+                self.usdb_conversion_hint
+                    .clone()
+                    .filter(|_| !self.mask_amounts && !self.pays_from_usdb())
+                    .map(|hint| p2_regular(hint).style(theme::text::secondary)),
+            )
+            .push_maybe(
+                (self.pays_from_usdb() && !usd_send)
+                    .then(|| p2_regular(PAID_FROM_USDB_NOTE).style(theme::text::secondary)),
+            )
+            .push_maybe(
+                usd_send.then(|| p2_regular(US_DOLLAR_SEND_NOTE).style(theme::text::secondary)),
+            )
+            .push_maybe(self.amount_issue_note())
+    }
+
+    fn available_balance_row(&self, usd_send: bool) -> Row<'a, Message> {
+        // Unified balance (BTC + Stable Balance), as the YOU SEND card showed
+        // it; a US Dollar send can spend only the US Dollar balance.
+        let us_dollar_available = || {
+            let (rows, _) = self.balances.rows();
+            rows.into_iter()
+                .find(|(name, _, _)| *name == "US Dollar")
+                .map_or_else(|| "0".to_owned(), |(_, figure, _)| figure)
+        };
+        Row::new()
+            .spacing(6)
+            .push(Space::new().width(Length::Fill))
+            .push(p2_regular(localized_copy("Available")).style(theme::text::secondary))
+            .push(
+                text(if self.mask_amounts {
+                    "••••••".to_owned()
+                } else if usd_send {
+                    format!("{} {}", us_dollar_available(), localized_copy("US Dollar"))
+                } else {
+                    format!(
+                        "{} {}",
+                        Amount::from_sat(self.balance_sats)
+                            .to_formatted_string_with_unit(self.bitcoin_unit),
+                        if matches!(self.bitcoin_unit, BitcoinDisplayUnit::BTC) {
+                            "BTC"
+                        } else {
+                            "SATS"
+                        }
+                    )
+                })
+                .size(P2_SIZE)
+                .style(theme::text::secondary),
+            )
+    }
+
     pub fn render(self) -> Element<'a, Message> {
         if !self.backend_available {
             return Column::new()
@@ -217,69 +360,7 @@ impl<'a> SparkSendView<'a> {
 
         // ── Payment result: the receipt first, the worldview art beside it ──
         if let SparkSendPhase::Sent(ok) = self.phase {
-            use coincube_ui::component::payment_result::{
-                payment_result, short_id, Outcome, ReceiptRow,
-            };
-            // An on-chain exit is broadcast, not settled: Activity carries
-            // the confirmation.
-            let outcome = if self.sent_celebration_context == "bitcoin-send" {
-                Outcome::Confirming
-            } else {
-                Outcome::Sent
-            };
-            let recipient = self.sent_recipient;
-            // A Lightning address reads in full; an invoice or address is cut
-            // to its ends, with Copy for the whole value.
-            let to = if recipient.contains('@') {
-                ReceiptRow::new(localized_copy("To"), recipient)
-            } else {
-                ReceiptRow::new(localized_copy("To"), short_id(recipient))
-                    .mono()
-                    .on_copy(Message::CopyWithToast(
-                        recipient.to_string(),
-                        recipient_copied_notice(recipient).to_string(),
-                    ))
-                    .copy_tip(recipient_copy_tip(recipient))
-            };
-            let mut rows = Vec::new();
-            if !recipient.is_empty() {
-                rows.push(to);
-            }
-            rows.push(ReceiptRow::new(localized_copy("Paid from"), "Spark"));
-            if !self.sent_fee_display.is_empty() {
-                rows.push(ReceiptRow::new(
-                    localized_copy("Fee"),
-                    self.sent_fee_display,
-                ));
-                rows.push(ReceiptRow::new(
-                    localized_copy("Total"),
-                    self.sent_total_display,
-                ));
-            }
-            if !ok.payment_id.is_empty() {
-                rows.push(
-                    ReceiptRow::new(localized_copy("Payment ID"), short_id(&ok.payment_id))
-                        .mono()
-                        .on_copy(Message::CopyWithToast(
-                            ok.payment_id.clone(),
-                            "Payment ID copied to clipboard".to_string(),
-                        )),
-                );
-            }
-            return payment_result(
-                outcome,
-                self.sent_amount_display,
-                self.sent_celebration_context,
-                self.sent_quote,
-                self.sent_image_handle,
-                Message::SparkSend(crate::app::view::SparkSendMessage::Reset),
-            )
-            .rows(rows)
-            .voice(coincube_ui::worldview_copy::VoiceLine::PaymentSent.get())
-            .on_activity(Message::SparkSend(
-                crate::app::view::SparkSendMessage::ViewActivity,
-            ))
-            .into();
+            return self.sent_payment_result(ok);
         }
 
         // ── Payment details card ──────────────────────────────────────
@@ -322,69 +403,11 @@ impl<'a> SparkSendView<'a> {
         // An invoice-set amount leaves the field without `on_input`, which is
         // what makes it read-only — it still shows and can be selected, it just
         // can't be edited into something the invoice won't honour.
-        let mut amount = text_input(amount_placeholder, self.amount_input)
-            .id(AMOUNT_INPUT_ID)
-            .padding(12);
-        if !self.amount_set_by_invoice {
-            amount = amount.on_input(|v| {
-                Message::SparkSend(crate::app::view::SparkSendMessage::AmountInputChanged(v))
-            });
-        }
+        let amount = self.amount_editor(amount_placeholder);
 
-        // Both notes share one slot below the field, never above it.
-        let amount_notes = Column::new()
-            .spacing(6)
-            .push_maybe(self.amount_set_by_invoice.then(|| {
-                p2_regular(localized_copy("This invoice sets its own amount."))
-                    .style(theme::text::secondary)
-            }))
-            .push_maybe(
-                self.usdb_conversion_hint
-                    .clone()
-                    .filter(|_| !self.mask_amounts && !self.pays_from_usdb())
-                    .map(|hint| p2_regular(hint).style(theme::text::secondary)),
-            )
-            .push_maybe(
-                (self.pays_from_usdb() && !usd_send)
-                    .then(|| p2_regular(PAID_FROM_USDB_NOTE).style(theme::text::secondary)),
-            )
-            .push_maybe(
-                usd_send.then(|| p2_regular(US_DOLLAR_SEND_NOTE).style(theme::text::secondary)),
-            )
-            .push_maybe(self.amount_issue_note());
+        let amount_notes = self.amount_notes(usd_send);
 
-        // Unified balance (BTC + Stable Balance), as the YOU SEND card showed
-        // it; a US Dollar send can spend only the US Dollar balance.
-        let us_dollar_available = || {
-            let (rows, _) = self.balances.rows();
-            rows.into_iter()
-                .find(|(name, _, _)| *name == "US Dollar")
-                .map_or_else(|| "0".to_owned(), |(_, figure, _)| figure)
-        };
-        let available = Row::new()
-            .spacing(6)
-            .push(Space::new().width(Length::Fill))
-            .push(p2_regular(localized_copy("Available")).style(theme::text::secondary))
-            .push(
-                text(if self.mask_amounts {
-                    "••••••".to_owned()
-                } else if usd_send {
-                    format!("{} {}", us_dollar_available(), localized_copy("US Dollar"))
-                } else {
-                    format!(
-                        "{} {}",
-                        Amount::from_sat(self.balance_sats)
-                            .to_formatted_string_with_unit(self.bitcoin_unit),
-                        if matches!(self.bitcoin_unit, BitcoinDisplayUnit::BTC) {
-                            "BTC"
-                        } else {
-                            "SATS"
-                        }
-                    )
-                })
-                .size(P2_SIZE)
-                .style(theme::text::secondary),
-            );
+        let available = self.available_balance_row(usd_send);
 
         // Idle and Preparing render as this card's footer. Every other phase
         // — and the recipient mismatch, whatever the phase — keeps its own
@@ -2374,6 +2397,98 @@ pub fn send_target_picker_menu<'a>(
 mod tests {
     use super::*;
 
+    fn assert_compose_layout(probe: &Probe, fixture: &Fixture, label: &str) {
+        for expected in [
+            "Back to Spark",
+            "Send",
+            "Payment details",
+            "Available in Spark",
+            "You send",
+            "They receive",
+            "Destination",
+            "Amount (sats)",
+            "Available",
+        ] {
+            assert!(
+                probe.contains(expected),
+                "{}: missing {:?}",
+                label,
+                expected
+            );
+        }
+        assert!(
+            probe.contains(&original_balance_text(
+                SYNTHETIC_BALANCE_SATS,
+                BitcoinDisplayUnit::Sats
+            )),
+            "{}: the available balance must keep the original formatting",
+            label
+        );
+        assert!(
+            !probe.contains("Add a destination"),
+            "{}: the Destination field below needs no prompt on the tile",
+            label
+        );
+        assert!(
+            probe.input_text(DESTINATION_INPUT_ID).is_some(),
+            "{}: native destination input",
+            label
+        );
+        // No Bitcoin / Stablecoin toggle: THEY RECEIVE's picker
+        // holds every target.
+        for id in ["spark-send-kind-bitcoin", "spark-send-kind-stablecoin"] {
+            assert!(
+                probe.bounds(id).is_none(),
+                "{}: toggle back at {}",
+                label,
+                id
+            );
+        }
+        assert!(
+            probe.input_text(AMOUNT_INPUT_ID).is_some(),
+            "{}: native amount input",
+            label
+        );
+        let preparing = matches!(fixture.phase, SparkSendPhase::Preparing);
+        assert_eq!(
+            probe.bounds(PREPARE_ACTION_ID).is_some(),
+            !preparing,
+            "{}: Prepare is a focus target exactly when it is pressable",
+            label
+        );
+        assert_eq!(
+            probe.contains("Preparing send… asking the Spark bridge for a fee quote."),
+            preparing,
+            "{}: the existing preparation message",
+            label
+        );
+        assert!(
+            probe.contains("Prepare"),
+            "{}: the Prepare control is always drawn while composing",
+            label
+        );
+        for absent in ["Confirm and send", "Send again", "Try again", "Get quote"] {
+            assert!(
+                !probe.contains(absent),
+                "{}: compose must not offer {:?}",
+                label,
+                absent
+            );
+        }
+        assert_eq!(
+            probe.contains("This invoice sets its own amount."),
+            fixture.invoice_amount,
+            "{}: invoice note",
+            label
+        );
+        assert_eq!(
+            probe.contains("the rest is converted"),
+            fixture.hint.is_some(),
+            "{}: conversion hint",
+            label
+        );
+    }
+
     #[test]
     fn recipient_copy_toast_names_invoices_and_addresses() {
         assert_eq!(
@@ -3531,95 +3646,7 @@ mod tests {
                     let label = format!("{} {} {:?}", scenario, appearance(mode), outer);
                     harness.assert_no_horizontal_overflow(&label);
                     let probe = harness.probe();
-                    for expected in [
-                        "Back to Spark",
-                        "Send",
-                        "Payment details",
-                        "Available in Spark",
-                        "You send",
-                        "They receive",
-                        "Destination",
-                        "Amount (sats)",
-                        "Available",
-                    ] {
-                        assert!(
-                            probe.contains(expected),
-                            "{}: missing {:?}",
-                            label,
-                            expected
-                        );
-                    }
-                    assert!(
-                        probe.contains(&original_balance_text(
-                            SYNTHETIC_BALANCE_SATS,
-                            BitcoinDisplayUnit::Sats
-                        )),
-                        "{}: the available balance must keep the original formatting",
-                        label
-                    );
-                    assert!(
-                        !probe.contains("Add a destination"),
-                        "{}: the Destination field below needs no prompt on the tile",
-                        label
-                    );
-                    assert!(
-                        probe.input_text(DESTINATION_INPUT_ID).is_some(),
-                        "{}: native destination input",
-                        label
-                    );
-                    // No Bitcoin / Stablecoin toggle: THEY RECEIVE's picker
-                    // holds every target.
-                    for id in ["spark-send-kind-bitcoin", "spark-send-kind-stablecoin"] {
-                        assert!(
-                            probe.bounds(id).is_none(),
-                            "{}: toggle back at {}",
-                            label,
-                            id
-                        );
-                    }
-                    assert!(
-                        probe.input_text(AMOUNT_INPUT_ID).is_some(),
-                        "{}: native amount input",
-                        label
-                    );
-                    let preparing = matches!(fixture.phase, SparkSendPhase::Preparing);
-                    assert_eq!(
-                        probe.bounds(PREPARE_ACTION_ID).is_some(),
-                        !preparing,
-                        "{}: Prepare is a focus target exactly when it is pressable",
-                        label
-                    );
-                    assert_eq!(
-                        probe.contains("Preparing send… asking the Spark bridge for a fee quote."),
-                        preparing,
-                        "{}: the existing preparation message",
-                        label
-                    );
-                    assert!(
-                        probe.contains("Prepare"),
-                        "{}: the Prepare control is always drawn while composing",
-                        label
-                    );
-                    for absent in ["Confirm and send", "Send again", "Try again", "Get quote"] {
-                        assert!(
-                            !probe.contains(absent),
-                            "{}: compose must not offer {:?}",
-                            label,
-                            absent
-                        );
-                    }
-                    assert_eq!(
-                        probe.contains("This invoice sets its own amount."),
-                        fixture.invoice_amount,
-                        "{}: invoice note",
-                        label
-                    );
-                    assert_eq!(
-                        probe.contains("the rest is converted"),
-                        fixture.hint.is_some(),
-                        "{}: conversion hint",
-                        label
-                    );
+                    assert_compose_layout(&probe, fixture, &label);
                     harness.capture(scenario, &theme, appearance(mode));
                 }
             }

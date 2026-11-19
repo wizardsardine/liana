@@ -271,6 +271,20 @@ impl Wallet {
         self.inheritance_descriptor().is_some()
     }
 
+    /// Whether Bump fee and Cancel can replace this wallet's unconfirmed
+    /// sends. The daemon builds replacements for a Vault and for an imported
+    /// wallet, on every chain.
+    pub fn supports_replacement(&self) -> bool {
+        self.supports_inheritance() || self.is_imported()
+    }
+
+    /// The spending policy the Vault screens show and sign against: a
+    /// Vault's inheritance policy, or an imported wallet's single path.
+    /// `None` only for an imported shape the policy view cannot express.
+    pub fn policy(&self) -> Option<coincube_core::descriptors::CoincubePolicy> {
+        self.main_descriptor.policy().ok()
+    }
+
     /// No inheritance clock exists for a public descriptor import.
     pub fn recovery_timelock(&self) -> Option<u16> {
         self.inheritance_descriptor()
@@ -538,8 +552,10 @@ impl Wallet {
     /// The Vault records which of its keys came from the COINCUBE Keychain,
     /// and none did. An unrecorded Vault may still hold one, so it is not
     /// counted here.
+    /// No phone can ever pair for this wallet: a Vault recorded without a
+    /// Keychain key, or an imported wallet, which never has one.
     pub fn lacks_keychain_key(&self) -> bool {
-        self.keychain_keys_recorded && self.keychain_key_ids.is_empty()
+        self.is_imported() || (self.keychain_keys_recorded && self.keychain_key_ids.is_empty())
     }
 
     /// Record which keys came from the COINCUBE Keychain, and whether that
@@ -1202,6 +1218,12 @@ mod tests {
         assert_eq!(wallet.name, cube.name);
         assert!(wallet.is_imported());
         assert!(!wallet.supports_inheritance());
+        // Bump fee and Cancel work as for a Vault, Bitcoin Blake2b included.
+        assert!(wallet.supports_replacement());
+        assert!(wallet
+            .clone()
+            .with_chain(crate::chain::ChainId::BitcoinBlake2b)
+            .supports_replacement());
         assert_eq!(wallet.recovery_timelock(), None);
         assert!(wallet.signer.is_none());
         assert!(!wallet.id().is_legacy());

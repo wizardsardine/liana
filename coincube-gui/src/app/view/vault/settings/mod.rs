@@ -1254,6 +1254,7 @@ pub const VAULT_RECOVERY_TOOLS_ID: &str = "tenshu.settings.vault.recovery-tools"
 pub const VAULT_PAIR_ID: &str = "tenshu.settings.vault.pair";
 pub const VAULT_ADVANCED_ID: &str = "tenshu.settings.vault.advanced";
 pub const VAULT_COPY_ID: &str = "tenshu.settings.vault.descriptor-copy";
+const VAULT_ADD_WORDS_ID: &str = "tenshu.settings.vault.add-words";
 pub const VAULT_EXPORT_ID: &str = "tenshu.settings.vault.descriptor-export";
 pub const VAULT_REGISTER_ID: &str = "tenshu.settings.vault.register";
 pub const VAULT_TOOLS_ID: &str = "tenshu.settings.vault.tools";
@@ -1278,14 +1279,26 @@ fn quorum_sentence(
     verb: &str,
 ) -> String {
     let names: Vec<String> = keys.iter().map(|k| signer_name(k, keys_aliases)).collect();
-    if coincube_ui::locale::language() == coincube_ui::locale::Language::Spanish {
+    // One listed signer can stand for several required signatures: an
+    // imported multisig may hold two accounts behind one master fingerprint.
+    // Single-signer wording only when one signature is required, and never
+    // "any N of M" with N above the M signers listed.
+    let spanish = coincube_ui::locale::language() == coincube_ui::locale::Language::Spanish;
+    if spanish {
         let verb = if verb == "approve" {
             "aprobar"
         } else {
             "gastar"
         };
-        return if keys.len() == 1 {
+        return if threshold <= 1 && keys.len() == 1 {
             format!("{} puede {}.", names[0], verb)
+        } else if threshold > keys.len() {
+            format!(
+                "Se necesitan {} firmas de {} para {}.",
+                threshold,
+                names.join(", "),
+                verb
+            )
         } else {
             format!(
                 "Bastan {} de {} firmantes para {}: {}.",
@@ -1296,8 +1309,15 @@ fn quorum_sentence(
             )
         };
     }
-    if keys.len() == 1 {
+    if threshold <= 1 && keys.len() == 1 {
         format!("{} {}s.", names[0], verb)
+    } else if threshold > keys.len() {
+        format!(
+            "{} signatures from {} are needed to {}.",
+            threshold,
+            names.join(", "),
+            verb
+        )
     } else {
         format!(
             "Any {} of {} signers {}: {}.",
@@ -1476,25 +1496,15 @@ pub fn wallet_settings<'a>(
     let mut identity: Vec<Element<'a, Message>> = vec![name_row
         .control(Container::new(name_field).width(Length::Fixed(280.0)))
         .into()];
-    if let Some(vault) = vault {
-        identity.extend(policy_rows(vault.policy(), keys_aliases, provider_keys));
+    // A Vault's inheritance policy, or an imported wallet's single path.
+    let policy = descriptor.policy().ok();
+    if let Some(policy) = &policy {
+        identity.extend(policy_rows(policy.clone(), keys_aliases, provider_keys));
     }
 
     let mut content = Column::new().width(Length::Fill);
     if vault.is_none() {
-        content = content.push(page::note(
-            coincube_ui::component::tenshu::Tone::Muted,
-            Row::new()
-                .spacing(4)
-                .push(
-                    text(localized_copy("Imported wallet · no local keys."))
-                        .size(13)
-                        .bold(),
-                )
-                .push(text(localized_copy("Signing needs the external signers below.")).size(13))
-                .wrap(),
-            None,
-        ));
+        content = content.push(imported_keys_note(cache.imported_stored_keys));
     }
     content = content.push(page::group(
         localized_copy("Identity and policy"),
@@ -1502,7 +1512,6 @@ pub fn wallet_settings<'a>(
         page::rows(identity),
     ));
 
-    let policy = vault.map(|v| v.policy());
     let signer_rows = keys_aliases.iter().map(|(fingerprint, name)| {
         let fg = *fingerprint;
         let mut detail = fg.to_string();
@@ -1644,6 +1653,48 @@ pub fn wallet_settings<'a>(
     dashboard(menu, cache, content)
 }
 
+/// An imported wallet's keys stored in this Cube, from the import's Keys
+/// step. With none stored, recovery words can be added.
+fn imported_keys_note<'a>(stored: Option<usize>) -> Element<'a, Message> {
+    use crate::app::view::settings::page;
+    use coincube_ui::component::tenshu::Tone;
+    let (headline, detail): (String, &'static str) = match stored {
+        Some(0) => (
+            localized_copy("Imported wallet · no keys stored in this Cube.").to_string(),
+            localized_copy("Its signers sign. If you hold any of its keys as recovery words, add them."),
+        ),
+        Some(count) => (
+            localized_format!(
+                "Imported wallet · {} from recovery words stored in this Cube.",
+                "Cartera importada · {} con palabras de recuperación guardadas en este Cube.",
+                count
+            ),
+            localized_copy("They sign on this computer. They are not in the Recovery Kit yet, so keep your original backup."),
+        ),
+        None => (
+            localized_copy("Imported wallet.").to_string(),
+            localized_copy("Signing uses its signers below."),
+        ),
+    };
+    page::note(
+        Tone::Muted,
+        Row::new()
+            .spacing(4)
+            .push(text(headline).size(13).bold())
+            .push(text(detail).size(13))
+            .wrap(),
+        (stored == Some(0)).then(|| {
+            page::button(
+                VAULT_ADD_WORDS_ID,
+                localized_copy("Add recovery words"),
+                Some(Message::ImportedBitcoin(
+                    crate::app::state::imported_bitcoin::ImportMessage::AddKeys,
+                )),
+            )
+        }),
+    )
+}
+
 pub fn descriptor_copy_review<'a>() -> Element<'a, Message> {
     card::modal(
         Column::new()
@@ -1704,6 +1755,65 @@ fn expire_message_units(sequence: u32) -> Vec<String> {
             })
             .collect()
     }
+}
+
+/// An imported Vault's history scan on its Node page: what it has checked,
+/// Retry synchronization, and a wider address search.
+pub fn imported_history_section<'a>(
+    summary: &'a crate::app::state::imported_bitcoin::ImportedNodeSummary,
+) -> Element<'a, Message> {
+    use crate::app::state::imported_bitcoin::{ImportMessage, ImportedSyncStatus};
+    use crate::app::view::settings::page;
+    let idle = !summary.busy;
+    let (status, label) = match summary.sync_status {
+        ImportedSyncStatus::Synced => (page::Status::Ok, "Synced"),
+        ImportedSyncStatus::Syncing => (page::Status::Busy, "Syncing"),
+        ImportedSyncStatus::Failed => (page::Status::Warn, "Sync failed"),
+    };
+    let mut rows: Vec<Element<'a, Message>> = vec![page::row(localized_copy("Server"))
+        .description(summary.endpoint.clone())
+        .accessory(page::status(status, localized_copy(label)))
+        .control(page::button(
+            "tenshu.settings.node.imported.retry",
+            localized_copy("Retry synchronization"),
+            idle.then_some(Message::ImportedBitcoin(
+                ImportMessage::RetrySynchronization,
+            )),
+        ))
+        .into()];
+    if let Some(status) = &summary.status {
+        let mut history =
+            page::row(localized_copy("Addresses checked")).description(localized_format!(
+                "Receive {} · change {} · target {} per branch",
+                "Recepción {} · cambio {} · objetivo {} por rama",
+                status.receive_scanned,
+                status.change_scanned,
+                status.discovery_target
+            ));
+        if summary.can_expand && status.discovery_target < 10_000 {
+            history = history.control(page::button(
+                "tenshu.settings.node.imported.expand",
+                localized_copy("Search 200 more addresses"),
+                (idle && summary.ready)
+                    .then_some(Message::ImportedBitcoin(ImportMessage::ExpandDiscovery)),
+            ));
+        }
+        rows.push(history.into());
+    }
+    let mut column = Column::new().width(Length::Fill).push(page::group(
+        localized_copy("Wallet history"),
+        Some(
+            localized_copy(
+                "This imported wallet's history comes from its server. Search more addresses if a payment is missing.",
+            )
+            .into(),
+        ),
+        page::rows(rows),
+    ));
+    if let Some(notice) = &summary.notice {
+        column = column.push(text(notice.clone()).size(13).style(theme::text::error));
+    }
+    column.into()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -3565,6 +3675,32 @@ pub fn register_wallet_modal<'a>(
 
 #[cfg(test)]
 mod tests {
+    use super::quorum_sentence;
+
+    #[test]
+    fn quorum_wording_shows_a_threshold_above_one_for_a_repeated_fingerprint() {
+        use coincube_core::miniscript::bitcoin::bip32::Fingerprint;
+        use std::str::FromStr;
+        let a = Fingerprint::from_str("aabbccdd").unwrap();
+        let b = Fingerprint::from_str("11223344").unwrap();
+        assert_eq!(
+            quorum_sentence(1, &[a], &[], "approve"),
+            "aabbccdd approves."
+        );
+        assert_eq!(
+            quorum_sentence(2, &[a], &[], "approve"),
+            "2 signatures from aabbccdd are needed to approve."
+        );
+        assert_eq!(
+            quorum_sentence(3, &[a, b], &[], "spend"),
+            "3 signatures from aabbccdd, 11223344 are needed to spend."
+        );
+        assert_eq!(
+            quorum_sentence(2, &[a, b], &[], "approve"),
+            "Any 2 of 2 signers approve: aabbccdd, 11223344."
+        );
+    }
+
     use super::*;
     use crate::{
         app::{

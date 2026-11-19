@@ -460,10 +460,14 @@ pub enum InternalBitcoindMsg {
     Download,
     DownloadProgressed(super::step::DownloadUpdate),
     /// Result of fetching the release `SHA256SUMS`/`.asc` (Knots) the archive is
-    /// verified against; `Ok(None)` for Core.
-    ManifestFetched(Result<Option<(String, String)>, String>),
-    Install,
-    Start,
+    /// verified against; `Ok(None)` for Core. Tagged with the setup attempt
+    /// that started the fetch, so a result from an abandoned attempt (the user
+    /// went Back meanwhile) is ignored.
+    ManifestFetched(u64, Result<Option<(String, String)>, String>),
+    /// Install the downloaded archive; tagged with its setup attempt.
+    Install(u64),
+    /// Start the configured node; tagged with its setup attempt.
+    Start(u64),
 }
 
 #[derive(Debug, Clone)]
