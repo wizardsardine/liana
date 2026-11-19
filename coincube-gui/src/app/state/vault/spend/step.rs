@@ -214,11 +214,11 @@ pub struct DefineSpend {
     /// loading, was replaced by Custom, a typed rate or another preset.
     fee_estimate_request: u64,
     /// The preset whose estimate was on its way when the step was left
-    /// (another menu entry, or Back): fetched again on the next message the
-    /// step receives.
+    /// (another menu entry, or Back): fetched again by `resume` once the
+    /// step is shown again (the panel's `reload`, or Next/Previous).
     resume_fee_estimate: Option<usize>,
-    /// A draft was pending when the step was left: drafted again on the
-    /// next message the step receives.
+    /// A draft was pending when the step was left: drafted again by
+    /// `resume` once the step is shown again.
     resume_redraft: bool,
     /// Block target (1/6/24) of the preset whose estimate currently fills the
     /// feerate field, so the matching Fast/Normal/Slow button can render as
@@ -1403,6 +1403,12 @@ impl Step for DefineSpend {
             }
             Message::View(view::Message::Previous) => {
                 self.invalidate_preparation();
+                // Back from the review step: a draft that started while
+                // preparing delivered its result to that step, where it was
+                // dropped. Draft again rather than wait on it.
+                if self.draft_pending {
+                    return self.schedule_redraft();
+                }
             }
             Message::View(view::Message::CreateSpend(msg)) => {
                 return self.update_spend_form(daemon, cache, msg);
@@ -3407,6 +3413,35 @@ mod tests {
         assert!(!state.resume_redraft);
         assert!(state.draft_pending);
         assert_ne!(state.redraft_seq, seq);
+    }
+
+    /// Back from the review step: a draft that started while preparing
+    /// delivered its result to the review step, where it was dropped, so
+    /// the form drafts again instead of holding Prepare on "Calculating…".
+    #[tokio::test]
+    async fn back_from_review_redrafts_a_draft_dropped_during_preparation() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let mut state = branta_form();
+        let back = |state: &mut DefineSpend| {
+            state.update(
+                daemon.clone(),
+                &Cache::default(),
+                Message::View(view::Message::Previous),
+            )
+        };
+        state.amount_left_to_select = Some(Amount::ZERO);
+        drop(state.schedule_redraft());
+        assert!(state.drafting());
+        let seq = state.redraft_seq;
+        assert!(back(&mut state).units() > 0);
+        assert_ne!(state.redraft_seq, seq, "a fresh draft, not the dropped one");
+        assert!(state.drafting());
+
+        // Nothing pending: Back requests nothing.
+        state.draft_pending = false;
+        assert_eq!(back(&mut state).units(), 0);
     }
 
     /// The panel wiring around `resume`: a cache refresh reaching the hidden
