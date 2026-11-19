@@ -2334,6 +2334,32 @@ impl GUI {
         })
     }
 
+    fn intercept_device_preference(&mut self, message: &Message) -> Option<Task<Message>> {
+        // Intercept before stripping AppAsync/ForkAsync so a queued eye press
+        // from a closed or replaced Cube cannot mutate device preferences.
+        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = message {
+            let tab = self
+                .panes
+                .get(*pane_id)
+                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id));
+            if let Some((change, current)) = balance_privacy_eye_change(tab, inner) {
+                return Some(if current {
+                    self.change_balance_privacy(change)
+                } else {
+                    Task::none()
+                });
+            }
+            if let tab::Message::HomeDevicePreference(change) = inner.as_ref() {
+                return Some(if launcher_change_is_current(tab, change) {
+                    self.change_preference(*change)
+                } else {
+                    Task::none()
+                });
+            }
+        }
+        None
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2390,27 +2416,8 @@ impl GUI {
             };
             return self.route_verified_unlock_duress(pane_id, tab_id, proof);
         }
-        // Intercept before stripping AppAsync/ForkAsync so a queued eye press
-        // from a closed or replaced Cube cannot mutate device preferences.
-        if let Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) = &message {
-            let tab = self
-                .panes
-                .get(*pane_id)
-                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id));
-            if let Some((change, current)) = balance_privacy_eye_change(tab, inner) {
-                return if current {
-                    self.change_balance_privacy(change)
-                } else {
-                    Task::none()
-                };
-            }
-            if let tab::Message::HomeDevicePreference(change) = inner.as_ref() {
-                return if launcher_change_is_current(tab, change) {
-                    self.change_preference(*change)
-                } else {
-                    Task::none()
-                };
-            }
+        if let Some(task) = self.intercept_device_preference(&message) {
+            return task;
         }
         // Validate session-tagged App callbacks before inspecting global auth
         // actions. A queued event from an old App cannot affect a reopened one.
