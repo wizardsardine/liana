@@ -1311,6 +1311,13 @@ pub enum DuressContactsStep {
     Form,
 }
 
+struct ValidatedDuressContact {
+    name: String,
+    phone: String,
+    email: String,
+    channels: Vec<String>,
+}
+
 /// State for the duress "Emergency contacts" section within
 /// `ConnectAccountPanel` (Estate Notifications — PR 1). Holds the loaded
 /// contacts and the transient add/edit form. Estate-gated: the data is
@@ -2224,210 +2231,142 @@ impl ConnectAccountPanel {
 
     fn dispatch_message(&mut self, msg: ConnectAccountMessage) -> iced::Task<Message> {
         match msg {
-            ConnectAccountMessage::Init => {
-                if self.admitted_client {
-                    if self.user.is_some() || self.admitted_user_loading {
-                        return iced::Task::none();
-                    }
-                    self.admitted_user_loading = true;
-                    let client = self.client.clone();
-                    let generation = self.session_generation;
-                    let epoch = self.auth_epoch;
-                    return iced::Task::perform(
-                        async move {
-                            client
-                                .get_user()
-                                .await
-                                .map_err(|error| ((&error).into(), error.is_auth_error()))
-                        },
-                        move |user| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::AdmittedUserLoaded {
-                                    user,
-                                    generation,
-                                    epoch,
-                                },
-                            ))
-                        },
-                    );
-                }
-                // Already authenticated (e.g. broadcast Init from a
-                // sibling tab that just signed in): nothing to do.
-                if matches!(self.step, ConnectFlowStep::Dashboard) {
-                    return iced::Task::none();
-                }
-                // A RefreshSession spawned by a previous Init is still
-                // in flight. Firing another now would race two token
-                // refreshes against each other and double the downstream
-                // post-login bootstrap. Wait for the in-flight one to
-                // resolve (success → Dashboard; failure → Login with
-                // loading=false, which Init can pick up again).
-                if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
-                    return iced::Task::none();
-                }
-                // The session is already loaded and its post-sign-in duress
-                // gate is running. A refresh now would abandon that gate and
-                // mint another session, whose sign-in broadcast makes Home
-                // re-adopt and re-announce, which sends this Init again: the
-                // tab would never reach the dashboard.
-                if matches!(
-                    self.step,
-                    ConnectFlowStep::CheckingDuress {
-                        status: DuressGateStatus::Checking
-                    }
-                ) {
-                    return iced::Task::none();
-                }
-                // Clear any previous failure. Past the re-entry guards above,
-                // this path always either starts a refresh or falls back to the
-                // login form, and both make the old card stale: this is also
-                // the "Try again" button, so leaving it up while the retry runs
-                // makes a working retry look like a no-op — and leaving it up
-                // on the no-session fallback strands it on screen with nothing
-                // left to retry.
-                self.error = None;
-                // A code stashed during an abandoned signup must not ride into
-                // a restored or next session — it belongs to that signup only.
-                // Clearing here (and in SubmitLogin) confines redemption to the
-                // uninterrupted signup → verify → SessionLoaded path.
-                self.pending_campaign_code = None;
-                if let Some(session) = self.load_session_from_keyring() {
-                    let refresh_token = session.login.refresh_token.clone();
-                    // Transition out of CheckingSession so re-navigation
-                    // won't re-trigger Init while the refresh is in flight.
-                    self.step = ConnectFlowStep::Login {
-                        email: String::new(),
-                        loading: true,
-                    };
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::RefreshSession { refresh_token },
-                    )));
-                }
-                // No session stored - show Login form.
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
+            message @ (ConnectAccountMessage::Init
+            | ConnectAccountMessage::AdmittedUserLoaded { .. }
+            | ConnectAccountMessage::RefreshSession { .. }
+            | ConnectAccountMessage::RefreshRejected { .. }
+            | ConnectAccountMessage::RefreshUnreachable { .. }
+            | ConnectAccountMessage::RecheckSession
+            | ConnectAccountMessage::RefreshFailed(_)) => self.dispatch_session_refresh(message),
+            message @ (ConnectAccountMessage::SetSession(_, _)
+            | ConnectAccountMessage::OtpVerified(_, _, _)
+            | ConnectAccountMessage::OtpVerifyFailed(_, _, _)
+            | ConnectAccountMessage::TwoFactorRequired(_, _, _)
+            | ConnectAccountMessage::TwoFactorCodeChanged(_)
+            | ConnectAccountMessage::TwoFactorToggleBackup
+            | ConnectAccountMessage::TwoFactorToggleLost
+            | ConnectAccountMessage::VerifyTwoFactor
+            | ConnectAccountMessage::TwoFactorVerified(_, _, _)
+            | ConnectAccountMessage::TwoFactorFailed(_, _, _)
+            | ConnectAccountMessage::DismissBackupCodesNotice
+            | ConnectAccountMessage::TwoFactorSettings(_)) => {
+                self.dispatch_authentication_results(message)
             }
+            message @ (ConnectAccountMessage::RefreshedSession(_, _, _)
+            | ConnectAccountMessage::AuthCommitAccepted { .. }
+            | ConnectAccountMessage::AuthCommitRejected { .. }
+            | ConnectAccountMessage::SessionLoaded { .. }) => {
+                self.dispatch_authenticated_session(message)
+            }
+            message @ (ConnectAccountMessage::PlanLoaded(_, _)
+            | ConnectAccountMessage::PlanReloaded(_, _, _)
+            | ConnectAccountMessage::OverviewCountsLoaded { .. }
+            | ConnectAccountMessage::RefreshRecoveryServices
+            | ConnectAccountMessage::OpenRecoveryService(_)
+            | ConnectAccountMessage::ReviewSignOut(_)
+            | ConnectAccountMessage::LogOut) => self.dispatch_account_overview(message),
+            message @ (ConnectAccountMessage::EmailChanged(_)
+            | ConnectAccountMessage::SubmitLogin
+            | ConnectAccountMessage::SubmitRegistration
+            | ConnectAccountMessage::CreateAccount
+            | ConnectAccountMessage::OtpRequested { .. }
+            | ConnectAccountMessage::OtpChanged(_)
+            | ConnectAccountMessage::BackToEmail
+            | ConnectAccountMessage::OtpCooldownTick(_)
+            | ConnectAccountMessage::ResendOtp
+            | ConnectAccountMessage::OtpResent(_)
+            | ConnectAccountMessage::OtpResendFailed(_, _)
+            | ConnectAccountMessage::VerifyOtp
+            | ConnectAccountMessage::EmailNotVerified { .. }) => self.dispatch_login_form(message),
+            message @ (ConnectAccountMessage::VerifiedDevicesLoaded(_, _)
+            | ConnectAccountMessage::LoginActivityLoaded(_, _)
+            | ConnectAccountMessage::ReviewVerifiedDeviceRemoval(_)
+            | ConnectAccountMessage::DeleteVerifiedDevice(_)
+            | ConnectAccountMessage::VerifiedDeviceDeleted(_, _, _)
+            | ConnectAccountMessage::CopyToClipboard(_)
+            | ConnectAccountMessage::FeaturesLoaded(_, _)
+            | ConnectAccountMessage::FocusAction(_)) => self.dispatch_security_panel(message),
+            message @ (ConnectAccountMessage::BillingCycleSelected(_)
+            | ConnectAccountMessage::SelectPlanTier(_)
+            | ConnectAccountMessage::ReviewPlanChange(_)
+            | ConnectAccountMessage::StartCheckout(_)
+            | ConnectAccountMessage::CheckoutCreated(_, _, _)
+            | ConnectAccountMessage::PollChargeStatus(_)
+            | ConnectAccountMessage::ChargeStatusUpdated(_, _, _)) => {
+                self.dispatch_lightning_checkout(message)
+            }
+            message @ (ConnectAccountMessage::SetReviewCycle(_)
+            | ConnectAccountMessage::SelectPayWith(_)
+            | ConnectAccountMessage::StartCardCheckout
+            | ConnectAccountMessage::CardCheckoutCreated(_, _, _)
+            | ConnectAccountMessage::PollCardPlan(_)
+            | ConnectAccountMessage::CardPlanPolled(_, _, _, _)
+            | ConnectAccountMessage::ReopenCardPage
+            | ConnectAccountMessage::BackToReview { .. }) => self.dispatch_card_checkout(message),
+            message @ (ConnectAccountMessage::ChangePreviewLoaded(_, _, _)
+            | ConnectAccountMessage::ConfirmPlanChange
+            | ConnectAccountMessage::PlanChangeApplied(_, _, _)
+            | ConnectAccountMessage::RetryPlanRefresh
+            | ConnectAccountMessage::ShowAutoRenewOff(_)
+            | ConnectAccountMessage::SetAutoRenew(_)
+            | ConnectAccountMessage::OpenCardPortal
+            | ConnectAccountMessage::KeepCurrentPlan
+            | ConnectAccountMessage::CardRequestDone(_, _)) => {
+                self.dispatch_plan_management(message)
+            }
+            message @ (ConnectAccountMessage::SelectPaymentNetwork(_)
+            | ConnectAccountMessage::ShowInvoiceHere
+            | ConnectAccountMessage::ResumeChargePolling
+            | ConnectAccountMessage::DismissCheckout
+            | ConnectAccountMessage::OpenCheckoutUrl(_)
+            | ConnectAccountMessage::DismissRenewalBanner
+            | ConnectAccountMessage::OpenPlanBilling
+            | ConnectAccountMessage::ComparePlans(_)
+            | ConnectAccountMessage::ShowCampaignRedeem(_)
+            | ConnectAccountMessage::RenewCurrentPlan
+            | ConnectAccountMessage::ToggleBillingHistory
+            | ConnectAccountMessage::Contacts(_)) => self.dispatch_billing_view(message),
+            message @ (ConnectAccountMessage::Error(_)
+            | ConnectAccountMessage::BillingHistoryLoaded(_, _)
+            | ConnectAccountMessage::UserProfileLoaded(_, _)
+            | ConnectAccountMessage::UserProfileFailed(_, _)
+            | ConnectAccountMessage::SecurityDataFailed(_, _)
+            | ConnectAccountMessage::Retry(_)) => self.dispatch_account_results(message),
+            message @ (ConnectAccountMessage::CampaignCodeChanged(_)
+            | ConnectAccountMessage::RegisterCampaignCodeChanged(_)
+            | ConnectAccountMessage::RedeemCampaignCode
+            | ConnectAccountMessage::CampaignRedeemed(_, _)) => self.dispatch_campaign(message),
+            message @ (ConnectAccountMessage::DuressStateChecked(_, _, _)
+            | ConnectAccountMessage::RetryDuressCheck
+            | ConnectAccountMessage::DuressDeviceRegistered) => {
+                self.dispatch_sign_in_duress(message)
+            }
+            ConnectAccountMessage::Duress(m) => self.update_duress(m),
+            ConnectAccountMessage::DuressContacts(m) => self.update_duress_contacts(m),
+            ConnectAccountMessage::DeleteAccount(m) => self.update_delete_account(m),
+        }
+    }
+
+    fn dispatch_session_refresh(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
+            ConnectAccountMessage::Init => return self.init_connect_account(),
 
             ConnectAccountMessage::AdmittedUserLoaded {
                 user,
                 generation,
                 epoch,
-            } => {
-                if !self.admitted_client
-                    || generation != self.session_generation
-                    || self.stale_completion(epoch, "AdmittedUserLoaded")
-                {
-                    return iced::Task::none();
-                }
-                self.admitted_user_loading = false;
-                match user {
-                    Ok(user) => {
-                        return self.dispatch_message(ConnectAccountMessage::SessionLoaded {
-                            user,
-                            plan: None,
-                            epoch,
-                        })
-                    }
-                    Err((error, auth_error)) => {
-                        if auth_error {
-                            let logout = self.update_message(ConnectAccountMessage::LogOut);
-                            return iced::Task::batch([
-                                iced::Task::done(Message::ConnectSignedOutBy(
-                                    crate::app::SignedOutBy::SessionEnded,
-                                )),
-                                logout,
-                            ]);
-                        }
-                        self.error = Some(PanelError::retryable(error, RetryAction::Session));
-                    }
-                }
-            }
+            } => return self.apply_admitted_user(user, generation, epoch),
 
             ConnectAccountMessage::RefreshSession { refresh_token } => {
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                let previous_refresh_token = refresh_token.clone();
-                return iced::Task::perform(
-                    async move { client.refresh_login(&refresh_token).await },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::RefreshedSession(
-                                login,
-                                epoch,
-                                previous_refresh_token,
-                            ),
-                        )),
-                        Err(e) => {
-                            if e.is_auth_error() {
-                                // Whether this logs out is decided against the
-                                // epoch current when it arrives, not here.
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshRejected { epoch },
-                                ))
-                            } else if let Some(trouble) = refresh_trouble(&e) {
-                                log::warn!("[CONNECT] Session refresh didn't reach Connect: {}", e);
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshUnreachable { trouble, epoch },
-                                ))
-                            } else {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::RefreshFailed((&e).into()),
-                                ))
-                            }
-                        }
-                    },
-                );
+                return self.refresh_connect_session(refresh_token)
             }
 
             ConnectAccountMessage::RefreshRejected { epoch } => {
-                if self.stale_completion(epoch, "a refresh's authentication failure") {
-                    return iced::Task::none();
-                }
-                // A current refresh was refused: the session is gone. Dispatched
-                // as the message it always was, so the GUI broadcasts it, after
-                // the notice that Connect ended it.
-                return iced::Task::batch([
-                    iced::Task::done(Message::ConnectSignedOutBy(
-                        crate::app::SignedOutBy::SessionEnded,
-                    )),
-                    iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::LogOut,
-                    ))),
-                ]);
+                return self.apply_refresh_rejection(epoch)
             }
 
             ConnectAccountMessage::RefreshUnreachable { trouble, epoch } => {
-                if self.stale_completion(epoch, "a refresh that didn't reach Connect") {
-                    return iced::Task::none();
-                }
-                // Keep the stored session (L1): leave the sign-in form idle,
-                // remember whose session it is, and check it again later.
-                let Some(email) = self
-                    .load_session_from_keyring()
-                    .map(|session| session.login.user.email)
-                else {
-                    self.step = ConnectFlowStep::Login {
-                        email: String::new(),
-                        loading: false,
-                    };
-                    return iced::Task::none();
-                };
-                let attempts = self.unverified.as_ref().map_or(0, |u| u.attempts) + 1;
-                let unverified = UnverifiedSession {
-                    email,
-                    trouble,
-                    attempts,
-                };
-                // The Launcher's and the Cube's subscriptions send
-                // `RecheckSession` after `backoff()`, only while mounted.
-                self.unverified = Some(unverified);
-                self.error = None;
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
+                return self.apply_unreachable_refresh(trouble, epoch)
             }
 
             ConnectAccountMessage::RecheckSession => {
@@ -2456,112 +2395,38 @@ impl ConnectAccountPanel {
                     loading: false,
                 };
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_authentication_results(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SetSession(login, epoch) => {
-                if self.stale_completion(epoch, "SetSession") {
-                    return iced::Task::none();
-                }
-                let session = StoredSession { login };
-                return self.post_login_tasks(session, epoch, true);
+                return self.apply_set_session(login, epoch)
             }
 
             ConnectAccountMessage::OtpVerified(login, epoch, attempt) => {
-                if self.stale_completion(epoch, "OtpVerified")
-                    || attempt != self.otp_attempt_generation
-                    || !matches!(
-                        self.step,
-                        ConnectFlowStep::OtpVerification { sending: true, .. }
-                    )
-                {
-                    return iced::Task::none();
-                }
-                if self.defer_auth_cache_commit {
-                    if self.auth_commit_pending {
-                        return iced::Task::none();
-                    }
-                    self.auth_commit_pending = true;
-                    return iced::Task::done(Message::InAppConnectAuthReady {
-                        login,
-                        epoch,
-                        previous_refresh_token: None,
-                    });
-                }
-                return self.post_login_tasks(StoredSession { login }, epoch, true);
+                return self.apply_verified_otp(login, epoch, attempt)
             }
 
             ConnectAccountMessage::OtpVerifyFailed(error, epoch, attempt) => {
-                if self.stale_completion(epoch, "OtpVerifyFailed")
-                    || attempt != self.otp_attempt_generation
-                    || !matches!(self.step, ConnectFlowStep::OtpVerification { .. })
-                {
-                    return iced::Task::none();
-                }
-                return self.update_message(ConnectAccountMessage::Error(error));
+                return self.apply_failed_otp(error, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt) => {
-                if self.stale_completion(epoch, "TwoFactorRequired")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    sending: true,
-                    ..
-                } = &self.step
-                else {
-                    return iced::Task::none();
-                };
-                // Only `login_verify_otp` can raise this, so it is never a sign-up.
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                self.error = None;
-                self.signing_in_with_authenticator = true;
-                self.step = ConnectFlowStep::TwoFactor {
-                    email: email.clone(),
-                    challenge,
-                    code: view::SecretInput::default(),
-                    backup: false,
-                    sending: false,
-                    failure: None,
-                    lost_open: false,
-                };
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+                return self.begin_two_factor_challenge(challenge, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorCodeChanged(input) => {
-                if let ConnectFlowStep::TwoFactor {
-                    code,
-                    backup,
-                    sending: false,
-                    failure,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    code.0 = filter_second_factor_input(&input.0, *backup);
-                    if *failure == Some(TwoFactorStepFailure::Wrong) {
-                        *failure = None;
-                    }
-                }
+                return self.edit_two_factor_challenge_code(input)
             }
 
             ConnectAccountMessage::TwoFactorToggleBackup => {
-                if let ConnectFlowStep::TwoFactor {
-                    code,
-                    backup,
-                    sending: false,
-                    failure,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    *backup = !*backup;
-                    if *failure == Some(TwoFactorStepFailure::Wrong) {
-                        *failure = None;
-                    }
-                    return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
-                }
+                return self.toggle_two_factor_challenge_backup()
             }
 
             ConnectAccountMessage::TwoFactorToggleLost => {
@@ -2570,126 +2435,14 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::VerifyTwoFactor => {
-                let ConnectFlowStep::TwoFactor {
-                    challenge,
-                    code,
-                    backup,
-                    sending,
-                    failure,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *sending
-                    || *failure == Some(TwoFactorStepFailure::Expired)
-                    || !second_factor_code_complete(&code.0, *backup)
-                {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                *failure = None;
-                self.error = None;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                let challenge = challenge.clone();
-                let typed = zeroize::Zeroizing::new(code.0.clone());
-                let backup = *backup;
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                return iced::Task::perform(
-                    async move {
-                        let code = if backup {
-                            SecondFactorCode::Backup(&typed)
-                        } else {
-                            SecondFactorCode::App(&typed)
-                        };
-                        client.login_verify_2fa(&challenge, code).await
-                    },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorVerified(login, epoch, attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorFailed(
-                                CodeFailure::classify(&e),
-                                epoch,
-                                attempt,
-                            ),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::VerifyTwoFactor => return self.verify_two_factor_challenge(),
 
-            ConnectAccountMessage::TwoFactorVerified(
-                TwoFactorLogin {
-                    login,
-                    backup_codes_remaining,
-                },
-                epoch,
-                attempt,
-            ) => {
-                if self.stale_completion(epoch, "TwoFactorVerified")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::TwoFactor {
-                    code,
-                    sending: true,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                zeroize::Zeroize::zeroize(&mut code.0);
-                self.backup_codes_notice = backup_codes_remaining;
-                if self.defer_auth_cache_commit {
-                    if self.auth_commit_pending {
-                        return iced::Task::none();
-                    }
-                    self.auth_commit_pending = true;
-                    return iced::Task::done(Message::InAppConnectAuthReady {
-                        login,
-                        epoch,
-                        previous_refresh_token: None,
-                    });
-                }
-                return self.post_login_tasks(StoredSession { login }, epoch, true);
+            ConnectAccountMessage::TwoFactorVerified(response, epoch, attempt) => {
+                return self.apply_verified_two_factor(response, epoch, attempt)
             }
 
             ConnectAccountMessage::TwoFactorFailed(why, epoch, attempt) => {
-                if self.stale_completion(epoch, "TwoFactorFailed")
-                    || attempt != self.otp_attempt_generation
-                {
-                    return iced::Task::none();
-                }
-                let ConnectFlowStep::TwoFactor {
-                    code,
-                    sending,
-                    failure,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                *sending = false;
-                match why {
-                    CodeFailure::Wrong => {
-                        zeroize::Zeroize::zeroize(&mut code.0);
-                        *failure = Some(TwoFactorStepFailure::Wrong);
-                    }
-                    CodeFailure::Limited => *failure = Some(TwoFactorStepFailure::Limited),
-                    CodeFailure::Expired => {
-                        zeroize::Zeroize::zeroize(&mut code.0);
-                        *failure = Some(TwoFactorStepFailure::Expired);
-                    }
-                    CodeFailure::Other(error) => {
-                        return self.update_message(ConnectAccountMessage::Error(error));
-                    }
-                }
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+                return self.apply_failed_two_factor(why, epoch, attempt)
             }
 
             ConnectAccountMessage::DismissBackupCodesNotice => {
@@ -2699,7 +2452,16 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::TwoFactorSettings(msg) => {
                 return self.update_two_factor(msg);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_authenticated_session(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::RefreshedSession(login, epoch, previous_refresh_token) => {
                 if self.stale_completion(epoch, "RefreshedSession") {
                     return iced::Task::none();
@@ -2734,27 +2496,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::AuthCommitRejected { epoch } => {
-                if self.stale_completion(epoch, "AuthCommitRejected") {
-                    return iced::Task::none();
-                }
-                if !self.auth_commit_pending {
-                    return iced::Task::none();
-                }
-                self.auth_commit_pending = false;
-                self.signing_in_with_authenticator = false;
-                self.error = Some(PanelError::retryable(
-                    UserError::new(
-                        "Connect session changed",
-                        "Sign in again to use the current account.",
-                        crate::user_error::CC_API_BADRESP,
-                        true,
-                    ),
-                    RetryAction::Session,
-                ));
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
+                return self.apply_rejected_auth_commit(epoch)
             }
 
             // A completion of an operation begun before the last invalidation
@@ -2762,66 +2504,15 @@ impl ConnectAccountPanel {
             // hold); a current one is handled the same whichever operation
             // produced it.
             ConnectAccountMessage::SessionLoaded { user, plan, epoch } => {
-                if self.stale_completion(epoch, "SessionLoaded") {
-                    return iced::Task::none();
-                }
-                self.session_generation += 1;
-                // Another account's session: nothing about this account's
-                // authenticator carries over.
-                if self.user.as_ref().is_some_and(|u| u.id != user.id) {
-                    self.two_factor.reset();
-                    self.delete_account.reset();
-                    self.backup_codes_notice = None;
-                }
-                self.user = Some(user);
-                self.plan = plan;
-                // Phase 6: gate on the duress check FIRST — don't reveal the
-                // dashboard until we've confirmed the account isn't in duress.
-                self.step = ConnectFlowStep::CheckingDuress {
-                    status: DuressGateStatus::Checking,
-                };
-                self.error = None;
-                // Fetch features + gate on duress in background (non-blocking).
-                let gen = self.session_generation;
-                let c2 = self.client.clone();
-                let c3 = self.client.clone();
-                let mut tasks = vec![
-                    iced::Task::perform(
-                        async move { (c2.get_connect_features().await.ok(), gen) },
-                        |(features, g)| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::FeaturesLoaded(features, g),
-                            ))
-                        },
-                    ),
-                    // Phase 6: gate on duress state. If the account is in
-                    // duress, the recovery flow replaces the dashboard. A
-                    // failed check retries (see the handler) so a transient
-                    // error doesn't leave a duress account on the dashboard.
-                    duress_state_check_task(c3, gen, 0),
-                ];
-                // Redeem an account-creation promo/referral code now that the
-                // session is authenticated. Best-effort: a bad code never
-                // blocks sign-in — the outcome surfaces in Settings → Plan.
-                if let Some(code) = self.pending_campaign_code.take() {
-                    // Defer the plan fetch to the redeem (which fetches on
-                    // either outcome). Firing get_connect_plan here *and* again
-                    // after redemption races two PlanLoaded responses at the
-                    // same generation, and a slow pre-redeem fetch could
-                    // overwrite the granted tier/provenance.
-                    self.campaign_redeem.submitting = true;
-                    // Surface the code in the Settings → Plan field so that, if
-                    // the redeem fails, the error reads against the code and
-                    // the user can edit/retry without retyping. Cleared on
-                    // success by `CampaignRedeemed`.
-                    self.campaign_redeem.code = code.clone();
-                    tasks.push(self.redeem_campaign_task(code));
-                } else {
-                    tasks.push(self.plan_fetch_task());
-                }
-                return iced::Task::batch(tasks);
+                return self.apply_loaded_connect_session(user, plan, epoch)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_account_overview(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::PlanLoaded(plan, gen) => {
                 if gen == self.session_generation && plan.is_some() {
                     self.apply_loaded_plan(plan);
@@ -2829,30 +2520,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::PlanReloaded(plan, gen, seq) => {
-                // An unconfirmed change shows whether its refresh landed.
-                if gen == self.session_generation {
-                    if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
-                        self.checkout.as_mut().map(|cs| &mut cs.phase)
-                    {
-                        if let PlanRefresh::Pending(waiting) = *refresh {
-                            if seq >= waiting {
-                                *refresh = if plan.is_some() {
-                                    PlanRefresh::Updated
-                                } else {
-                                    PlanRefresh::Failed
-                                };
-                            }
-                        }
-                    }
-                }
-                // A response applies only if it is newer than the last one
-                // applied: one sent before a payment never lands over one
-                // sent after it, and a failed newer fetch doesn't throw away
-                // an older good answer.
-                if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
-                    self.applied_plan_seq = seq;
-                    self.apply_loaded_plan(plan);
-                }
+                return self.apply_connect_plan_reload(plan, gen, seq)
             }
 
             ConnectAccountMessage::OverviewCountsLoaded {
@@ -2862,23 +2530,13 @@ impl ConnectAccountPanel {
                 generation,
                 request_seq,
             } => {
-                if generation == self.session_generation && request_seq == self.overview_seq {
-                    // Only overwrite a field when its fetch succeeded, so a
-                    // partial failure doesn't blank out a previously-loaded
-                    // count.
-                    if contacts.is_some() {
-                        self.overview_contact_count = contacts;
-                    }
-                    if cubes.is_some() {
-                        self.overview_cube_count = cubes;
-                    }
-                    self.recovery_services = match recovery {
-                        Ok(cubes) => RecoveryServicesState::Ready(
-                            cubes.into_iter().map(RecoveryServiceRow::from).collect(),
-                        ),
-                        Err(error) => RecoveryServicesState::Failed(error),
-                    };
-                }
+                return self.apply_account_overview_counts(
+                    contacts,
+                    cubes,
+                    recovery,
+                    generation,
+                    request_seq,
+                )
             }
 
             ConnectAccountMessage::RefreshRecoveryServices => {
@@ -2894,22 +2552,14 @@ impl ConnectAccountPanel {
                 self.review_sign_out = show && self.user.is_some();
             }
 
-            ConnectAccountMessage::LogOut => {
-                let was_logged_in = self.user.is_some();
-                self.clear_session();
-                self.step = ConnectFlowStep::Login {
-                    email: String::new(),
-                    loading: false,
-                };
-                // Only notify BuySell if this logout originated here (not
-                // forwarded back from BuySell) to avoid a redundant cycle.
-                if was_logged_in {
-                    return iced::Task::done(Message::View(view::Message::BuySell(
-                        view::BuySellMessage::LogOut,
-                    )));
-                }
-            }
+            ConnectAccountMessage::LogOut => return self.log_out_connect_account(),
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_login_form(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::EmailChanged(email) => match &mut self.step {
                 ConnectFlowStep::Login { email: e, loading }
                 | ConnectFlowStep::Register { email: e, loading } => {
@@ -2919,91 +2569,9 @@ impl ConnectAccountPanel {
                 _ => {}
             },
 
-            ConnectAccountMessage::SubmitLogin => {
-                self.error = None;
-                // A login must never redeem a code stashed for a (different)
-                // new account during an abandoned signup. See `Init`.
-                self.pending_campaign_code = None;
+            ConnectAccountMessage::SubmitLogin => return self.submit_connect_login(),
 
-                let ConnectFlowStep::Login { email, loading } = &mut self.step else {
-                    return iced::Task::none();
-                };
-                *loading = true;
-                let email_val = email.clone();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        let result = client
-                            .login_send_otp(OtpRequest {
-                                email: email_val.clone(),
-                            })
-                            .await;
-                        (email_val, result)
-                    },
-                    |(email, res)| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpRequested {
-                                email,
-                                is_signup: false,
-                            },
-                        )),
-                        Err(e) => {
-                            let is_unverified = matches!(
-                                &e,
-                                crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                    if info.status_code == 401
-                                        && info.text.contains("Email not verified")
-                            );
-                            if is_unverified {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::EmailNotVerified { email },
-                                ))
-                            } else {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Error((&e).into()),
-                                ))
-                            }
-                        }
-                    },
-                );
-            }
-
-            ConnectAccountMessage::SubmitRegistration => {
-                // Stash any account-creation promo/referral code now; it's
-                // redeemed once the new session authenticates (the redeem
-                // endpoint requires a token). Empty → nothing to redeem.
-                self.pending_campaign_code = {
-                    let trimmed = self.register_campaign_code.trim();
-                    (!trimmed.is_empty()).then(|| trimmed.to_string())
-                };
-                let ConnectFlowStep::Register { email, loading } = &mut self.step else {
-                    return iced::Task::none();
-                };
-                *loading = true;
-                let email_val = email.clone();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .signup_send_otp(OtpRequest {
-                                email: email_val.clone(),
-                            })
-                            .await
-                            .map(|()| email_val)
-                    },
-                    |res| match res {
-                        Ok(email) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpRequested {
-                                email,
-                                is_signup: true,
-                            },
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error((&e).into()),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::SubmitRegistration => return self.submit_connect_registration(),
 
             ConnectAccountMessage::CreateAccount => {
                 self.step = ConnectFlowStep::Register {
@@ -3013,21 +2581,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OtpRequested { email, is_signup } => {
-                self.error = None;
-                self.signing_in_with_authenticator = false;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-
-                self.step = ConnectFlowStep::OtpVerification {
-                    email,
-                    otp: String::new(),
-                    sending: false,
-                    is_signup,
-                    cooldown: 60,
-                };
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::OtpCooldownTick(attempt),
-                )));
+                return self.apply_requested_otp(email, is_signup)
             }
 
             ConnectAccountMessage::OtpChanged(otp) => {
@@ -3036,123 +2590,15 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::BackToEmail => {
-                // "Start over" from the authenticator step: its challenge
-                // can't be reused, so a new email code is needed.
-                if let ConnectFlowStep::TwoFactor {
-                    email,
-                    code,
-                    sending: false,
-                    ..
-                } = &mut self.step
-                {
-                    zeroize::Zeroize::zeroize(&mut code.0);
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    self.signing_in_with_authenticator = false;
-                    self.step = ConnectFlowStep::Login {
-                        email: std::mem::take(email),
-                        loading: false,
-                    };
-                    self.error = None;
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification {
-                    email, is_signup, ..
-                } = &self.step
-                {
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    self.step = if *is_signup {
-                        ConnectFlowStep::Register {
-                            email: email.clone(),
-                            loading: false,
-                        }
-                    } else {
-                        ConnectFlowStep::Login {
-                            email: email.clone(),
-                            loading: false,
-                        }
-                    };
-                    self.error = None;
-                }
-            }
+            ConnectAccountMessage::BackToEmail => return self.return_to_connect_email(),
 
             ConnectAccountMessage::OtpCooldownTick(attempt) => {
-                if attempt != self.otp_attempt_generation {
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification { cooldown, .. } = &mut self.step {
-                    if *cooldown > 0 {
-                        *cooldown -= 1;
-                        return iced::Task::perform(
-                            async { tokio::time::sleep(std::time::Duration::from_secs(1)).await },
-                            move |_| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::OtpCooldownTick(attempt),
-                                ))
-                            },
-                        );
-                    }
-                }
+                return self.tick_otp_cooldown(attempt)
             }
 
-            ConnectAccountMessage::ResendOtp => {
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    sending,
-                    is_signup,
-                    cooldown,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *cooldown > 0 || *sending {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                let attempt = self.otp_attempt_generation;
-                let email_val = email.clone();
-                let is_signup = *is_signup;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        if is_signup {
-                            client.resend_signup_otp(&email_val).await
-                        } else {
-                            client.login_send_otp(OtpRequest { email: email_val }).await
-                        }
-                    },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResent(attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::ResendOtp => return self.resend_connect_otp(),
 
-            ConnectAccountMessage::OtpResent(attempt) => {
-                if attempt != self.otp_attempt_generation {
-                    return iced::Task::none();
-                }
-                if let ConnectFlowStep::OtpVerification {
-                    otp,
-                    sending,
-                    cooldown,
-                    ..
-                } = &mut self.step
-                {
-                    *otp = String::new();
-                    *sending = false;
-                    *cooldown = 60;
-                    self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                        ConnectAccountMessage::OtpCooldownTick(self.otp_attempt_generation),
-                    )));
-                }
-            }
+            ConnectAccountMessage::OtpResent(attempt) => return self.apply_resent_otp(attempt),
 
             ConnectAccountMessage::OtpResendFailed(error, attempt) => {
                 if attempt == self.otp_attempt_generation
@@ -3162,78 +2608,18 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ConnectAccountMessage::VerifyOtp => {
-                let ConnectFlowStep::OtpVerification {
-                    email,
-                    otp,
-                    sending,
-                    is_signup,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *sending {
-                    return iced::Task::none();
-                }
-                *sending = true;
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                let req = OtpVerifyRequest {
-                    email: email.clone(),
-                    otp: otp.clone(),
-                };
-                let is_signup = *is_signup;
-                let client = self.client.clone();
-                let epoch = self.auth_epoch;
-                return iced::Task::perform(
-                    async move {
-                        if is_signup {
-                            client.signup_verify_otp(req).await
-                        } else {
-                            client.login_verify_otp(req).await
-                        }
-                    },
-                    move |res| match res {
-                        Ok(login) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpVerified(login, epoch, attempt),
-                        )),
-                        Err(crate::services::coincube::CoincubeError::SecondFactorRequired(
-                            challenge,
-                        )) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpVerifyFailed((&e).into(), epoch, attempt),
-                        )),
-                    },
-                );
-            }
+            ConnectAccountMessage::VerifyOtp => return self.verify_connect_otp(),
 
             ConnectAccountMessage::EmailNotVerified { email } => {
-                self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
-                let attempt = self.otp_attempt_generation;
-                self.step = ConnectFlowStep::OtpVerification {
-                    email: email.clone(),
-                    otp: String::new(),
-                    sending: true,
-                    is_signup: true,
-                    cooldown: 0,
-                };
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.resend_signup_otp(&email).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResent(attempt),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
-                        )),
-                    },
-                );
+                return self.apply_unverified_connect_email(email)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_security_panel(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::VerifiedDevicesLoaded(devices, gen) => {
                 if gen == self.session_generation && matches!(self.step, ConnectFlowStep::Dashboard)
                 {
@@ -3257,55 +2643,11 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::DeleteVerifiedDevice(id) => {
-                if self.review_device_removal != Some(id) {
-                    return iced::Task::none();
-                }
-                self.review_device_removal = None;
-                self.verified_devices_state.deleting_ids.insert(id);
-
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                let id_for_result = id;
-
-                return iced::Task::perform(
-                    async move { client.delete_verified_device(id).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::VerifiedDeviceDeleted(
-                                id_for_result,
-                                gen,
-                                res.map_err(|e| e.to_string()),
-                            ),
-                        ))
-                    },
-                );
+                return self.remove_verified_connect_device(id)
             }
 
             ConnectAccountMessage::VerifiedDeviceDeleted(id, gen, result) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-
-                self.verified_devices_state.deleting_ids.remove(&id);
-
-                match result {
-                    Ok(()) => {
-                        if let Some(devices) = self.verified_devices.as_mut() {
-                            devices.retain(|d| d.id != id);
-                        }
-                    }
-                    Err(err) => {
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Error(UserError::logged(
-                                "Couldn't remove that device",
-                                "Try again. If it keeps failing, contact support and quote the reference below.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                err,
-                            )),
-                        )));
-                    }
-                }
+                return self.apply_verified_device_removal(id, gen, result)
             }
 
             ConnectAccountMessage::CopyToClipboard(text) => {
@@ -3323,7 +2665,16 @@ impl ConnectAccountPanel {
             ConnectAccountMessage::FocusAction(id) => {
                 return iced::widget::operation::focus(id);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_lightning_checkout(
+        &mut self,
+        message: ConnectAccountMessage,
+    ) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::BillingCycleSelected(cycle) => {
                 self.selected_billing_cycle = cycle;
             }
@@ -3333,477 +2684,47 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::ReviewPlanChange(tier) => {
-                // Review is the step before any invoice exists. It is only
-                // reachable while purchasing is open, like StartCheckout, so
-                // a stale message never shows a "Create invoice" the API
-                // would reject.
-                // Switching to Free buys nothing, so its Review is shown
-                // even while purchasing is closed.
-                if tier != PlanTier::Free && !self.purchasing_enabled() {
-                    log::warn!("[CONNECT] ReviewPlanChange ignored — purchasing disabled");
-                    return iced::Task::none();
-                }
-                // Never replace an invoice that is already out for payment.
-                if self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| !matches!(cs.phase, CheckoutPhase::Review))
-                {
-                    return iced::Task::none();
-                }
-                self.active_sub = ConnectSubMenu::PlanBilling;
-                self.show_billing_history = false;
-                self.show_plan_comparison = false;
-                // Back from Review lands on the same picked row.
-                self.selected_plan_tier = Some(tier.clone());
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                let card_change = self.card_change_route(&tier, self.selected_billing_cycle);
-                let mut checkout = CheckoutState::new(
-                    id,
-                    tier.clone(),
-                    self.selected_billing_cycle,
-                    self.plan.clone(),
-                );
-                if card_change {
-                    // A card that renews by itself changes plan through the
-                    // card (bitcoin is refused then, decision 15): fetch
-                    // Stripe's preview first.
-                    checkout.phase = CheckoutPhase::ChangePreviewing;
-                    checkout.pay_with = PayWith::Card;
-                    self.checkout = Some(checkout);
-                    let gen = self.session_generation;
-                    let client = self.client.clone();
-                    let req = PlanChangeRequest {
-                        plan: tier,
-                        billing_cycle: self.selected_billing_cycle,
-                        proration_date: None,
-                    };
-                    return iced::Task::perform(
-                        async move { client.preview_plan_change(req).await.map_err(refusal) },
-                        move |result| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::ChangePreviewLoaded(result, gen, id),
-                            ))
-                        },
-                    );
-                }
-                self.checkout = Some(checkout);
+                return self.review_connect_plan_change(tier)
             }
 
             ConnectAccountMessage::StartCheckout(tier) => {
-                // Defense-in-depth (PLAN-estate-promo PR2): the picker hides
-                // upgrade CTAs and the renewal banner is suppressed while
-                // purchasing is disabled, but this is the single chokepoint
-                // every checkout flows through — never open one the API would
-                // reject even if a stale message slips through.
-                if !self.purchasing_enabled() {
-                    log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
-                    return iced::Task::none();
-                }
-                // Never replace an invoice that is out for payment (a double
-                // press, or a stale message): only Review, Expired and Failed
-                // may start a new one.
-                if self.checkout.as_ref().is_some_and(|cs| {
-                    !matches!(
-                        cs.phase,
-                        CheckoutPhase::Review
-                            | CheckoutPhase::Expired
-                            | CheckoutPhase::Failed { .. }
-                    )
-                }) {
-                    log::warn!("[CONNECT] StartCheckout ignored — an invoice is in progress");
-                    return iced::Task::none();
-                }
-                // The cycle reviewed for this tier wins over the picker's
-                // current toggle, so a retry after expiry re-issues the same
-                // plan the user confirmed.
-                let cycle = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .map(|cs| cs.cycle)
-                    .unwrap_or(self.selected_billing_cycle);
-                // A new generation: anything still in flight for the
-                // previous invoice (an expired one, a failed create) is
-                // dropped when it lands.
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                // Keep the plan snapshot taken when Review opened.
-                let snapshot = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .and_then(|cs| cs.plan.clone())
-                    .or_else(|| self.plan.clone());
-                let opened_at = self
-                    .checkout
-                    .as_ref()
-                    .filter(|cs| cs.tier == tier)
-                    .map(|cs| cs.opened_at);
-                let mut checkout = CheckoutState::new(id, tier.clone(), cycle, snapshot);
-                if let Some(opened_at) = opened_at {
-                    checkout.opened_at = opened_at;
-                }
-                checkout.phase = CheckoutPhase::Creating;
-                self.checkout = Some(checkout);
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                let req = CheckoutRequest {
-                    plan: tier,
-                    billing_cycle: cycle,
-                };
-                return iced::Task::perform(
-                    async move {
-                        client.create_checkout(req).await.map_err(|e| {
-                            use crate::services::coincube::CoincubeError;
-                            let refused = matches!(
-                                &e,
-                                CoincubeError::Unsuccessful(info)
-                                    if (400..500).contains(&info.status_code)
-                                        && info.status_code != 401
-                                        && info.status_code != 408
-                                        && info.status_code != 429
-                            );
-                            (e.to_string(), refused)
-                        })
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CheckoutCreated(result, gen, id),
-                        ))
-                    },
-                );
+                return self.start_lightning_checkout(tier)
             }
 
             ConnectAccountMessage::CheckoutCreated(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(resp) => {
-                        let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
-                        let onchain =
-                            qr_code::Data::new(bip21_uri(&resp.on_chain_address, resp.amount_sats))
-                                .ok();
-                        let cs = self.checkout.as_mut().expect("checked above");
-                        cs.phase = CheckoutPhase::AwaitingPayment;
-                        cs.checkout = Some(resp);
-                        cs.lightning_qr = qr;
-                        cs.onchain_qr = onchain;
-                        cs.poll_errors = 0;
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PollChargeStatus(id),
-                        )));
-                    }
-                    Err((message, refused)) => {
-                        if let Some(cs) = &mut self.checkout {
-                            cs.phase = CheckoutPhase::Failed { message, refused };
-                        }
-                    }
-                }
+                return self.apply_lightning_checkout(result, gen, id)
             }
 
-            ConnectAccountMessage::PollChargeStatus(id) => {
-                let should_poll = self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| cs.id == id && cs.phase.polls());
-                if !should_poll {
-                    return iced::Task::none();
-                }
-                let charge_id = self
-                    .checkout
-                    .as_ref()
-                    .and_then(|cs| cs.checkout.as_ref())
-                    .map(|c| c.charge_id.clone())
-                    .unwrap_or_default();
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        client.get_charge_status(&charge_id).await.map_err(|e| {
-                            use crate::services::coincube::CoincubeError;
-                            match &e {
-                                // 4xx errors are terminal — don't retry
-                                CoincubeError::Unsuccessful(info)
-                                    if (400..500).contains(&info.status_code) =>
-                                {
-                                    (e.to_string(), true)
-                                }
-                                _ => (e.to_string(), false),
-                            }
-                        })
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::ChargeStatusUpdated(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::PollChargeStatus(id) => return self.poll_lightning_charge(id),
 
             ConnectAccountMessage::ChargeStatusUpdated(result, gen, id) => {
-                // Only the current checkout's poll chain may move it: a poll
-                // in flight from a dismissed or replaced invoice is dropped.
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::PollChargeStatus(id),
-                )));
-                let cs = self.checkout.as_mut().expect("checked above");
-                if !cs.phase.polls() {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(status) => {
-                        cs.poll_errors = 0;
-                        let (phase, keep_polling, paid) = next_checkout_phase(&cs.phase, &status);
-                        if let CheckoutPhase::PartlyPaid { due_sats, .. } = &phase {
-                            // Same address, the remaining amount.
-                            if let Some(resp) = cs.checkout.as_ref() {
-                                cs.onchain_qr = qr_code::Data::new(bip21_uri(
-                                    &resp.on_chain_address,
-                                    *due_sats,
-                                ))
-                                .ok();
-                            }
-                            cs.network = PaymentNetwork::OnChain;
-                        }
-                        cs.phase = phase;
-                        cs.last_status = Some(status);
-                        if paid {
-                            // Refresh the plan and the history the receipt
-                            // lands in.
-                            self.billing_history = None;
-                            return self.reload_plan_billing();
-                        }
-                        if keep_polling {
-                            return poll;
-                        }
-                    }
-                    Err((e, terminal)) => {
-                        if terminal {
-                            log::error!("[CONNECT] Charge poll terminal error: {}", e);
-                            cs.resume_phase = Some(cs.phase.clone());
-                            cs.phase = CheckoutPhase::PollFailed(e);
-                        } else {
-                            cs.poll_errors += 1;
-                            if cs.poll_errors >= 3 {
-                                log::error!(
-                                    "[CONNECT] Charge poll failed after {} retries: {}",
-                                    cs.poll_errors,
-                                    e
-                                );
-                                cs.resume_phase = Some(cs.phase.clone());
-                                cs.phase = CheckoutPhase::PollFailed(e);
-                            } else {
-                                log::warn!(
-                                    "[CONNECT] Charge poll error ({}/3): {}",
-                                    cs.poll_errors,
-                                    e
-                                );
-                                return poll;
-                            }
-                        }
-                    }
-                }
+                return self.apply_lightning_charge_status(result, gen, id)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_card_checkout(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SetReviewCycle(cycle) => {
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::Review)
-                {
-                    cs.cycle = cycle;
-                    self.selected_billing_cycle = cycle;
-                    // Monthly → annual on a card is a card upgrade even with
-                    // auto-renewal off: switch to the card change preview
-                    // instead of a bitcoin invoice the API would refuse.
-                    let tier = cs.tier.clone();
-                    if self.card_change_route(&tier, cycle) {
-                        return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::ReviewPlanChange(tier),
-                        )));
-                    }
-                }
+                return self.set_checkout_review_cycle(cycle)
             }
 
             ConnectAccountMessage::SelectPayWith(pay_with) => {
-                let card_ok = self.card_payments_enabled()
-                    && !self.plan.as_ref().is_some_and(|p| p.is_card());
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::Review)
-                {
-                    cs.pay_with = if pay_with == PayWith::Card && !card_ok {
-                        PayWith::Bitcoin
-                    } else {
-                        pay_with
-                    };
-                }
+                return self.set_checkout_payment_method(pay_with)
             }
 
-            ConnectAccountMessage::StartCardCheckout => {
-                if !self.purchasing_enabled() || !self.card_payments_enabled() {
-                    return iced::Task::none();
-                }
-                let Some(cs) = self.checkout.as_mut().filter(|cs| {
-                    matches!(
-                        cs.phase,
-                        CheckoutPhase::Review
-                            | CheckoutPhase::CardCancelled
-                            | CheckoutPhase::CardFailed { .. }
-                    ) && cs.tier != PlanTier::Free
-                }) else {
-                    return iced::Task::none();
-                };
-                self.checkout_seq += 1;
-                let id = self.checkout_seq;
-                cs.id = id;
-                cs.pay_with = PayWith::Card;
-                cs.phase = CheckoutPhase::CardOpening;
-                cs.card_session = None;
-                cs.browser_polls = 0;
-                cs.poll_errors = 0;
-                let req = PlanChangeRequest {
-                    plan: cs.tier.clone(),
-                    billing_cycle: cs.cycle,
-                    proration_date: None,
-                };
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.create_card_checkout(req).await.map_err(refusal) },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardCheckoutCreated(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::StartCardCheckout => return self.start_connect_card_checkout(),
 
             ConnectAccountMessage::CardCheckoutCreated(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::CardOpening {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(session) => {
-                        let url = session.url.clone();
-                        cs.card_session = Some(session);
-                        cs.phase = CheckoutPhase::CardInBrowser;
-                        // Card details are entered on Stripe's page only (I1).
-                        return iced::Task::batch([
-                            iced::Task::done(Message::View(view::Message::OpenUrl(url))),
-                            iced::Task::done(Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::PollCardPlan(id),
-                            ))),
-                        ]);
-                    }
-                    Err((message, refused)) => {
-                        cs.phase = CheckoutPhase::CardFailed { message, refused };
-                    }
-                }
+                return self.apply_card_checkout(result, gen, id)
             }
 
-            ConnectAccountMessage::PollCardPlan(id) => {
-                if !self
-                    .checkout
-                    .as_ref()
-                    .is_some_and(|cs| cs.id == id && cs.phase.polls_plan())
-                {
-                    return iced::Task::none();
-                }
-                let gen = self.session_generation;
-                // Sequenced when sent, like every other plan fetch, so it
-                // never outranks a reload sent after it.
-                self.plan_seq = self.plan_seq.wrapping_add(1);
-                let seq = self.plan_seq;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-                        client.get_connect_plan().await.map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::PollCardPlan(id) => return self.poll_connect_card_plan(id),
 
             ConnectAccountMessage::CardPlanPolled(result, gen, id, seq) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::PollCardPlan(id),
-                )));
-                let now = chrono::Utc::now();
-                let cs = self.checkout.as_mut().expect("checked above");
-                if !cs.phase.polls_plan() {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(plan) => {
-                        cs.poll_errors = 0;
-                        cs.browser_polls = cs.browser_polls.saturating_add(1);
-                        let next = next_card_phase(&cs.phase, cs, &plan, now);
-                        let done = next != cs.phase;
-                        cs.phase = next;
-                        if done && !cs.phase.polls_plan() {
-                            if matches!(
-                                cs.phase,
-                                CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
-                            ) {
-                                self.billing_history = None;
-                                let history = self.reload_billing_history();
-                                // Same ordering rule as `PlanReloaded`: a
-                                // newer answer already shown wins.
-                                if seq > self.applied_plan_seq {
-                                    self.applied_plan_seq = seq;
-                                    self.apply_loaded_plan(Some(plan));
-                                }
-                                // The poll waits before it reads, so a fetch
-                                // sent after it may have read the server
-                                // first, whichever response lands first.
-                                // Fetch once more so the screen settles on
-                                // the current plan.
-                                if self.plan_seq != seq {
-                                    let fresh = self.plan_fetch_task();
-                                    return iced::Task::batch([history, fresh]);
-                                }
-                                return history;
-                            }
-                            return iced::Task::none();
-                        }
-                        if cs.browser_polls >= MAX_BROWSER_POLLS {
-                            cs.phase = CheckoutPhase::PollFailed(
-                                "Still waiting after 30 minutes".to_string(),
-                            );
-                            return iced::Task::none();
-                        }
-                        return poll;
-                    }
-                    Err(e) => {
-                        cs.poll_errors += 1;
-                        if cs.poll_errors >= 3 {
-                            log::error!("[CONNECT] Card plan poll failed: {}", e);
-                            cs.phase = CheckoutPhase::PollFailed(e);
-                        } else {
-                            return poll;
-                        }
-                    }
-                }
+                return self.apply_polled_card_plan(result, gen, id, seq)
             }
 
             ConnectAccountMessage::ReopenCardPage => {
@@ -3817,132 +2738,23 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::BackToReview { pay_with } => {
-                // "Cancel" on the browser screen, "Try card again" and "Pay
-                // with bitcoin instead" (C2, C4, C5): back to Review with a
-                // new generation, so a late poll can't move it.
-                if let Some(cs) = self.checkout.as_mut().filter(|cs| {
-                    matches!(
-                        cs.phase,
-                        CheckoutPhase::CardInBrowser
-                            | CheckoutPhase::CardCancelled
-                            | CheckoutPhase::CardFailed { .. }
-                    )
-                }) {
-                    self.checkout_seq += 1;
-                    cs.id = self.checkout_seq;
-                    cs.phase = CheckoutPhase::Review;
-                    cs.pay_with = pay_with;
-                    cs.card_session = None;
-                    cs.browser_polls = 0;
-                    cs.poll_errors = 0;
-                }
+                return self.return_to_checkout_review(pay_with)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_plan_management(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::ChangePreviewLoaded(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::ChangePreviewing {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(preview) => {
-                        cs.preview = Some(preview);
-                        cs.phase = CheckoutPhase::ChangeReview;
-                    }
-                    Err((message, refused)) => {
-                        cs.phase = CheckoutPhase::ChangeFailed { message, refused };
-                    }
-                }
+                return self.apply_plan_change_preview(result, gen, id)
             }
 
-            ConnectAccountMessage::ConfirmPlanChange => {
-                let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::ChangeReview)
-                else {
-                    return iced::Task::none();
-                };
-                cs.phase = CheckoutPhase::ChangeApplying;
-                let id = cs.id;
-                let req = PlanChangeRequest {
-                    plan: cs.tier.clone(),
-                    billing_cycle: cs.cycle,
-                    proration_date: cs.preview.as_ref().and_then(|p| p.proration_date.clone()),
-                };
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.change_plan(req).await.map_err(refusal) },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::PlanChangeApplied(result, gen, id),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::ConfirmPlanChange => return self.confirm_connect_plan_change(),
 
             ConnectAccountMessage::PlanChangeApplied(result, gen, id) => {
-                if gen != self.session_generation || !self.is_current_checkout(id) {
-                    return iced::Task::none();
-                }
-                let cs = self.checkout.as_mut().expect("checked above");
-                if cs.phase != CheckoutPhase::ChangeApplying {
-                    return iced::Task::none();
-                }
-                match result {
-                    Ok(change) => match change.status.as_str() {
-                        "requires_action" => match change.url.filter(|u| !u.is_empty()) {
-                            Some(url) => {
-                                cs.action_url = Some(url.clone());
-                                cs.phase = CheckoutPhase::ChangeInBrowser;
-                                return iced::Task::batch([
-                                    iced::Task::done(Message::View(view::Message::OpenUrl(url))),
-                                    iced::Task::done(Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::PollCardPlan(id),
-                                    ))),
-                                ]);
-                            }
-                            // Nothing says whether the change took effect:
-                            // never claim it failed with nothing charged.
-                            None => {
-                                return self.enter_change_unconfirmed(
-                                    "Your bank asked to confirm the payment, but Connect \
-                                     sent no page to confirm it on"
-                                        .to_string(),
-                                );
-                            }
-                        },
-                        "paid" | "scheduled" => {
-                            cs.phase = CheckoutPhase::ChangeDone {
-                                scheduled: change.status == "scheduled",
-                            };
-                            return self.reload_plan_billing();
-                        }
-                        other => {
-                            log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
-                            let message = format!(
-                                "Connect returned \"{other}\", which this version of COINCUBE Desktop \
-                                 doesn't know"
-                            );
-                            return self.enter_change_unconfirmed(message);
-                        }
-                    },
-                    // A refusal changed nothing. Anything else (no answer, a
-                    // 5xx) may have applied the change and charged the card:
-                    // say so and reload the plan.
-                    Err((message, true)) => {
-                        cs.phase = CheckoutPhase::ChangeFailed {
-                            message,
-                            refused: true,
-                        };
-                    }
-                    Err((message, false)) => {
-                        return self.enter_change_unconfirmed(message);
-                    }
-                }
+                return self.apply_connect_plan_change(result, gen, id)
             }
 
             ConnectAccountMessage::RetryPlanRefresh => {
@@ -3971,51 +2783,10 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::SetAutoRenew(enabled) => {
-                if self.card_request_busy {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = true;
-                self.card_request_error = None;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .set_auto_renew(enabled)
-                            .await
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
-                        ))
-                    },
-                );
+                return self.set_connect_auto_renew(enabled)
             }
 
-            ConnectAccountMessage::OpenCardPortal => {
-                if self.card_request_busy {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = true;
-                self.card_request_error = None;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_card_portal()
-                            .await
-                            .map(|p| Some(p.url))
-                            .map_err(|e| e.to_string())
-                    },
-                    move |result| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::CardRequestDone(result, gen),
-                        ))
-                    },
-                );
-            }
+            ConnectAccountMessage::OpenCardPortal => return self.open_connect_card_portal(),
 
             ConnectAccountMessage::KeepCurrentPlan => {
                 if self.card_request_busy {
@@ -4036,25 +2807,15 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::CardRequestDone(result, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.card_request_busy = false;
-                match result {
-                    // The portal: open Stripe's page (update card only, I1).
-                    Ok(Some(url)) => {
-                        return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
-                    }
-                    Ok(None) => {
-                        self.confirm_auto_renew_off = false;
-                        return self.reload_plan_billing();
-                    }
-                    Err(e) => {
-                        self.card_request_error = Some(e);
-                    }
-                }
+                return self.apply_connect_card_request(result, gen)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
 
+    fn dispatch_billing_view(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::SelectPaymentNetwork(network) => {
                 if let Some(cs) = self.checkout.as_mut() {
                     cs.network = network;
@@ -4072,36 +2833,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::ResumeChargePolling => {
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| matches!(cs.phase, CheckoutPhase::PollFailed(_)))
-                {
-                    cs.poll_errors = 0;
-                    cs.browser_polls = 0;
-                    let id = cs.id;
-                    // Resume whichever chain stopped: the card checkout or
-                    // 3-D Secure confirmation polls the plan; an invoice
-                    // polls its charge.
-                    let msg = if cs.action_url.is_some() {
-                        cs.phase = CheckoutPhase::ChangeInBrowser;
-                        ConnectAccountMessage::PollCardPlan(id)
-                    } else if cs.card_session.is_some() {
-                        cs.phase = CheckoutPhase::CardInBrowser;
-                        ConnectAccountMessage::PollCardPlan(id)
-                    } else {
-                        // Back to the phase polling stopped in (never a
-                        // fresh "send the full amount" after a partial
-                        // payment).
-                        cs.phase = cs
-                            .resume_phase
-                            .take()
-                            .filter(CheckoutPhase::polls)
-                            .unwrap_or(CheckoutPhase::AwaitingPayment);
-                        ConnectAccountMessage::PollChargeStatus(id)
-                    };
-                    return iced::Task::done(Message::View(view::Message::ConnectAccount(msg)));
-                }
+                return self.resume_lightning_charge_polling()
             }
 
             ConnectAccountMessage::DismissCheckout => {
@@ -4109,16 +2841,7 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::OpenCheckoutUrl(url) => {
-                // B4: the BTCPay page is open. The poll chain keeps running
-                // (PayingInBrowser polls), so this screen still updates.
-                if let Some(cs) = self
-                    .checkout
-                    .as_mut()
-                    .filter(|cs| cs.phase == CheckoutPhase::AwaitingPayment)
-                {
-                    cs.phase = CheckoutPhase::PayingInBrowser;
-                }
-                return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+                return self.open_connect_checkout_url(url)
             }
 
             ConnectAccountMessage::DismissRenewalBanner => {
@@ -4153,64 +2876,21 @@ impl ConnectAccountPanel {
                 self.show_campaign_redeem = show;
             }
 
-            ConnectAccountMessage::RenewCurrentPlan => {
-                // D1 banner CTA: jump to Plan & Billing and open checkout
-                // pre-selected to the user's current tier + cycle.
-                let Some(plan) = self.plan.as_ref() else {
-                    return iced::Task::none();
-                };
-                let tier = plan.plan.clone();
-                let cycle = plan.billing_cycle;
-                self.active_sub = ConnectSubMenu::PlanBilling;
-                // Same routing concern as OpenPlanBilling: a stale history
-                // toggle would mask the picker on the Free/lapsed fallback
-                // path below (where no checkout is started).
-                self.show_billing_history = false;
-                self.show_plan_comparison = false;
-                // A Free/lapsed plan has no tier to pre-fill an invoice for
-                // — fall back to the picker.
-                if matches!(tier, PlanTier::Free) {
-                    self.show_plan_comparison = true;
-                    return iced::Task::none();
-                }
-                if let Some(cycle) = cycle {
-                    self.selected_billing_cycle = cycle;
-                }
-                // Renew goes through Review (board 1 "Renew Pro" → board 3)
-                // so the amount and covered dates are shown before an
-                // invoice is created.
-                return iced::Task::done(Message::View(view::Message::ConnectAccount(
-                    ConnectAccountMessage::ReviewPlanChange(tier),
-                )));
-            }
+            ConnectAccountMessage::RenewCurrentPlan => return self.renew_connect_plan(),
 
             ConnectAccountMessage::ToggleBillingHistory => {
-                self.show_billing_history = !self.show_billing_history;
-                if self.show_billing_history {
-                    self.show_plan_comparison = false;
-                    let gen = self.session_generation;
-                    let c2 = self.client.clone();
-                    return iced::Task::batch([
-                        self.reload_billing_history(),
-                        iced::Task::perform(
-                            async move {
-                                match c2.get_user().await {
-                                    Ok(u) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileLoaded(u, gen),
-                                    )),
-                                    Err(e) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
-                                    )),
-                                }
-                            },
-                            |m| m,
-                        ),
-                    ]);
-                }
+                return self.toggle_connect_billing_history()
             }
             ConnectAccountMessage::Contacts(contacts_msg) => {
                 return self.update_contacts(contacts_msg);
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_account_results(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::Error(error_msg) => {
                 // No card button: every sender of this variant is an action the
                 // user started from a control that is still on screen (Continue,
@@ -4232,24 +2912,7 @@ impl ConnectAccountPanel {
                 }
             }
             ConnectAccountMessage::BillingHistoryLoaded(result, gen) => {
-                if gen == self.session_generation {
-                    match result {
-                        Ok(history) => {
-                            self.billing_history = Some(history);
-                            self.error = None;
-                        }
-                        Err(user) => {
-                            // Retryability and the `Ref:` come from the error
-                            // itself. Hardcoding them meant a 401 or a plan-gate
-                            // 403 — both perfectly likely on a *billing* screen —
-                            // rendered "check your internet connection" over a
-                            // "Try again" button that could only ever reproduce
-                            // the same refusal.
-                            self.error =
-                                Some(PanelError::retryable(user, RetryAction::BillingHistory));
-                        }
-                    }
-                }
+                return self.apply_loaded_billing_history(result, gen)
             }
             ConnectAccountMessage::UserProfileLoaded(user, gen) => {
                 // Non-auth profile refresh - only update user, no step/session changes
@@ -4279,58 +2942,17 @@ impl ConnectAccountPanel {
             }
 
             ConnectAccountMessage::Retry(action) => {
-                // The card is gone the moment its button is pressed: leaving it
-                // up while the retry runs makes a working retry look like a
-                // dead button.
-                self.error = None;
-                return match action {
-                    RetryAction::Session => {
-                        // `Init` re-reads the keyring session and re-fires the
-                        // refresh, and already guards against re-entry while one
-                        // is in flight.
-                        self.update_message(ConnectAccountMessage::Init)
-                    }
-                    RetryAction::SecurityData => self.reload_security(),
-                    RetryAction::DeletionStatus => self.load_deletion_status(),
-                    RetryAction::UserProfile => {
-                        let gen = self.session_generation;
-                        let client = self.client.clone();
-                        iced::Task::perform(
-                            async move {
-                                match client.get_user().await {
-                                    Ok(u) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileLoaded(u, gen),
-                                    )),
-                                    Err(e) => Message::View(view::Message::ConnectAccount(
-                                        ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
-                                    )),
-                                }
-                            },
-                            |m| m,
-                        )
-                    }
-                    RetryAction::BillingHistory => {
-                        let gen = self.session_generation;
-                        let client = self.client.clone();
-                        iced::Task::perform(
-                            async move { client.get_billing_history().await },
-                            move |res| match res {
-                                Ok(history) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
-                                )),
-                                Err(e) => Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::BillingHistoryLoaded(
-                                        Err((&e).into()),
-                                        gen,
-                                    ),
-                                )),
-                            },
-                        )
-                    }
-                };
+                return self.retry_connect_account_action(action)
             }
 
             // ── Campaign code redemption (v2 campaign engine) ─────────────
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_campaign(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::CampaignCodeChanged(code) => {
                 // Ignore edits while a redeem is in flight — otherwise the
                 // response for the submitted code could land against
@@ -4399,180 +3021,15 @@ impl ConnectAccountPanel {
                 // plan fetch on that path, so there's no racing PlanLoaded.
                 return self.plan_fetch_task();
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn dispatch_sign_in_duress(&mut self, message: ConnectAccountMessage) -> iced::Task<Message> {
+        match message {
             ConnectAccountMessage::DuressStateChecked(outcome, gen, attempt) => {
-                // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
-                // this resolves, so the dashboard is never shown to a possibly-
-                // in-duress account.
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                match outcome {
-                    DuressCheckOutcome::Ok(s) if s.active => {
-                        // This signed-in device is the trusted recovery vehicle:
-                        // show the all-clear entry. Do NOT persist
-                        // DuressLocalState.active here — the launch reconcile
-                        // keys off that flag and would route this device into the
-                        // cryptic dead-end (which has no all-clear entry) on the
-                        // next restart, making recovery impossible. The flag is
-                        // owned by the paths that actually lock this device: the
-                        // local duress PIN and the in-Cube gRPC remote handler.
-                        self.step = ConnectFlowStep::DuressRecovery {
-                            unlock_at: s.unlock_at,
-                            passphrase: String::new(),
-                            submitting: false,
-                            cleared: false,
-                        };
-                        // Cache the authoritative state we just fetched so the
-                        // Duress tab paints from it immediately instead of
-                        // flashing the setup flow while a fresh fetch is in
-                        // flight (see `duress_ux`).
-                        self.duress_state = Some(s);
-                    }
-                    // Confirmed not in duress — NOW reveal the dashboard.
-                    DuressCheckOutcome::Ok(s) => {
-                        self.step = ConnectFlowStep::Dashboard;
-                        self.signing_in_with_authenticator = false;
-                        self.signed_out_by = None;
-                        self.unverified = None;
-                        // Plan & billing opened while the session was still
-                        // being checked loaded nothing; load its history now,
-                        // on every return path below.
-                        let billing = self.billing_history_if_open();
-                        // Cache the fetched state before any early return, so the
-                        // Duress tab reflects the enabled state on its first paint
-                        // rather than briefly showing enrollment CTAs.
-                        let needs_device_register = s.enrolled && !s.this_device_registered;
-                        let server_enrolled = s.enrolled;
-                        self.duress_state = Some(s);
-                        // Phase 0: a signed-in device on an already-enrolled
-                        // account that isn't yet registered server-side mints +
-                        // registers its OWN duress code (per-device, never
-                        // shared), so it can fire trigger-with-code on its own
-                        // activation. Fire-and-forget; idempotent (skips if this
-                        // device already holds a code).
-                        if needs_device_register {
-                            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                                return iced::Task::batch([
-                                    billing,
-                                    register_device_duress_task(self.client.clone(), account_id),
-                                ]);
-                            }
-                        }
-                        // Launch reconcile (Issue 2, PR 4): bring this device's
-                        // local duress state in line with the server's, catching
-                        // a disable missed while offline AND an orphaned device
-                        // (Cubes armed while the local state never finished, e.g.
-                        // a crash mid-enroll) whose duress PIN would otherwise
-                        // still trip a wipe behind a UI that reports it inert.
-                        //
-                        // `reconcile_duress_disarm` (server says NOT enrolled)
-                        // disarms a matching local enrollment or any orphaned
-                        // armed Cubes; `reconcile_duress_orphan` (server says
-                        // STILL enrolled — reached only with this device already
-                        // registered) disarms ONLY an orphan, never a healthy
-                        // enrollment. Both no-op cheaply for a consistent device.
-                        if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
-                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                let gen = self.session_generation;
-                                let task = if server_enrolled {
-                                    iced::Task::perform(
-                                        async move { crate::app::reconcile_duress_orphan(dir).await },
-                                        move |res| {
-                                            Message::View(view::Message::ConnectAccount(
-                                                ConnectAccountMessage::Duress(
-                                                    DuressMessage::DisarmComplete(res, gen),
-                                                ),
-                                            ))
-                                        },
-                                    )
-                                } else {
-                                    iced::Task::perform(
-                                        async move {
-                                            crate::app::reconcile_duress_disarm(dir, account_id)
-                                                .await
-                                        },
-                                        move |res| {
-                                            Message::View(view::Message::ConnectAccount(
-                                                ConnectAccountMessage::Duress(
-                                                    DuressMessage::DisarmComplete(res, gen),
-                                                ),
-                                            ))
-                                        },
-                                    )
-                                };
-                                return iced::Task::batch([billing, task]);
-                            }
-                        }
-                        return billing;
-                    }
-                    // Transient (network / 5xx / rate-limit) — retry with
-                    // backoff while attempts remain.
-                    DuressCheckOutcome::Unreachable if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
-                        return duress_state_check_task(self.client.clone(), gen, attempt + 1);
-                    }
-                    // Retries exhausted. Fail CLOSED: do not reveal the
-                    // dashboard. Show an error + Retry on the checking screen.
-                    // (The dashboard is server-backed anyway, so it would be
-                    // non-functional during this outage.)
-                    DuressCheckOutcome::Unreachable => {
-                        log::warn!(
-                            "[CONNECT] duress state check unreachable after {} attempts; \
-                             holding at the verification gate",
-                            attempt + 1
-                        );
-                        self.step = ConnectFlowStep::CheckingDuress {
-                            status: DuressGateStatus::Unreachable,
-                        };
-                    }
-                    // The server returned a body we can't decode. Auto-retrying
-                    // is futile (it'll mismatch every time), so DON'T loop —
-                    // hold closed with distinct copy + an update hint. The body
-                    // was already logged in `get_duress_state`. A manual Retry
-                    // is still offered in case it's a server bug being hotfixed.
-                    DuressCheckOutcome::Incompatible => {
-                        log::error!(
-                            "[CONNECT] duress state response is undecodable (contract \
-                             mismatch); holding the gate closed — app may need updating"
-                        );
-                        self.step = ConnectFlowStep::CheckingDuress {
-                            status: DuressGateStatus::Incompatible,
-                        };
-                    }
-                    // The session was rejected mid-gate. Sitting on the duress
-                    // gate would loop forever; drop to login instead.
-                    DuressCheckOutcome::Unauthorized => {
-                        log::warn!(
-                            "[CONNECT] duress gate: session rejected (401); returning to login"
-                        );
-                        let was_logged_in = self.user.is_some();
-                        // The session is dead — tear it all down (bumps
-                        // session_generation so stale async results are ignored,
-                        // drops the JWT client, keyring session, and cached
-                        // user/plan) so the next Init doesn't restore it.
-                        self.clear_session();
-                        // Settled, not retryable: the session is gone, so the
-                        // card offers no "Try again" — signing in is the only
-                        // way forward.
-                        self.error = Some(PanelError::settled(UserError::new(
-                            "Your session has expired",
-                            "Sign in again to continue.",
-                            crate::user_error::CC_AUTH_EXPIRED,
-                            false,
-                        )));
-                        self.step = ConnectFlowStep::Login {
-                            email: String::new(),
-                            loading: false,
-                        };
-                        // Mirror the normal LogOut path: Buy/Sell shares this
-                        // session, so it must drop its stale in-memory token too
-                        // rather than keep showing a logged-in state.
-                        if was_logged_in {
-                            return iced::Task::done(Message::View(view::Message::BuySell(
-                                view::BuySellMessage::LogOut,
-                            )));
-                        }
-                    }
-                }
+                return self.apply_sign_in_duress_check(outcome, gen, attempt)
             }
             ConnectAccountMessage::RetryDuressCheck => {
                 // From the CheckingDuress error screen (either failure mode).
@@ -4587,12 +3044,2096 @@ impl ConnectAccountPanel {
                 // or syncing DuressLocalState.active to the server's duress
                 // state — set on the post-sign-in mirror, reset on recovery).
             }
-            ConnectAccountMessage::Duress(m) => return self.update_duress(m),
-            ConnectAccountMessage::DuressContacts(m) => return self.update_duress_contacts(m),
-            ConnectAccountMessage::DeleteAccount(m) => return self.update_delete_account(m),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn init_connect_account(&mut self) -> iced::Task<Message> {
+        if self.admitted_client {
+            if self.user.is_some() || self.admitted_user_loading {
+                return iced::Task::none();
+            }
+            self.admitted_user_loading = true;
+            let client = self.client.clone();
+            let generation = self.session_generation;
+            let epoch = self.auth_epoch;
+            return iced::Task::perform(
+                async move {
+                    client
+                        .get_user()
+                        .await
+                        .map_err(|error| ((&error).into(), error.is_auth_error()))
+                },
+                move |user| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::AdmittedUserLoaded {
+                            user,
+                            generation,
+                            epoch,
+                        },
+                    ))
+                },
+            );
+        }
+        // Already authenticated (e.g. broadcast Init from a
+        // sibling tab that just signed in): nothing to do.
+        if matches!(self.step, ConnectFlowStep::Dashboard) {
+            return iced::Task::none();
+        }
+        // A RefreshSession spawned by a previous Init is still
+        // in flight. Firing another now would race two token
+        // refreshes against each other and double the downstream
+        // post-login bootstrap. Wait for the in-flight one to
+        // resolve (success → Dashboard; failure → Login with
+        // loading=false, which Init can pick up again).
+        if matches!(self.step, ConnectFlowStep::Login { loading: true, .. }) {
+            return iced::Task::none();
+        }
+        // The session is already loaded and its post-sign-in duress
+        // gate is running. A refresh now would abandon that gate and
+        // mint another session, whose sign-in broadcast makes Home
+        // re-adopt and re-announce, which sends this Init again: the
+        // tab would never reach the dashboard.
+        if matches!(
+            self.step,
+            ConnectFlowStep::CheckingDuress {
+                status: DuressGateStatus::Checking
+            }
+        ) {
+            return iced::Task::none();
+        }
+        // Clear any previous failure. Past the re-entry guards above,
+        // this path always either starts a refresh or falls back to the
+        // login form, and both make the old card stale: this is also
+        // the "Try again" button, so leaving it up while the retry runs
+        // makes a working retry look like a no-op — and leaving it up
+        // on the no-session fallback strands it on screen with nothing
+        // left to retry.
+        self.error = None;
+        // A code stashed during an abandoned signup must not ride into
+        // a restored or next session — it belongs to that signup only.
+        // Clearing here (and in SubmitLogin) confines redemption to the
+        // uninterrupted signup → verify → SessionLoaded path.
+        self.pending_campaign_code = None;
+        if let Some(session) = self.load_session_from_keyring() {
+            let refresh_token = session.login.refresh_token.clone();
+            // Transition out of CheckingSession so re-navigation
+            // won't re-trigger Init while the refresh is in flight.
+            self.step = ConnectFlowStep::Login {
+                email: String::new(),
+                loading: true,
+            };
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::RefreshSession { refresh_token },
+            )));
+        }
+        // No session stored - show Login form.
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_admitted_user(
+        &mut self,
+        user: Result<crate::services::coincube::User, (crate::user_error::UserError, bool)>,
+        generation: u64,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if !self.admitted_client
+            || generation != self.session_generation
+            || self.stale_completion(epoch, "AdmittedUserLoaded")
+        {
+            return iced::Task::none();
+        }
+        self.admitted_user_loading = false;
+        match user {
+            Ok(user) => {
+                return self.dispatch_message(ConnectAccountMessage::SessionLoaded {
+                    user,
+                    plan: None,
+                    epoch,
+                })
+            }
+            Err((error, auth_error)) => {
+                if auth_error {
+                    let logout = self.update_message(ConnectAccountMessage::LogOut);
+                    return iced::Task::batch([
+                        iced::Task::done(Message::ConnectSignedOutBy(
+                            crate::app::SignedOutBy::SessionEnded,
+                        )),
+                        logout,
+                    ]);
+                }
+                self.error = Some(PanelError::retryable(error, RetryAction::Session));
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn refresh_connect_session(&mut self, refresh_token: String) -> iced::Task<Message> {
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        let previous_refresh_token = refresh_token.clone();
+        iced::Task::perform(
+            async move { client.refresh_login(&refresh_token).await },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::RefreshedSession(login, epoch, previous_refresh_token),
+                )),
+                Err(e) => {
+                    if e.is_auth_error() {
+                        // Whether this logs out is decided against the
+                        // epoch current when it arrives, not here.
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshRejected { epoch },
+                        ))
+                    } else if let Some(trouble) = refresh_trouble(&e) {
+                        log::warn!("[CONNECT] Session refresh didn't reach Connect: {}", e);
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshUnreachable { trouble, epoch },
+                        ))
+                    } else {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::RefreshFailed((&e).into()),
+                        ))
+                    }
+                }
+            },
+        )
+    }
+
+    fn apply_refresh_rejection(&mut self, epoch: u64) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "a refresh's authentication failure") {
+            return iced::Task::none();
+        }
+        // A current refresh was refused: the session is gone. Dispatched
+        // as the message it always was, so the GUI broadcasts it, after
+        // the notice that Connect ended it.
+        iced::Task::batch([
+            iced::Task::done(Message::ConnectSignedOutBy(
+                crate::app::SignedOutBy::SessionEnded,
+            )),
+            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::LogOut,
+            ))),
+        ])
+    }
+
+    fn apply_unreachable_refresh(
+        &mut self,
+        trouble: crate::services::connect::grpc::trouble::Trouble,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "a refresh that didn't reach Connect") {
+            return iced::Task::none();
+        }
+        // Keep the stored session (L1): leave the sign-in form idle,
+        // remember whose session it is, and check it again later.
+        let Some(email) = self
+            .load_session_from_keyring()
+            .map(|session| session.login.user.email)
+        else {
+            self.step = ConnectFlowStep::Login {
+                email: String::new(),
+                loading: false,
+            };
+            return iced::Task::none();
+        };
+        let attempts = self.unverified.as_ref().map_or(0, |u| u.attempts) + 1;
+        let unverified = UnverifiedSession {
+            email,
+            trouble,
+            attempts,
+        };
+        // The Launcher's and the Cube's subscriptions send
+        // `RecheckSession` after `backoff()`, only while mounted.
+        self.unverified = Some(unverified);
+        self.error = None;
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_verified_otp(
+        &mut self,
+        login: crate::services::coincube::LoginResponse,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "OtpVerified")
+            || attempt != self.otp_attempt_generation
+            || !matches!(
+                self.step,
+                ConnectFlowStep::OtpVerification { sending: true, .. }
+            )
+        {
+            return iced::Task::none();
+        }
+        if self.defer_auth_cache_commit {
+            if self.auth_commit_pending {
+                return iced::Task::none();
+            }
+            self.auth_commit_pending = true;
+            return iced::Task::done(Message::InAppConnectAuthReady {
+                login,
+                epoch,
+                previous_refresh_token: None,
+            });
+        }
+        self.post_login_tasks(StoredSession { login }, epoch, true)
+    }
+
+    fn begin_two_factor_challenge(
+        &mut self,
+        challenge: crate::services::coincube::SecondFactorChallenge,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "TwoFactorRequired")
+            || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::OtpVerification {
+            email,
+            sending: true,
+            ..
+        } = &self.step
+        else {
+            return iced::Task::none();
+        };
+        // Only `login_verify_otp` can raise this, so it is never a sign-up.
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        self.error = None;
+        self.signing_in_with_authenticator = true;
+        self.step = ConnectFlowStep::TwoFactor {
+            email: email.clone(),
+            challenge,
+            code: view::SecretInput::default(),
+            backup: false,
+            sending: false,
+            failure: None,
+            lost_open: false,
+        };
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID)
+    }
+
+    fn verify_two_factor_challenge(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::TwoFactor {
+            challenge,
+            code,
+            backup,
+            sending,
+            failure,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *sending
+            || *failure == Some(TwoFactorStepFailure::Expired)
+            || !second_factor_code_complete(&code.0, *backup)
+        {
+            return iced::Task::none();
+        }
+        *sending = true;
+        *failure = None;
+        self.error = None;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        let challenge = challenge.clone();
+        let typed = zeroize::Zeroizing::new(code.0.clone());
+        let backup = *backup;
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        iced::Task::perform(
+            async move {
+                let code = if backup {
+                    SecondFactorCode::Backup(&typed)
+                } else {
+                    SecondFactorCode::App(&typed)
+                };
+                client.login_verify_2fa(&challenge, code).await
+            },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::TwoFactorVerified(login, epoch, attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::TwoFactorFailed(
+                        CodeFailure::classify(&e),
+                        epoch,
+                        attempt,
+                    ),
+                )),
+            },
+        )
+    }
+
+    fn apply_failed_two_factor(
+        &mut self,
+        why: crate::services::coincube::CodeFailure,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "TwoFactorFailed") || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::TwoFactor {
+            code,
+            sending,
+            failure,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        *sending = false;
+        match why {
+            CodeFailure::Wrong => {
+                zeroize::Zeroize::zeroize(&mut code.0);
+                *failure = Some(TwoFactorStepFailure::Wrong);
+            }
+            CodeFailure::Limited => *failure = Some(TwoFactorStepFailure::Limited),
+            CodeFailure::Expired => {
+                zeroize::Zeroize::zeroize(&mut code.0);
+                *failure = Some(TwoFactorStepFailure::Expired);
+            }
+            CodeFailure::Other(error) => {
+                return self.update_message(ConnectAccountMessage::Error(error));
+            }
+        }
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID)
+    }
+
+    fn apply_rejected_auth_commit(&mut self, epoch: u64) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "AuthCommitRejected") {
+            return iced::Task::none();
+        }
+        if !self.auth_commit_pending {
+            return iced::Task::none();
+        }
+        self.auth_commit_pending = false;
+        self.signing_in_with_authenticator = false;
+        self.error = Some(PanelError::retryable(
+            UserError::new(
+                "Connect session changed",
+                "Sign in again to use the current account.",
+                crate::user_error::CC_API_BADRESP,
+                true,
+            ),
+            RetryAction::Session,
+        ));
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        iced::Task::none()
+    }
+
+    fn apply_loaded_connect_session(
+        &mut self,
+        user: crate::services::coincube::User,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "SessionLoaded") {
+            return iced::Task::none();
+        }
+        self.session_generation += 1;
+        // Another account's session: nothing about this account's
+        // authenticator carries over.
+        if self.user.as_ref().is_some_and(|u| u.id != user.id) {
+            self.two_factor.reset();
+            self.delete_account.reset();
+            self.backup_codes_notice = None;
+        }
+        self.user = Some(user);
+        self.plan = plan;
+        // Phase 6: gate on the duress check FIRST — don't reveal the
+        // dashboard until we've confirmed the account isn't in duress.
+        self.step = ConnectFlowStep::CheckingDuress {
+            status: DuressGateStatus::Checking,
+        };
+        self.error = None;
+        // Fetch features + gate on duress in background (non-blocking).
+        let gen = self.session_generation;
+        let c2 = self.client.clone();
+        let c3 = self.client.clone();
+        let mut tasks = vec![
+            iced::Task::perform(
+                async move { (c2.get_connect_features().await.ok(), gen) },
+                |(features, g)| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::FeaturesLoaded(features, g),
+                    ))
+                },
+            ),
+            // Phase 6: gate on duress state. If the account is in
+            // duress, the recovery flow replaces the dashboard. A
+            // failed check retries (see the handler) so a transient
+            // error doesn't leave a duress account on the dashboard.
+            duress_state_check_task(c3, gen, 0),
+        ];
+        // Redeem an account-creation promo/referral code now that the
+        // session is authenticated. Best-effort: a bad code never
+        // blocks sign-in — the outcome surfaces in Settings → Plan.
+        if let Some(code) = self.pending_campaign_code.take() {
+            // Defer the plan fetch to the redeem (which fetches on
+            // either outcome). Firing get_connect_plan here *and* again
+            // after redemption races two PlanLoaded responses at the
+            // same generation, and a slow pre-redeem fetch could
+            // overwrite the granted tier/provenance.
+            self.campaign_redeem.submitting = true;
+            // Surface the code in the Settings → Plan field so that, if
+            // the redeem fails, the error reads against the code and
+            // the user can edit/retry without retyping. Cleared on
+            // success by `CampaignRedeemed`.
+            self.campaign_redeem.code = code.clone();
+            tasks.push(self.redeem_campaign_task(code));
+        } else {
+            tasks.push(self.plan_fetch_task());
+        }
+        iced::Task::batch(tasks)
+    }
+
+    fn apply_connect_plan_reload(
+        &mut self,
+        plan: Option<crate::services::coincube::ConnectPlan>,
+        gen: u64,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        // An unconfirmed change shows whether its refresh landed.
+        if gen == self.session_generation {
+            self.update_pending_plan_refresh(seq, plan.is_some());
+        }
+        // A response applies only if it is newer than the last one
+        // applied: one sent before a payment never lands over one
+        // sent after it, and a failed newer fetch doesn't throw away
+        // an older good answer.
+        if gen == self.session_generation && seq > self.applied_plan_seq && plan.is_some() {
+            self.applied_plan_seq = seq;
+            self.apply_loaded_plan(plan);
+        }
+        iced::Task::none()
+    }
+
+    fn update_pending_plan_refresh(&mut self, seq: u64, loaded: bool) {
+        if let Some(CheckoutPhase::ChangeUnconfirmed { refresh, .. }) =
+            self.checkout.as_mut().map(|cs| &mut cs.phase)
+        {
+            if let PlanRefresh::Pending(waiting) = *refresh {
+                if seq >= waiting {
+                    *refresh = if loaded {
+                        PlanRefresh::Updated
+                    } else {
+                        PlanRefresh::Failed
+                    };
+                }
+            }
+        }
+    }
+
+    fn apply_account_overview_counts(
+        &mut self,
+        contacts: Option<usize>,
+        cubes: Option<usize>,
+        recovery: Result<Vec<crate::services::coincube::CubeResponse>, UserError>,
+        generation: u64,
+        request_seq: u64,
+    ) -> iced::Task<Message> {
+        if generation == self.session_generation && request_seq == self.overview_seq {
+            // Only overwrite a field when its fetch succeeded, so a
+            // partial failure doesn't blank out a previously-loaded
+            // count.
+            if contacts.is_some() {
+                self.overview_contact_count = contacts;
+            }
+            if cubes.is_some() {
+                self.overview_cube_count = cubes;
+            }
+            self.recovery_services = match recovery {
+                Ok(cubes) => RecoveryServicesState::Ready(
+                    cubes.into_iter().map(RecoveryServiceRow::from).collect(),
+                ),
+                Err(error) => RecoveryServicesState::Failed(error),
+            };
+        }
+        iced::Task::none()
+    }
+
+    fn log_out_connect_account(&mut self) -> iced::Task<Message> {
+        let was_logged_in = self.user.is_some();
+        self.clear_session();
+        self.step = ConnectFlowStep::Login {
+            email: String::new(),
+            loading: false,
+        };
+        // Only notify BuySell if this logout originated here (not
+        // forwarded back from BuySell) to avoid a redundant cycle.
+        if was_logged_in {
+            return iced::Task::done(Message::View(view::Message::BuySell(
+                view::BuySellMessage::LogOut,
+            )));
+        }
+        iced::Task::none()
+    }
+
+    fn apply_set_session(
+        &mut self,
+        login: crate::services::coincube::LoginResponse,
+        epoch: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "SetSession") {
+            return iced::Task::none();
+        }
+        let session = StoredSession { login };
+        self.post_login_tasks(session, epoch, true)
+    }
+
+    fn apply_failed_otp(
+        &mut self,
+        error: crate::user_error::UserError,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        if self.stale_completion(epoch, "OtpVerifyFailed")
+            || attempt != self.otp_attempt_generation
+            || !matches!(self.step, ConnectFlowStep::OtpVerification { .. })
+        {
+            return iced::Task::none();
+        }
+        self.update_message(ConnectAccountMessage::Error(error))
+    }
+
+    fn edit_two_factor_challenge_code(&mut self, input: view::SecretInput) -> iced::Task<Message> {
+        if let ConnectFlowStep::TwoFactor {
+            code,
+            backup,
+            sending: false,
+            failure,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            code.0 = filter_second_factor_input(&input.0, *backup);
+            if *failure == Some(TwoFactorStepFailure::Wrong) {
+                *failure = None;
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn toggle_two_factor_challenge_backup(&mut self) -> iced::Task<Message> {
+        if let ConnectFlowStep::TwoFactor {
+            code,
+            backup,
+            sending: false,
+            failure,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            *backup = !*backup;
+            if *failure == Some(TwoFactorStepFailure::Wrong) {
+                *failure = None;
+            }
+            return iced::widget::operation::focus(view::connect::TWO_FACTOR_INPUT_ID);
+        }
+        iced::Task::none()
+    }
+
+    fn apply_verified_two_factor(
+        &mut self,
+        response: crate::services::coincube::TwoFactorLogin,
+        epoch: u64,
+        attempt: u64,
+    ) -> iced::Task<Message> {
+        let TwoFactorLogin {
+            login,
+            backup_codes_remaining,
+        } = response;
+        if self.stale_completion(epoch, "TwoFactorVerified")
+            || attempt != self.otp_attempt_generation
+        {
+            return iced::Task::none();
+        }
+        let ConnectFlowStep::TwoFactor {
+            code,
+            sending: true,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        zeroize::Zeroize::zeroize(&mut code.0);
+        self.backup_codes_notice = backup_codes_remaining;
+        if self.defer_auth_cache_commit {
+            if self.auth_commit_pending {
+                return iced::Task::none();
+            }
+            self.auth_commit_pending = true;
+            return iced::Task::done(Message::InAppConnectAuthReady {
+                login,
+                epoch,
+                previous_refresh_token: None,
+            });
+        }
+        self.post_login_tasks(StoredSession { login }, epoch, true)
+    }
+
+    fn submit_connect_login(&mut self) -> iced::Task<Message> {
+        self.error = None;
+        // A login must never redeem a code stashed for a (different)
+        // new account during an abandoned signup. See `Init`.
+        self.pending_campaign_code = None;
+
+        let ConnectFlowStep::Login { email, loading } = &mut self.step else {
+            return iced::Task::none();
+        };
+        *loading = true;
+        let email_val = email.clone();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                let result = client
+                    .login_send_otp(OtpRequest {
+                        email: email_val.clone(),
+                    })
+                    .await;
+                (email_val, result)
+            },
+            |(email, res)| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpRequested {
+                        email,
+                        is_signup: false,
+                    },
+                )),
+                Err(e) => {
+                    let is_unverified = matches!(
+                        &e,
+                        crate::services::coincube::CoincubeError::Unsuccessful(info)
+                            if info.status_code == 401
+                                && info.text.contains("Email not verified")
+                    );
+                    if is_unverified {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::EmailNotVerified { email },
+                        ))
+                    } else {
+                        Message::View(view::Message::ConnectAccount(ConnectAccountMessage::Error(
+                            (&e).into(),
+                        )))
+                    }
+                }
+            },
+        )
+    }
+
+    fn submit_connect_registration(&mut self) -> iced::Task<Message> {
+        // Stash any account-creation promo/referral code now; it's
+        // redeemed once the new session authenticates (the redeem
+        // endpoint requires a token). Empty → nothing to redeem.
+        self.pending_campaign_code = {
+            let trimmed = self.register_campaign_code.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
+        };
+        let ConnectFlowStep::Register { email, loading } = &mut self.step else {
+            return iced::Task::none();
+        };
+        *loading = true;
+        let email_val = email.clone();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .signup_send_otp(OtpRequest {
+                        email: email_val.clone(),
+                    })
+                    .await
+                    .map(|()| email_val)
+            },
+            |res| match res {
+                Ok(email) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpRequested {
+                        email,
+                        is_signup: true,
+                    },
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error((&e).into()),
+                )),
+            },
+        )
+    }
+
+    fn apply_requested_otp(&mut self, email: String, is_signup: bool) -> iced::Task<Message> {
+        self.error = None;
+        self.signing_in_with_authenticator = false;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+
+        self.step = ConnectFlowStep::OtpVerification {
+            email,
+            otp: String::new(),
+            sending: false,
+            is_signup,
+            cooldown: 60,
+        };
+        iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::OtpCooldownTick(attempt),
+        )))
+    }
+
+    fn return_to_connect_email(&mut self) -> iced::Task<Message> {
+        // "Start over" from the authenticator step: its challenge
+        // can't be reused, so a new email code is needed.
+        if let ConnectFlowStep::TwoFactor {
+            email,
+            code,
+            sending: false,
+            ..
+        } = &mut self.step
+        {
+            zeroize::Zeroize::zeroize(&mut code.0);
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            self.signing_in_with_authenticator = false;
+            self.step = ConnectFlowStep::Login {
+                email: std::mem::take(email),
+                loading: false,
+            };
+            self.error = None;
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification {
+            email, is_signup, ..
+        } = &self.step
+        {
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            self.step = if *is_signup {
+                ConnectFlowStep::Register {
+                    email: email.clone(),
+                    loading: false,
+                }
+            } else {
+                ConnectFlowStep::Login {
+                    email: email.clone(),
+                    loading: false,
+                }
+            };
+            self.error = None;
+        }
+        iced::Task::none()
+    }
+
+    fn tick_otp_cooldown(&mut self, attempt: u64) -> iced::Task<Message> {
+        if attempt != self.otp_attempt_generation {
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification { cooldown, .. } = &mut self.step {
+            if *cooldown > 0 {
+                *cooldown -= 1;
+                return iced::Task::perform(
+                    async { tokio::time::sleep(std::time::Duration::from_secs(1)).await },
+                    move |_| {
+                        Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::OtpCooldownTick(attempt),
+                        ))
+                    },
+                );
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn resend_connect_otp(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::OtpVerification {
+            email,
+            sending,
+            is_signup,
+            cooldown,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *cooldown > 0 || *sending {
+            return iced::Task::none();
+        }
+        *sending = true;
+        let attempt = self.otp_attempt_generation;
+        let email_val = email.clone();
+        let is_signup = *is_signup;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                if is_signup {
+                    client.resend_signup_otp(&email_val).await
+                } else {
+                    client.login_send_otp(OtpRequest { email: email_val }).await
+                }
+            },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResent(attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
+                )),
+            },
+        )
+    }
+
+    fn apply_resent_otp(&mut self, attempt: u64) -> iced::Task<Message> {
+        if attempt != self.otp_attempt_generation {
+            return iced::Task::none();
+        }
+        if let ConnectFlowStep::OtpVerification {
+            otp,
+            sending,
+            cooldown,
+            ..
+        } = &mut self.step
+        {
+            *otp = String::new();
+            *sending = false;
+            *cooldown = 60;
+            self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::OtpCooldownTick(self.otp_attempt_generation),
+            )));
+        }
+        iced::Task::none()
+    }
+
+    fn verify_connect_otp(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::OtpVerification {
+            email,
+            otp,
+            sending,
+            is_signup,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *sending {
+            return iced::Task::none();
+        }
+        *sending = true;
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        let req = OtpVerifyRequest {
+            email: email.clone(),
+            otp: otp.clone(),
+        };
+        let is_signup = *is_signup;
+        let client = self.client.clone();
+        let epoch = self.auth_epoch;
+        iced::Task::perform(
+            async move {
+                if is_signup {
+                    client.signup_verify_otp(req).await
+                } else {
+                    client.login_verify_otp(req).await
+                }
+            },
+            move |res| match res {
+                Ok(login) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpVerified(login, epoch, attempt),
+                )),
+                Err(crate::services::coincube::CoincubeError::SecondFactorRequired(challenge)) => {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::TwoFactorRequired(challenge, epoch, attempt),
+                    ))
+                }
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpVerifyFailed((&e).into(), epoch, attempt),
+                )),
+            },
+        )
+    }
+
+    fn apply_unverified_connect_email(&mut self, email: String) -> iced::Task<Message> {
+        self.otp_attempt_generation = self.otp_attempt_generation.wrapping_add(1);
+        let attempt = self.otp_attempt_generation;
+        self.step = ConnectFlowStep::OtpVerification {
+            email: email.clone(),
+            otp: String::new(),
+            sending: true,
+            is_signup: true,
+            cooldown: 0,
+        };
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.resend_signup_otp(&email).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResent(attempt),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::OtpResendFailed((&e).into(), attempt),
+                )),
+            },
+        )
+    }
+
+    fn remove_verified_connect_device(&mut self, id: u32) -> iced::Task<Message> {
+        if self.review_device_removal != Some(id) {
+            return iced::Task::none();
+        }
+        self.review_device_removal = None;
+        self.verified_devices_state.deleting_ids.insert(id);
+
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        let id_for_result = id;
+
+        iced::Task::perform(
+            async move { client.delete_verified_device(id).await },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::VerifiedDeviceDeleted(
+                        id_for_result,
+                        gen,
+                        res.map_err(|e| e.to_string()),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn apply_verified_device_removal(
+        &mut self,
+        id: u32,
+        gen: u64,
+        result: Result<(), String>,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
         }
 
+        self.verified_devices_state.deleting_ids.remove(&id);
+
+        match result {
+            Ok(()) => {
+                if let Some(devices) = self.verified_devices.as_mut() {
+                    devices.retain(|d| d.id != id);
+                }
+            }
+            Err(err) => {
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Error(UserError::logged(
+                        "Couldn't remove that device",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        err,
+                    )),
+                )));
+            }
+        }
         iced::Task::none()
+    }
+
+    fn review_connect_plan_change(
+        &mut self,
+        tier: crate::services::coincube::PlanTier,
+    ) -> iced::Task<Message> {
+        // Review is the step before any invoice exists. It is only
+        // reachable while purchasing is open, like StartCheckout, so
+        // a stale message never shows a "Create invoice" the API
+        // would reject.
+        // Switching to Free buys nothing, so its Review is shown
+        // even while purchasing is closed.
+        if tier != PlanTier::Free && !self.purchasing_enabled() {
+            log::warn!("[CONNECT] ReviewPlanChange ignored — purchasing disabled");
+            return iced::Task::none();
+        }
+        // Never replace an invoice that is already out for payment.
+        if self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| !matches!(cs.phase, CheckoutPhase::Review))
+        {
+            return iced::Task::none();
+        }
+        self.active_sub = ConnectSubMenu::PlanBilling;
+        self.show_billing_history = false;
+        self.show_plan_comparison = false;
+        // Back from Review lands on the same picked row.
+        self.selected_plan_tier = Some(tier.clone());
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        let card_change = self.card_change_route(&tier, self.selected_billing_cycle);
+        let mut checkout = CheckoutState::new(
+            id,
+            tier.clone(),
+            self.selected_billing_cycle,
+            self.plan.clone(),
+        );
+        if card_change {
+            // A card that renews by itself changes plan through the
+            // card (bitcoin is refused then, decision 15): fetch
+            // Stripe's preview first.
+            checkout.phase = CheckoutPhase::ChangePreviewing;
+            checkout.pay_with = PayWith::Card;
+            self.checkout = Some(checkout);
+            let gen = self.session_generation;
+            let client = self.client.clone();
+            let req = PlanChangeRequest {
+                plan: tier,
+                billing_cycle: self.selected_billing_cycle,
+                proration_date: None,
+            };
+            return iced::Task::perform(
+                async move { client.preview_plan_change(req).await.map_err(refusal) },
+                move |result| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::ChangePreviewLoaded(result, gen, id),
+                    ))
+                },
+            );
+        }
+        self.checkout = Some(checkout);
+        iced::Task::none()
+    }
+
+    fn start_lightning_checkout(
+        &mut self,
+        tier: crate::services::coincube::PlanTier,
+    ) -> iced::Task<Message> {
+        // Defense-in-depth (PLAN-estate-promo PR2): the picker hides
+        // upgrade CTAs and the renewal banner is suppressed while
+        // purchasing is disabled, but this is the single chokepoint
+        // every checkout flows through — never open one the API would
+        // reject even if a stale message slips through.
+        if !self.purchasing_enabled() {
+            log::warn!("[CONNECT] StartCheckout ignored — purchasing disabled");
+            return iced::Task::none();
+        }
+        // Never replace an invoice that is out for payment (a double
+        // press, or a stale message): only Review, Expired and Failed
+        // may start a new one.
+        if self.checkout.as_ref().is_some_and(|cs| {
+            !matches!(
+                cs.phase,
+                CheckoutPhase::Review | CheckoutPhase::Expired | CheckoutPhase::Failed { .. }
+            )
+        }) {
+            log::warn!("[CONNECT] StartCheckout ignored — an invoice is in progress");
+            return iced::Task::none();
+        }
+        // The cycle reviewed for this tier wins over the picker's
+        // current toggle, so a retry after expiry re-issues the same
+        // plan the user confirmed.
+        let cycle = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .map(|cs| cs.cycle)
+            .unwrap_or(self.selected_billing_cycle);
+        // A new generation: anything still in flight for the
+        // previous invoice (an expired one, a failed create) is
+        // dropped when it lands.
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        // Keep the plan snapshot taken when Review opened.
+        let snapshot = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .and_then(|cs| cs.plan.clone())
+            .or_else(|| self.plan.clone());
+        let opened_at = self
+            .checkout
+            .as_ref()
+            .filter(|cs| cs.tier == tier)
+            .map(|cs| cs.opened_at);
+        let mut checkout = CheckoutState::new(id, tier.clone(), cycle, snapshot);
+        if let Some(opened_at) = opened_at {
+            checkout.opened_at = opened_at;
+        }
+        checkout.phase = CheckoutPhase::Creating;
+        self.checkout = Some(checkout);
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        let req = CheckoutRequest {
+            plan: tier,
+            billing_cycle: cycle,
+        };
+        iced::Task::perform(
+            async move {
+                client.create_checkout(req).await.map_err(|e| {
+                    use crate::services::coincube::CoincubeError;
+                    let refused = matches!(
+                        &e,
+                        CoincubeError::Unsuccessful(info)
+                            if (400..500).contains(&info.status_code)
+                                && info.status_code != 401
+                                && info.status_code != 408
+                                && info.status_code != 429
+                    );
+                    (e.to_string(), refused)
+                })
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CheckoutCreated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_lightning_checkout(
+        &mut self,
+        result: Result<crate::services::coincube::CheckoutResponse, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(resp) => {
+                let qr = qr_code::Data::new(&resp.lightning_invoice).ok();
+                let onchain =
+                    qr_code::Data::new(bip21_uri(&resp.on_chain_address, resp.amount_sats)).ok();
+                let cs = self.checkout.as_mut().expect("checked above");
+                cs.phase = CheckoutPhase::AwaitingPayment;
+                cs.checkout = Some(resp);
+                cs.lightning_qr = qr;
+                cs.onchain_qr = onchain;
+                cs.poll_errors = 0;
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PollChargeStatus(id),
+                )));
+            }
+            Err((message, refused)) => {
+                if let Some(cs) = &mut self.checkout {
+                    cs.phase = CheckoutPhase::Failed { message, refused };
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn poll_lightning_charge(&mut self, id: u64) -> iced::Task<Message> {
+        let should_poll = self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| cs.id == id && cs.phase.polls());
+        if !should_poll {
+            return iced::Task::none();
+        }
+        let charge_id = self
+            .checkout
+            .as_ref()
+            .and_then(|cs| cs.checkout.as_ref())
+            .map(|c| c.charge_id.clone())
+            .unwrap_or_default();
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                client.get_charge_status(&charge_id).await.map_err(|e| {
+                    use crate::services::coincube::CoincubeError;
+                    match &e {
+                        // 4xx errors are terminal — don't retry
+                        CoincubeError::Unsuccessful(info)
+                            if (400..500).contains(&info.status_code) =>
+                        {
+                            (e.to_string(), true)
+                        }
+                        _ => (e.to_string(), false),
+                    }
+                })
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::ChargeStatusUpdated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_lightning_charge_status(
+        &mut self,
+        result: Result<crate::services::coincube::ChargeStatusResponse, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        // Only the current checkout's poll chain may move it: a poll
+        // in flight from a dismissed or replaced invoice is dropped.
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::PollChargeStatus(id),
+        )));
+        let cs = self.checkout.as_mut().expect("checked above");
+        if !cs.phase.polls() {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(status) => {
+                cs.poll_errors = 0;
+                let (phase, keep_polling, paid) = next_checkout_phase(&cs.phase, &status);
+                if let CheckoutPhase::PartlyPaid { due_sats, .. } = &phase {
+                    // Same address, the remaining amount.
+                    if let Some(resp) = cs.checkout.as_ref() {
+                        cs.onchain_qr =
+                            qr_code::Data::new(bip21_uri(&resp.on_chain_address, *due_sats)).ok();
+                    }
+                    cs.network = PaymentNetwork::OnChain;
+                }
+                cs.phase = phase;
+                cs.last_status = Some(status);
+                if paid {
+                    // Refresh the plan and the history the receipt
+                    // lands in.
+                    self.billing_history = None;
+                    return self.reload_plan_billing();
+                }
+                if keep_polling {
+                    return poll;
+                }
+            }
+            Err((e, terminal)) => {
+                if Self::should_retry_lightning_poll(cs, e, terminal) {
+                    return poll;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn should_retry_lightning_poll(cs: &mut CheckoutState, e: String, terminal: bool) -> bool {
+        if terminal {
+            log::error!("[CONNECT] Charge poll terminal error: {}", e);
+            cs.resume_phase = Some(cs.phase.clone());
+            cs.phase = CheckoutPhase::PollFailed(e);
+        } else {
+            cs.poll_errors += 1;
+            if cs.poll_errors >= 3 {
+                log::error!(
+                    "[CONNECT] Charge poll failed after {} retries: {}",
+                    cs.poll_errors,
+                    e
+                );
+                cs.resume_phase = Some(cs.phase.clone());
+                cs.phase = CheckoutPhase::PollFailed(e);
+            } else {
+                log::warn!("[CONNECT] Charge poll error ({}/3): {}", cs.poll_errors, e);
+                return true;
+            }
+        }
+        false
+    }
+
+    fn set_checkout_review_cycle(
+        &mut self,
+        cycle: crate::services::coincube::BillingCycle,
+    ) -> iced::Task<Message> {
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::Review)
+        {
+            cs.cycle = cycle;
+            self.selected_billing_cycle = cycle;
+            // Monthly → annual on a card is a card upgrade even with
+            // auto-renewal off: switch to the card change preview
+            // instead of a bitcoin invoice the API would refuse.
+            let tier = cs.tier.clone();
+            if self.card_change_route(&tier, cycle) {
+                return iced::Task::done(Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::ReviewPlanChange(tier),
+                )));
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn set_checkout_payment_method(
+        &mut self,
+        pay_with: crate::app::state::connect::account::PayWith,
+    ) -> iced::Task<Message> {
+        let card_ok =
+            self.card_payments_enabled() && !self.plan.as_ref().is_some_and(|p| p.is_card());
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::Review)
+        {
+            cs.pay_with = if pay_with == PayWith::Card && !card_ok {
+                PayWith::Bitcoin
+            } else {
+                pay_with
+            };
+        }
+        iced::Task::none()
+    }
+
+    fn start_connect_card_checkout(&mut self) -> iced::Task<Message> {
+        if !self.purchasing_enabled() || !self.card_payments_enabled() {
+            return iced::Task::none();
+        }
+        let Some(cs) = self.checkout.as_mut().filter(|cs| {
+            matches!(
+                cs.phase,
+                CheckoutPhase::Review
+                    | CheckoutPhase::CardCancelled
+                    | CheckoutPhase::CardFailed { .. }
+            ) && cs.tier != PlanTier::Free
+        }) else {
+            return iced::Task::none();
+        };
+        self.checkout_seq += 1;
+        let id = self.checkout_seq;
+        cs.id = id;
+        cs.pay_with = PayWith::Card;
+        cs.phase = CheckoutPhase::CardOpening;
+        cs.card_session = None;
+        cs.browser_polls = 0;
+        cs.poll_errors = 0;
+        let req = PlanChangeRequest {
+            plan: cs.tier.clone(),
+            billing_cycle: cs.cycle,
+            proration_date: None,
+        };
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.create_card_checkout(req).await.map_err(refusal) },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardCheckoutCreated(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_card_checkout(
+        &mut self,
+        result: Result<crate::services::coincube::CardCheckoutSession, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::CardOpening {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(session) => {
+                let url = session.url.clone();
+                cs.card_session = Some(session);
+                cs.phase = CheckoutPhase::CardInBrowser;
+                // Card details are entered on Stripe's page only (I1).
+                return iced::Task::batch([
+                    iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                    iced::Task::done(Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::PollCardPlan(id),
+                    ))),
+                ]);
+            }
+            Err((message, refused)) => {
+                cs.phase = CheckoutPhase::CardFailed { message, refused };
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn poll_connect_card_plan(&mut self, id: u64) -> iced::Task<Message> {
+        if !self
+            .checkout
+            .as_ref()
+            .is_some_and(|cs| cs.id == id && cs.phase.polls_plan())
+        {
+            return iced::Task::none();
+        }
+        let gen = self.session_generation;
+        // Sequenced when sent, like every other plan fetch, so it
+        // never outranks a reload sent after it.
+        self.plan_seq = self.plan_seq.wrapping_add(1);
+        let seq = self.plan_seq;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                client.get_connect_plan().await.map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardPlanPolled(result, gen, id, seq),
+                ))
+            },
+        )
+    }
+
+    fn apply_polled_card_plan(
+        &mut self,
+        result: Result<crate::services::coincube::ConnectPlan, String>,
+        gen: u64,
+        id: u64,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let poll = iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::PollCardPlan(id),
+        )));
+        let now = chrono::Utc::now();
+        let cs = self.checkout.as_mut().expect("checked above");
+        if !cs.phase.polls_plan() {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(plan) => {
+                cs.poll_errors = 0;
+                cs.browser_polls = cs.browser_polls.saturating_add(1);
+                let next = next_card_phase(&cs.phase, cs, &plan, now);
+                let done = next != cs.phase;
+                cs.phase = next;
+                if done && !cs.phase.polls_plan() {
+                    if matches!(
+                        cs.phase,
+                        CheckoutPhase::CardActive | CheckoutPhase::ChangeDone { .. }
+                    ) {
+                        return self.apply_settled_card_plan(plan, seq);
+                    }
+                    return iced::Task::none();
+                }
+                if cs.browser_polls >= MAX_BROWSER_POLLS {
+                    cs.phase =
+                        CheckoutPhase::PollFailed("Still waiting after 30 minutes".to_string());
+                    return iced::Task::none();
+                }
+                return poll;
+            }
+            Err(e) => {
+                cs.poll_errors += 1;
+                if cs.poll_errors >= 3 {
+                    log::error!("[CONNECT] Card plan poll failed: {}", e);
+                    cs.phase = CheckoutPhase::PollFailed(e);
+                } else {
+                    return poll;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_settled_card_plan(&mut self, plan: ConnectPlan, seq: u64) -> iced::Task<Message> {
+        self.billing_history = None;
+        let history = self.reload_billing_history();
+        // Same ordering rule as `PlanReloaded`: a
+        // newer answer already shown wins.
+        if seq > self.applied_plan_seq {
+            self.applied_plan_seq = seq;
+            self.apply_loaded_plan(Some(plan));
+        }
+        // The poll waits before it reads, so a fetch
+        // sent after it may have read the server
+        // first, whichever response lands first.
+        // Fetch once more so the screen settles on
+        // the current plan.
+        if self.plan_seq != seq {
+            let fresh = self.plan_fetch_task();
+            return iced::Task::batch([history, fresh]);
+        }
+        history
+    }
+
+    fn return_to_checkout_review(
+        &mut self,
+        pay_with: crate::app::state::connect::account::PayWith,
+    ) -> iced::Task<Message> {
+        // "Cancel" on the browser screen, "Try card again" and "Pay
+        // with bitcoin instead" (C2, C4, C5): back to Review with a
+        // new generation, so a late poll can't move it.
+        if let Some(cs) = self.checkout.as_mut().filter(|cs| {
+            matches!(
+                cs.phase,
+                CheckoutPhase::CardInBrowser
+                    | CheckoutPhase::CardCancelled
+                    | CheckoutPhase::CardFailed { .. }
+            )
+        }) {
+            self.checkout_seq += 1;
+            cs.id = self.checkout_seq;
+            cs.phase = CheckoutPhase::Review;
+            cs.pay_with = pay_with;
+            cs.card_session = None;
+            cs.browser_polls = 0;
+            cs.poll_errors = 0;
+        }
+        iced::Task::none()
+    }
+
+    fn apply_plan_change_preview(
+        &mut self,
+        result: Result<crate::services::coincube::PlanChangePreview, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::ChangePreviewing {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(preview) => {
+                cs.preview = Some(preview);
+                cs.phase = CheckoutPhase::ChangeReview;
+            }
+            Err((message, refused)) => {
+                cs.phase = CheckoutPhase::ChangeFailed { message, refused };
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_connect_plan_change(&mut self) -> iced::Task<Message> {
+        let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::ChangeReview)
+        else {
+            return iced::Task::none();
+        };
+        cs.phase = CheckoutPhase::ChangeApplying;
+        let id = cs.id;
+        let req = PlanChangeRequest {
+            plan: cs.tier.clone(),
+            billing_cycle: cs.cycle,
+            proration_date: cs.preview.as_ref().and_then(|p| p.proration_date.clone()),
+        };
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.change_plan(req).await.map_err(refusal) },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::PlanChangeApplied(result, gen, id),
+                ))
+            },
+        )
+    }
+
+    fn apply_connect_plan_change(
+        &mut self,
+        result: Result<crate::services::coincube::PlanChangeResult, (String, bool)>,
+        gen: u64,
+        id: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation || !self.is_current_checkout(id) {
+            return iced::Task::none();
+        }
+        let cs = self.checkout.as_mut().expect("checked above");
+        if cs.phase != CheckoutPhase::ChangeApplying {
+            return iced::Task::none();
+        }
+        match result {
+            Ok(change) => match change.status.as_str() {
+                "requires_action" => match change.url.filter(|u| !u.is_empty()) {
+                    Some(url) => {
+                        cs.action_url = Some(url.clone());
+                        cs.phase = CheckoutPhase::ChangeInBrowser;
+                        return iced::Task::batch([
+                            iced::Task::done(Message::View(view::Message::OpenUrl(url))),
+                            iced::Task::done(Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::PollCardPlan(id),
+                            ))),
+                        ]);
+                    }
+                    // Nothing says whether the change took effect:
+                    // never claim it failed with nothing charged.
+                    None => {
+                        return self.enter_change_unconfirmed(
+                            "Your bank asked to confirm the payment, but Connect \
+                             sent no page to confirm it on"
+                                .to_string(),
+                        );
+                    }
+                },
+                "paid" | "scheduled" => {
+                    cs.phase = CheckoutPhase::ChangeDone {
+                        scheduled: change.status == "scheduled",
+                    };
+                    return self.reload_plan_billing();
+                }
+                other => {
+                    log::warn!("[CONNECT] Unexpected plan change status {:?}", other);
+                    let message = format!(
+                        "Connect returned \"{other}\", which this version of COINCUBE Desktop \
+                         doesn't know"
+                    );
+                    return self.enter_change_unconfirmed(message);
+                }
+            },
+            // A refusal changed nothing. Anything else (no answer, a
+            // 5xx) may have applied the change and charged the card:
+            // say so and reload the plan.
+            Err((message, true)) => {
+                cs.phase = CheckoutPhase::ChangeFailed {
+                    message,
+                    refused: true,
+                };
+            }
+            Err((message, false)) => {
+                return self.enter_change_unconfirmed(message);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn set_connect_auto_renew(&mut self, enabled: bool) -> iced::Task<Message> {
+        if self.card_request_busy {
+            return iced::Task::none();
+        }
+        self.card_request_busy = true;
+        self.card_request_error = None;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .set_auto_renew(enabled)
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardRequestDone(result.map(|_| None), gen),
+                ))
+            },
+        )
+    }
+
+    fn open_connect_card_portal(&mut self) -> iced::Task<Message> {
+        if self.card_request_busy {
+            return iced::Task::none();
+        }
+        self.card_request_busy = true;
+        self.card_request_error = None;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_card_portal()
+                    .await
+                    .map(|p| Some(p.url))
+                    .map_err(|e| e.to_string())
+            },
+            move |result| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::CardRequestDone(result, gen),
+                ))
+            },
+        )
+    }
+
+    fn apply_connect_card_request(
+        &mut self,
+        result: Result<Option<String>, String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.card_request_busy = false;
+        match result {
+            // The portal: open Stripe's page (update card only, I1).
+            Ok(Some(url)) => {
+                return iced::Task::done(Message::View(view::Message::OpenUrl(url)));
+            }
+            Ok(None) => {
+                self.confirm_auto_renew_off = false;
+                return self.reload_plan_billing();
+            }
+            Err(e) => {
+                self.card_request_error = Some(e);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn resume_lightning_charge_polling(&mut self) -> iced::Task<Message> {
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| matches!(cs.phase, CheckoutPhase::PollFailed(_)))
+        {
+            cs.poll_errors = 0;
+            cs.browser_polls = 0;
+            let id = cs.id;
+            // Resume whichever chain stopped: the card checkout or
+            // 3-D Secure confirmation polls the plan; an invoice
+            // polls its charge.
+            let msg = if cs.action_url.is_some() {
+                cs.phase = CheckoutPhase::ChangeInBrowser;
+                ConnectAccountMessage::PollCardPlan(id)
+            } else if cs.card_session.is_some() {
+                cs.phase = CheckoutPhase::CardInBrowser;
+                ConnectAccountMessage::PollCardPlan(id)
+            } else {
+                // Back to the phase polling stopped in (never a
+                // fresh "send the full amount" after a partial
+                // payment).
+                cs.phase = cs
+                    .resume_phase
+                    .take()
+                    .filter(CheckoutPhase::polls)
+                    .unwrap_or(CheckoutPhase::AwaitingPayment);
+                ConnectAccountMessage::PollChargeStatus(id)
+            };
+            return iced::Task::done(Message::View(view::Message::ConnectAccount(msg)));
+        }
+        iced::Task::none()
+    }
+
+    fn open_connect_checkout_url(&mut self, url: String) -> iced::Task<Message> {
+        // B4: the BTCPay page is open. The poll chain keeps running
+        // (PayingInBrowser polls), so this screen still updates.
+        if let Some(cs) = self
+            .checkout
+            .as_mut()
+            .filter(|cs| cs.phase == CheckoutPhase::AwaitingPayment)
+        {
+            cs.phase = CheckoutPhase::PayingInBrowser;
+        }
+        iced::Task::done(Message::View(view::Message::OpenUrl(url)))
+    }
+
+    fn renew_connect_plan(&mut self) -> iced::Task<Message> {
+        // D1 banner CTA: jump to Plan & Billing and open checkout
+        // pre-selected to the user's current tier + cycle.
+        let Some(plan) = self.plan.as_ref() else {
+            return iced::Task::none();
+        };
+        let tier = plan.plan.clone();
+        let cycle = plan.billing_cycle;
+        self.active_sub = ConnectSubMenu::PlanBilling;
+        // Same routing concern as OpenPlanBilling: a stale history
+        // toggle would mask the picker on the Free/lapsed fallback
+        // path below (where no checkout is started).
+        self.show_billing_history = false;
+        self.show_plan_comparison = false;
+        // A Free/lapsed plan has no tier to pre-fill an invoice for
+        // — fall back to the picker.
+        if matches!(tier, PlanTier::Free) {
+            self.show_plan_comparison = true;
+            return iced::Task::none();
+        }
+        if let Some(cycle) = cycle {
+            self.selected_billing_cycle = cycle;
+        }
+        // Renew goes through Review (board 1 "Renew Pro" → board 3)
+        // so the amount and covered dates are shown before an
+        // invoice is created.
+        iced::Task::done(Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::ReviewPlanChange(tier),
+        )))
+    }
+
+    fn toggle_connect_billing_history(&mut self) -> iced::Task<Message> {
+        self.show_billing_history = !self.show_billing_history;
+        if self.show_billing_history {
+            self.show_plan_comparison = false;
+            let gen = self.session_generation;
+            let c2 = self.client.clone();
+            return iced::Task::batch([
+                self.reload_billing_history(),
+                iced::Task::perform(
+                    async move {
+                        match c2.get_user().await {
+                            Ok(u) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileLoaded(u, gen),
+                            )),
+                            Err(e) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
+                            )),
+                        }
+                    },
+                    |m| m,
+                ),
+            ]);
+        }
+        iced::Task::none()
+    }
+
+    fn apply_loaded_billing_history(
+        &mut self,
+        result: Result<Vec<crate::services::coincube::BillingHistoryEntry>, UserError>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            match result {
+                Ok(history) => {
+                    self.billing_history = Some(history);
+                    self.error = None;
+                }
+                Err(user) => {
+                    // Retryability and the `Ref:` come from the error
+                    // itself. Hardcoding them meant a 401 or a plan-gate
+                    // 403 — both perfectly likely on a *billing* screen —
+                    // rendered "check your internet connection" over a
+                    // "Try again" button that could only ever reproduce
+                    // the same refusal.
+                    self.error = Some(PanelError::retryable(user, RetryAction::BillingHistory));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn retry_connect_account_action(&mut self, action: RetryAction) -> iced::Task<Message> {
+        // The card is gone the moment its button is pressed: leaving it
+        // up while the retry runs makes a working retry look like a
+        // dead button.
+        self.error = None;
+        match action {
+            RetryAction::Session => {
+                // `Init` re-reads the keyring session and re-fires the
+                // refresh, and already guards against re-entry while one
+                // is in flight.
+                self.update_message(ConnectAccountMessage::Init)
+            }
+            RetryAction::SecurityData => self.reload_security(),
+            RetryAction::DeletionStatus => self.load_deletion_status(),
+            RetryAction::UserProfile => {
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                iced::Task::perform(
+                    async move {
+                        match client.get_user().await {
+                            Ok(u) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileLoaded(u, gen),
+                            )),
+                            Err(e) => Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::UserProfileFailed((&e).into(), gen),
+                            )),
+                        }
+                    },
+                    |m| m,
+                )
+            }
+            RetryAction::BillingHistory => {
+                let gen = self.session_generation;
+                let client = self.client.clone();
+                iced::Task::perform(
+                    async move { client.get_billing_history().await },
+                    move |res| match res {
+                        Ok(history) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::BillingHistoryLoaded(Ok(history), gen),
+                        )),
+                        Err(e) => Message::View(view::Message::ConnectAccount(
+                            ConnectAccountMessage::BillingHistoryLoaded(Err((&e).into()), gen),
+                        )),
+                    },
+                )
+            }
+        }
+    }
+
+    fn apply_sign_in_duress_check(
+        &mut self,
+        outcome: crate::services::coincube::DuressCheckOutcome,
+        gen: u64,
+        attempt: u8,
+    ) -> iced::Task<Message> {
+        // Phase 6: post-sign-in gate. We sit in `CheckingDuress` until
+        // this resolves, so the dashboard is never shown to a possibly-
+        // in-duress account.
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match outcome {
+            DuressCheckOutcome::Ok(s) if s.active => {
+                // This signed-in device is the trusted recovery vehicle:
+                // show the all-clear entry. Do NOT persist
+                // DuressLocalState.active here — the launch reconcile
+                // keys off that flag and would route this device into the
+                // cryptic dead-end (which has no all-clear entry) on the
+                // next restart, making recovery impossible. The flag is
+                // owned by the paths that actually lock this device: the
+                // local duress PIN and the in-Cube gRPC remote handler.
+                self.step = ConnectFlowStep::DuressRecovery {
+                    unlock_at: s.unlock_at,
+                    passphrase: String::new(),
+                    submitting: false,
+                    cleared: false,
+                };
+                // Cache the authoritative state we just fetched so the
+                // Duress tab paints from it immediately instead of
+                // flashing the setup flow while a fresh fetch is in
+                // flight (see `duress_ux`).
+                self.duress_state = Some(s);
+            }
+            // Confirmed not in duress — NOW reveal the dashboard.
+            DuressCheckOutcome::Ok(s) => {
+                return self.admit_sign_in_after_duress_check(s);
+            }
+            // Transient (network / 5xx / rate-limit) — retry with
+            // backoff while attempts remain.
+            DuressCheckOutcome::Unreachable if attempt + 1 < DURESS_CHECK_MAX_ATTEMPTS => {
+                return duress_state_check_task(self.client.clone(), gen, attempt + 1);
+            }
+            // Retries exhausted. Fail CLOSED: do not reveal the
+            // dashboard. Show an error + Retry on the checking screen.
+            // (The dashboard is server-backed anyway, so it would be
+            // non-functional during this outage.)
+            DuressCheckOutcome::Unreachable => {
+                log::warn!(
+                    "[CONNECT] duress state check unreachable after {} attempts; \
+                     holding at the verification gate",
+                    attempt + 1
+                );
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Unreachable,
+                };
+            }
+            // The server returned a body we can't decode. Auto-retrying
+            // is futile (it'll mismatch every time), so DON'T loop —
+            // hold closed with distinct copy + an update hint. The body
+            // was already logged in `get_duress_state`. A manual Retry
+            // is still offered in case it's a server bug being hotfixed.
+            DuressCheckOutcome::Incompatible => {
+                log::error!(
+                    "[CONNECT] duress state response is undecodable (contract \
+                     mismatch); holding the gate closed — app may need updating"
+                );
+                self.step = ConnectFlowStep::CheckingDuress {
+                    status: DuressGateStatus::Incompatible,
+                };
+            }
+            // The session was rejected mid-gate. Sitting on the duress
+            // gate would loop forever; drop to login instead.
+            DuressCheckOutcome::Unauthorized => {
+                log::warn!("[CONNECT] duress gate: session rejected (401); returning to login");
+                let was_logged_in = self.user.is_some();
+                // The session is dead — tear it all down (bumps
+                // session_generation so stale async results are ignored,
+                // drops the JWT client, keyring session, and cached
+                // user/plan) so the next Init doesn't restore it.
+                self.clear_session();
+                // Settled, not retryable: the session is gone, so the
+                // card offers no "Try again" — signing in is the only
+                // way forward.
+                self.error = Some(PanelError::settled(UserError::new(
+                    "Your session has expired",
+                    "Sign in again to continue.",
+                    crate::user_error::CC_AUTH_EXPIRED,
+                    false,
+                )));
+                self.step = ConnectFlowStep::Login {
+                    email: String::new(),
+                    loading: false,
+                };
+                // Mirror the normal LogOut path: Buy/Sell shares this
+                // session, so it must drop its stale in-memory token too
+                // rather than keep showing a logged-in state.
+                if was_logged_in {
+                    return iced::Task::done(Message::View(view::Message::BuySell(
+                        view::BuySellMessage::LogOut,
+                    )));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn admit_sign_in_after_duress_check(
+        &mut self,
+        s: crate::services::coincube::DuressState,
+    ) -> iced::Task<Message> {
+        self.step = ConnectFlowStep::Dashboard;
+        self.signing_in_with_authenticator = false;
+        self.signed_out_by = None;
+        self.unverified = None;
+        // Plan & billing opened while the session was still
+        // being checked loaded nothing; load its history now,
+        // on every return path below.
+        let billing = self.billing_history_if_open();
+        // Cache the fetched state before any early return, so the
+        // Duress tab reflects the enabled state on its first paint
+        // rather than briefly showing enrollment CTAs.
+        let needs_device_register = s.enrolled && !s.this_device_registered;
+        let server_enrolled = s.enrolled;
+        self.duress_state = Some(s);
+        // Phase 0: a signed-in device on an already-enrolled
+        // account that isn't yet registered server-side mints +
+        // registers its OWN duress code (per-device, never
+        // shared), so it can fire trigger-with-code on its own
+        // activation. Fire-and-forget; idempotent (skips if this
+        // device already holds a code).
+        if needs_device_register {
+            if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+                return iced::Task::batch([
+                    billing,
+                    register_device_duress_task(self.client.clone(), account_id),
+                ]);
+            }
+        }
+        // Launch reconcile (Issue 2, PR 4): bring this device's
+        // local duress state in line with the server's, catching
+        // a disable missed while offline AND an orphaned device
+        // (Cubes armed while the local state never finished, e.g.
+        // a crash mid-enroll) whose duress PIN would otherwise
+        // still trip a wipe behind a UI that reports it inert.
+        //
+        // `reconcile_duress_disarm` (server says NOT enrolled)
+        // disarms a matching local enrollment or any orphaned
+        // armed Cubes; `reconcile_duress_orphan` (server says
+        // STILL enrolled — reached only with this device already
+        // registered) disarms ONLY an orphan, never a healthy
+        // enrollment. Both no-op cheaply for a consistent device.
+        if let Some(account_id) = self.user.as_ref().map(|u| u.id.to_string()) {
+            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                let gen = self.session_generation;
+                let task = if server_enrolled {
+                    iced::Task::perform(
+                        async move { crate::app::reconcile_duress_orphan(dir).await },
+                        move |res| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
+                                    res, gen,
+                                )),
+                            ))
+                        },
+                    )
+                } else {
+                    iced::Task::perform(
+                        async move { crate::app::reconcile_duress_disarm(dir, account_id).await },
+                        move |res| {
+                            Message::View(view::Message::ConnectAccount(
+                                ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
+                                    res, gen,
+                                )),
+                            ))
+                        },
+                    )
+                };
+                return iced::Task::batch([billing, task]);
+            }
+        }
+        billing
     }
 
     /// Starts (or restarts) the Delete account page's status load.
@@ -4737,76 +5278,16 @@ impl ConnectAccountPanel {
     }
 
     fn update_two_factor(&mut self, msg: TwoFactorSettingsMessage) -> iced::Task<Message> {
-        let wrap = |m: TwoFactorSettingsMessage| {
-            Message::View(view::Message::ConnectAccount(
-                ConnectAccountMessage::TwoFactorSettings(m),
-            ))
-        };
         let tf = &mut self.two_factor;
         match msg {
             TwoFactorSettingsMessage::StatusLoaded(result, seq) => {
-                if seq != tf.status_seq {
-                    return iced::Task::none();
-                }
-                // A failed refresh keeps a status already known: replacing it
-                // would hide an open panel, including codes shown only once.
-                let known = matches!(tf.status, TwoFactorStatusView::Loaded(_));
-                match result {
-                    TwoFactorStatusResult::Loaded(status) => {
-                        tf.status = TwoFactorStatusView::Loaded(status);
-                    }
-                    TwoFactorStatusResult::Unsupported => {
-                        if !known {
-                            tf.status = TwoFactorStatusView::Unsupported;
-                        }
-                    }
-                    TwoFactorStatusResult::Failed(error) => {
-                        log::warn!(
-                            "[CONNECT] authenticator status unavailable: {}",
-                            error.title
-                        );
-                        if !known {
-                            tf.status = TwoFactorStatusView::Failed;
-                        }
-                    }
-                }
+                return self.apply_two_factor_status(result, seq)
             }
 
-            TwoFactorSettingsMessage::StartSetup => {
-                // Only offered once the status says it is off.
-                let off = matches!(&tf.status, TwoFactorStatusView::Loaded(s) if !s.enabled);
-                if tf.busy || !off || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::LoadingSetup;
-                let op = tf.begin();
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.generate_totp().await.map_err(|e| (&e).into()) },
-                    move |res| wrap(TwoFactorSettingsMessage::SetupLoaded(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::StartSetup => return self.start_two_factor_setup(),
 
             TwoFactorSettingsMessage::SetupLoaded(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
-                    return iced::Task::none();
-                }
-                tf.busy = false;
-                match res {
-                    Ok(setup) => {
-                        let qr = qr_code::Data::new(setup.otp_auth_url.as_bytes()).ok();
-                        tf.panel = TwoFactorPanel::Setup { setup, qr };
-                        return iced::widget::operation::focus(
-                            view::connect::TWO_FACTOR_SETTINGS_INPUT_ID,
-                        );
-                    }
-                    Err(error) => {
-                        tf.panel = TwoFactorPanel::Closed;
-                        return self.update_message(ConnectAccountMessage::Error(error));
-                    }
-                }
+                return self.apply_two_factor_setup(res, g)
             }
 
             TwoFactorSettingsMessage::CodeChanged(input) => {
@@ -4819,50 +5300,10 @@ impl ConnectAccountPanel {
                 tf.wrong = false;
             }
 
-            TwoFactorSettingsMessage::ConfirmSetup => {
-                if tf.busy
-                    || !matches!(tf.panel, TwoFactorPanel::Setup { .. })
-                    || !second_factor_code_complete(&tf.code.0, false)
-                {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .enable_totp(&code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Enabled(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::ConfirmSetup => return self.confirm_two_factor_setup(),
 
             TwoFactorSettingsMessage::Enabled(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(codes) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        let total = codes.codes.len() as u32;
-                        tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
-                            enabled: true,
-                            remaining: total,
-                            total,
-                            generated_at: Some(chrono::Utc::now().to_rfc3339()),
-                        });
-                        tf.saved_to_file = None;
-                        tf.panel = TwoFactorPanel::Codes {
-                            codes,
-                            regenerated: false,
-                        };
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_enabled(res, g)
             }
 
             TwoFactorSettingsMessage::CopySetupKey => {
@@ -4878,48 +5319,11 @@ impl ConnectAccountPanel {
             }
 
             TwoFactorSettingsMessage::SaveBackupCodes => {
-                let TwoFactorPanel::Codes { codes, .. } = &tf.panel else {
-                    return iced::Task::none();
-                };
-                let email = self
-                    .user
-                    .as_ref()
-                    .map(|u| u.email.clone())
-                    .unwrap_or_default();
-                let contents = backup_codes_file(&email, codes);
-                let op = tf.op;
-                return iced::Task::perform(
-                    async move {
-                        let Some(handle) = rfd::AsyncFileDialog::new()
-                            .set_title("Save backup codes")
-                            .set_file_name("coincube-connect-backup-codes.txt")
-                            .add_filter("Text", &["txt"])
-                            .save_file()
-                            .await
-                        else {
-                            return Ok(false);
-                        };
-                        write_private_file(handle.path(), contents.as_bytes())
-                            .await
-                            .map(|()| true)
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::BackupCodesSaved(res, op)),
-                );
+                return self.save_two_factor_backup_codes()
             }
 
             TwoFactorSettingsMessage::BackupCodesSaved(res, op) => {
-                // Only for the set it saved: a later set is not in that file.
-                if op == tf.op && matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
-                    match res {
-                        Ok(true) => tf.saved_to_file = Some(Ok(())),
-                        Ok(false) => {}
-                        Err(e) => {
-                            log::warn!("[CONNECT] saving backup codes failed: {e}");
-                            tf.saved_to_file = Some(Err(e));
-                        }
-                    }
-                }
+                return self.apply_two_factor_backup_code_save(res, op)
             }
 
             TwoFactorSettingsMessage::FinishBackupCodes => {
@@ -4930,71 +5334,17 @@ impl ConnectAccountPanel {
                 }
             }
 
-            TwoFactorSettingsMessage::AskRegenerate => {
-                if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::Regenerate;
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-            }
+            TwoFactorSettingsMessage::AskRegenerate => return self.open_two_factor_regeneration(),
 
             TwoFactorSettingsMessage::ConfirmRegenerate => {
-                if tf.busy
-                    || !matches!(tf.panel, TwoFactorPanel::Regenerate)
-                    || !second_factor_code_complete(&tf.code.0, false)
-                {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .regenerate_backup_codes(&code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Regenerated(res, op)),
-                );
+                return self.regenerate_two_factor_backup_codes()
             }
 
             TwoFactorSettingsMessage::Regenerated(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(codes) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        let total = codes.codes.len() as u32;
-                        if let TwoFactorStatusView::Loaded(status) = &mut tf.status {
-                            status.remaining = total;
-                            status.total = total;
-                            status.generated_at = Some(chrono::Utc::now().to_rfc3339());
-                        }
-                        tf.saved_to_file = None;
-                        tf.panel = TwoFactorPanel::Codes {
-                            codes,
-                            regenerated: true,
-                        };
-                        self.backup_codes_notice = None;
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_regeneration(res, g)
             }
 
-            TwoFactorSettingsMessage::AskDisable => {
-                if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.note = None;
-                tf.panel = TwoFactorPanel::Disable { backup: false };
-                return iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID);
-            }
+            TwoFactorSettingsMessage::AskDisable => return self.open_two_factor_disable(),
 
             TwoFactorSettingsMessage::ToggleDisableBackup => {
                 if let (TwoFactorPanel::Disable { backup }, false) = (&mut tf.panel, tf.busy) {
@@ -5007,63 +5357,353 @@ impl ConnectAccountPanel {
                 }
             }
 
-            TwoFactorSettingsMessage::ConfirmDisable => {
-                let TwoFactorPanel::Disable { backup } = tf.panel else {
-                    return iced::Task::none();
-                };
-                if tf.busy || !second_factor_code_complete(&tf.code.0, backup) {
-                    return iced::Task::none();
-                }
-                let op = tf.begin();
-                let code = zeroize::Zeroizing::new(tf.code.0.clone());
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        let code = if backup {
-                            SecondFactorCode::Backup(&code)
-                        } else {
-                            SecondFactorCode::App(&code)
-                        };
-                        client
-                            .disable_totp(code)
-                            .await
-                            .map_err(|e| CodeFailure::classify(&e))
-                    },
-                    move |res| wrap(TwoFactorSettingsMessage::Disabled(res, op)),
-                );
-            }
+            TwoFactorSettingsMessage::ConfirmDisable => return self.confirm_two_factor_disable(),
 
             TwoFactorSettingsMessage::Disabled(res, g) => {
-                if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(()) => {
-                        tf.clear_entry();
-                        tf.supersede_status_loads();
-                        tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
-                            enabled: false,
-                            remaining: 0,
-                            total: 0,
-                            generated_at: None,
-                        });
-                        tf.panel = TwoFactorPanel::Closed;
-                        tf.note = Some(TwoFactorNote::TurnedOff);
-                        self.backup_codes_notice = None;
-                    }
-                    Err(why) => return self.two_factor_failed(why),
-                }
+                return self.apply_two_factor_disabled(res, g)
             }
 
-            TwoFactorSettingsMessage::Cancel => {
-                // The codes panel has no Cancel: the codes are shown once, so
-                // only "I've saved them" closes it.
-                if tf.busy || matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
-                    return iced::Task::none();
-                }
-                tf.clear_entry();
-                tf.panel = TwoFactorPanel::Closed;
+            TwoFactorSettingsMessage::Cancel => return self.cancel_two_factor_settings(),
+        }
+        iced::Task::none()
+    }
+
+    fn open_two_factor_regeneration(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::Regenerate;
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
+    }
+
+    fn open_two_factor_disable(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy || !tf.status.enabled() || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::Disable { backup: false };
+        iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
+    }
+
+    fn cancel_two_factor_settings(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // The codes panel has no Cancel: the codes are shown once, so
+        // only "I've saved them" closes it.
+        if tf.busy || matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.panel = TwoFactorPanel::Closed;
+        iced::Task::none()
+    }
+
+    fn two_factor_settings_message(message: TwoFactorSettingsMessage) -> Message {
+        Message::View(view::Message::ConnectAccount(
+            ConnectAccountMessage::TwoFactorSettings(message),
+        ))
+    }
+
+    fn apply_two_factor_status(
+        &mut self,
+        result: TwoFactorStatusResult,
+        seq: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if seq != tf.status_seq {
+            return iced::Task::none();
+        }
+        // A failed refresh keeps a status already known: replacing it
+        // would hide an open panel, including codes shown only once.
+        let known = matches!(tf.status, TwoFactorStatusView::Loaded(_));
+        match result {
+            TwoFactorStatusResult::Loaded(status) => {
+                tf.status = TwoFactorStatusView::Loaded(status);
             }
+            TwoFactorStatusResult::Unsupported => {
+                if !known {
+                    tf.status = TwoFactorStatusView::Unsupported;
+                }
+            }
+            TwoFactorStatusResult::Failed(error) => {
+                log::warn!(
+                    "[CONNECT] authenticator status unavailable: {}",
+                    error.title
+                );
+                if !known {
+                    tf.status = TwoFactorStatusView::Failed;
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn start_two_factor_setup(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // Only offered once the status says it is off.
+        let off = matches!(&tf.status, TwoFactorStatusView::Loaded(s) if !s.enabled);
+        if tf.busy || !off || !matches!(tf.panel, TwoFactorPanel::Closed) {
+            return iced::Task::none();
+        }
+        tf.clear_entry();
+        tf.note = None;
+        tf.panel = TwoFactorPanel::LoadingSetup;
+        let op = tf.begin();
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.generate_totp().await.map_err(|e| (&e).into()) },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::SetupLoaded(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_setup(
+        &mut self,
+        res: Result<crate::services::coincube::TotpSetup, UserError>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::LoadingSetup) {
+            return iced::Task::none();
+        }
+        tf.busy = false;
+        match res {
+            Ok(setup) => {
+                let qr = qr_code::Data::new(setup.otp_auth_url.as_bytes()).ok();
+                tf.panel = TwoFactorPanel::Setup { setup, qr };
+                iced::widget::operation::focus(view::connect::TWO_FACTOR_SETTINGS_INPUT_ID)
+            }
+            Err(error) => {
+                tf.panel = TwoFactorPanel::Closed;
+                self.update_message(ConnectAccountMessage::Error(error))
+            }
+        }
+    }
+
+    fn confirm_two_factor_setup(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy
+            || !matches!(tf.panel, TwoFactorPanel::Setup { .. })
+            || !second_factor_code_complete(&tf.code.0, false)
+        {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .enable_totp(&code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Enabled(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_enabled(
+        &mut self,
+        res: Result<crate::services::coincube::BackupCodes, CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Setup { .. }) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(codes) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                let total = codes.codes.len() as u32;
+                tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+                    enabled: true,
+                    remaining: total,
+                    total,
+                    generated_at: Some(chrono::Utc::now().to_rfc3339()),
+                });
+                tf.saved_to_file = None;
+                tf.panel = TwoFactorPanel::Codes {
+                    codes,
+                    regenerated: false,
+                };
+            }
+            Err(why) => return self.two_factor_failed(why),
+        }
+        iced::Task::none()
+    }
+
+    fn save_two_factor_backup_codes(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        let TwoFactorPanel::Codes { codes, .. } = &tf.panel else {
+            return iced::Task::none();
+        };
+        let email = self
+            .user
+            .as_ref()
+            .map(|u| u.email.clone())
+            .unwrap_or_default();
+        let contents = backup_codes_file(&email, codes);
+        let op = tf.op;
+        iced::Task::perform(
+            async move {
+                let Some(handle) = rfd::AsyncFileDialog::new()
+                    .set_title("Save backup codes")
+                    .set_file_name("coincube-connect-backup-codes.txt")
+                    .add_filter("Text", &["txt"])
+                    .save_file()
+                    .await
+                else {
+                    return Ok(false);
+                };
+                write_private_file(handle.path(), contents.as_bytes())
+                    .await
+                    .map(|()| true)
+                    .map_err(|e| e.to_string())
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::BackupCodesSaved(
+                    res, op,
+                ))
+            },
+        )
+    }
+
+    fn apply_two_factor_backup_code_save(
+        &mut self,
+        res: Result<bool, String>,
+        op: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        // Only for the set it saved: a later set is not in that file.
+        if op == tf.op && matches!(tf.panel, TwoFactorPanel::Codes { .. }) {
+            match res {
+                Ok(true) => tf.saved_to_file = Some(Ok(())),
+                Ok(false) => {}
+                Err(e) => {
+                    log::warn!("[CONNECT] saving backup codes failed: {e}");
+                    tf.saved_to_file = Some(Err(e));
+                }
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn regenerate_two_factor_backup_codes(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if tf.busy
+            || !matches!(tf.panel, TwoFactorPanel::Regenerate)
+            || !second_factor_code_complete(&tf.code.0, false)
+        {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .regenerate_backup_codes(&code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Regenerated(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_regeneration(
+        &mut self,
+        res: Result<crate::services::coincube::BackupCodes, CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Regenerate) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(codes) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                let total = codes.codes.len() as u32;
+                if let TwoFactorStatusView::Loaded(status) = &mut tf.status {
+                    status.remaining = total;
+                    status.total = total;
+                    status.generated_at = Some(chrono::Utc::now().to_rfc3339());
+                }
+                tf.saved_to_file = None;
+                tf.panel = TwoFactorPanel::Codes {
+                    codes,
+                    regenerated: true,
+                };
+                self.backup_codes_notice = None;
+            }
+            Err(why) => return self.two_factor_failed(why),
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_two_factor_disable(&mut self) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        let TwoFactorPanel::Disable { backup } = tf.panel else {
+            return iced::Task::none();
+        };
+        if tf.busy || !second_factor_code_complete(&tf.code.0, backup) {
+            return iced::Task::none();
+        }
+        let op = tf.begin();
+        let code = zeroize::Zeroizing::new(tf.code.0.clone());
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                let code = if backup {
+                    SecondFactorCode::Backup(&code)
+                } else {
+                    SecondFactorCode::App(&code)
+                };
+                client
+                    .disable_totp(code)
+                    .await
+                    .map_err(|e| CodeFailure::classify(&e))
+            },
+            move |res| {
+                Self::two_factor_settings_message(TwoFactorSettingsMessage::Disabled(res, op))
+            },
+        )
+    }
+
+    fn apply_two_factor_disabled(
+        &mut self,
+        res: Result<(), CodeFailure>,
+        g: u64,
+    ) -> iced::Task<Message> {
+        let tf = &mut self.two_factor;
+        if g != tf.op || !matches!(tf.panel, TwoFactorPanel::Disable { .. }) {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                tf.clear_entry();
+                tf.supersede_status_loads();
+                tf.status = TwoFactorStatusView::Loaded(TwoFactorStatus {
+                    enabled: false,
+                    remaining: 0,
+                    total: 0,
+                    generated_at: None,
+                });
+                tf.panel = TwoFactorPanel::Closed;
+                tf.note = Some(TwoFactorNote::TurnedOff);
+                self.backup_codes_notice = None;
+            }
+            Err(why) => return self.two_factor_failed(why),
         }
         iced::Task::none()
     }
@@ -5233,7 +5873,6 @@ impl ConnectAccountPanel {
     /// for a downgraded account (it just shows the locked affordance), so
     /// reads aren't re-gated here beyond `reload_duress_contacts`.
     fn update_duress_contacts(&mut self, msg: DuressContactsMessage) -> iced::Task<Message> {
-        use crate::services::coincube::is_valid_e164;
         match msg {
             DuressContactsMessage::Loaded(res, gen) => {
                 if gen != self.session_generation {
@@ -5298,291 +5937,270 @@ impl ConnectAccountPanel {
             DuressContactsMessage::ToggleSms(b) => self.duress_contacts.form_ch_sms = b,
             DuressContactsMessage::ToggleWhatsapp(b) => self.duress_contacts.form_ch_whatsapp = b,
             DuressContactsMessage::ToggleEmailChannel(b) => self.duress_contacts.form_ch_email = b,
-            DuressContactsMessage::Submit => {
-                // A submit is already in flight — drop the duplicate before it
-                // spawns a second request. The button is view-disabled while
-                // `submitting`, but iced can enqueue two presses in one frame
-                // before the re-render lands, and create isn't idempotent (a
-                // double would make two contacts).
-                if self.duress_contacts.submitting {
-                    return iced::Task::none();
-                }
-                if !self.is_duress_alerts_entitled() {
-                    self.duress_contacts.error =
-                        Some("Emergency contacts require an Estate plan.".to_string());
-                    return iced::Task::none();
-                }
-                // Validate the form. `validate_duress_contact_form` returns
-                // the normalised (name, phone, email, channels) tuple or a
-                // user-facing error.
-                let dc = &mut self.duress_contacts;
-                let name = dc.form_name.trim().to_string();
-                let phone = dc.form_phone.trim().to_string();
-                let email = dc.form_email.trim().to_string();
-                if name.is_empty() {
-                    dc.error = Some("Add a name for this contact.".to_string());
-                    return iced::Task::none();
-                }
-                if phone.is_empty() && email.is_empty() {
-                    dc.error =
-                        Some("Add a phone number or an email so we can reach them.".to_string());
-                    return iced::Task::none();
-                }
-                if !phone.is_empty() && !is_valid_e164(&phone) {
-                    dc.error = Some(
-                        "Enter the phone in international format, e.g. +15551234567.".to_string(),
-                    );
-                    return iced::Task::none();
-                }
-                if !email.is_empty()
-                    && email_address::EmailAddress::parse_with_options(
-                        &email,
-                        email_address::Options::default().with_required_tld(),
-                    )
-                    .is_err()
-                {
-                    dc.error = Some("That email doesn't look right.".to_string());
-                    return iced::Task::none();
-                }
-                let mut channels = Vec::new();
-                if dc.form_ch_sms && !phone.is_empty() {
-                    channels.push(DURESS_CHANNEL_SMS.to_string());
-                }
-                if dc.form_ch_whatsapp && !phone.is_empty() {
-                    channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
-                }
-                if dc.form_ch_email && !email.is_empty() {
-                    channels.push(DURESS_CHANNEL_EMAIL.to_string());
-                }
-                if channels.is_empty() {
-                    dc.error = Some(
-                        "Pick at least one way to reach them (SMS, WhatsApp, or email)."
-                            .to_string(),
-                    );
-                    return iced::Task::none();
-                }
-                let editing_id = dc.editing_id;
-                // Cap is only enforced on create — an edit of an existing
-                // contact is always allowed even at the cap.
-                if editing_id.is_none() && dc.at_cap() {
-                    dc.error = Some(coincube_ui::localized_format!(
-                        "You can configure up to {} emergency contacts.",
-                        "Puedes configurar hasta {} contactos de emergencia.",
-                        MAX_DURESS_ALERT_CONTACTS
-                    ));
-                    return iced::Task::none();
-                }
-                dc.submitting = true;
-                dc.error = None;
-                let phone_opt = (!phone.is_empty()).then_some(phone);
-                let email_opt = (!email.is_empty()).then_some(email);
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return match editing_id {
-                    None => {
-                        let req = CreateDuressAlertContactRequest {
-                            display_name: name,
-                            phone: phone_opt,
-                            email: email_opt,
-                            channels,
-                        };
-                        iced::Task::perform(
-                            async move { client.create_duress_alert_contact(req).await },
-                            move |res| {
-                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
-                                    res.map(|_| ()).map_err(|e| e.to_string()),
-                                    gen,
-                                ))
-                            },
-                        )
-                    }
-                    Some(id) => {
-                        let req = UpdateDuressAlertContactRequest {
-                            display_name: Some(name),
-                            // Send explicit phone/email so clearing one in the
-                            // edit form persists. A `None` here would mean
-                            // "untouched"; we always send the current field
-                            // values (empty string maps to null server-side).
-                            phone: Some(phone_opt.unwrap_or_default()),
-                            email: Some(email_opt.unwrap_or_default()),
-                            channels: Some(channels),
-                        };
-                        iced::Task::perform(
-                            async move { client.update_duress_alert_contact(id, req).await },
-                            move |res| {
-                                duress_contacts_msg(DuressContactsMessage::SubmitResult(
-                                    res.map(|_| ()).map_err(|e| e.to_string()),
-                                    gen,
-                                ))
-                            },
-                        )
-                    }
-                };
-            }
+            DuressContactsMessage::Submit => return self.submit_duress_contact(),
             DuressContactsMessage::SubmitResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.submitting = false;
-                match res {
-                    Ok(()) => {
-                        // Back to the list and refetch the authoritative set
-                        // (the create response's `intro_sent_at` may lag the
-                        // async send, so a refetch is the source of truth).
-                        return self.reload_duress_contacts();
-                    }
-                    Err(e) => self.duress_contacts.error = Some(e),
-                }
+                return self.apply_duress_contact_submit(res, gen)
             }
-            DuressContactsMessage::Delete(id) => {
-                if !self.is_duress_alerts_entitled() {
-                    return iced::Task::none();
-                }
-                // Same-row delete already in flight — drop the duplicate
-                // before issuing a second DELETE (see the Submit guard above).
-                if self.duress_contacts.deleting_ids.contains(&id) {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.deleting_ids.insert(id);
-                self.duress_contacts.error = None;
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.delete_duress_alert_contact(id).await },
-                    move |res| {
-                        duress_contacts_msg(DuressContactsMessage::DeleteResult(
-                            id,
-                            res.map_err(|e| e.to_string()),
-                            gen,
-                        ))
-                    },
-                );
-            }
+            DuressContactsMessage::Delete(id) => return self.delete_duress_contact(id),
             DuressContactsMessage::DeleteResult(id, res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                self.duress_contacts.deleting_ids.remove(&id);
-                match res {
-                    Ok(()) => {
-                        // Optimistically drop the row, then refetch.
-                        if let Some(cs) = self.duress_contacts.contacts.as_mut() {
-                            cs.retain(|c| c.id != id);
-                        }
-                        return self.reload_duress_contacts();
-                    }
-                    Err(e) => self.duress_contacts.error = Some(e),
-                }
+                return self.apply_duress_contact_delete(id, res, gen)
             }
         }
         iced::Task::none()
     }
 
-    /// Recovery flow (Phase 6) + enrollment wizard (Phases 2 & 8) dispatcher.
+    fn apply_duress_contact_submit(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.duress_contacts.submitting = false;
+        match res {
+            Ok(()) => {
+                // Back to the list and refetch the authoritative set
+                // (the create response's `intro_sent_at` may lag the
+                // async send, so a refetch is the source of truth).
+                return self.reload_duress_contacts();
+            }
+            Err(e) => self.duress_contacts.error = Some(e),
+        }
+        iced::Task::none()
+    }
+
+    fn submit_duress_contact(&mut self) -> iced::Task<Message> {
+        // A submit is already in flight — drop the duplicate before it
+        // spawns a second request. The button is view-disabled while
+        // `submitting`, but iced can enqueue two presses in one frame
+        // before the re-render lands, and create isn't idempotent (a
+        // double would make two contacts).
+        if self.duress_contacts.submitting {
+            return iced::Task::none();
+        }
+        if !self.is_duress_alerts_entitled() {
+            self.duress_contacts.error =
+                Some("Emergency contacts require an Estate plan.".to_string());
+            return iced::Task::none();
+        }
+        let dc = &mut self.duress_contacts;
+        let Some(ValidatedDuressContact {
+            name,
+            phone,
+            email,
+            channels,
+        }) = Self::validate_duress_contact_form(dc)
+        else {
+            return iced::Task::none();
+        };
+        let editing_id = dc.editing_id;
+        // Cap is only enforced on create — an edit of an existing
+        // contact is always allowed even at the cap.
+        if editing_id.is_none() && dc.at_cap() {
+            dc.error = Some(coincube_ui::localized_format!(
+                "You can configure up to {} emergency contacts.",
+                "Puedes configurar hasta {} contactos de emergencia.",
+                MAX_DURESS_ALERT_CONTACTS
+            ));
+            return iced::Task::none();
+        }
+        dc.submitting = true;
+        dc.error = None;
+        let phone_opt = (!phone.is_empty()).then_some(phone);
+        let email_opt = (!email.is_empty()).then_some(email);
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        match editing_id {
+            None => {
+                let req = CreateDuressAlertContactRequest {
+                    display_name: name,
+                    phone: phone_opt,
+                    email: email_opt,
+                    channels,
+                };
+                iced::Task::perform(
+                    async move { client.create_duress_alert_contact(req).await },
+                    move |res| {
+                        duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                            res.map(|_| ()).map_err(|e| e.to_string()),
+                            gen,
+                        ))
+                    },
+                )
+            }
+            Some(id) => {
+                let req = UpdateDuressAlertContactRequest {
+                    display_name: Some(name),
+                    // Send explicit phone/email so clearing one in the
+                    // edit form persists. A `None` here would mean
+                    // "untouched"; we always send the current field
+                    // values (empty string maps to null server-side).
+                    phone: Some(phone_opt.unwrap_or_default()),
+                    email: Some(email_opt.unwrap_or_default()),
+                    channels: Some(channels),
+                };
+                iced::Task::perform(
+                    async move { client.update_duress_alert_contact(id, req).await },
+                    move |res| {
+                        duress_contacts_msg(DuressContactsMessage::SubmitResult(
+                            res.map(|_| ()).map_err(|e| e.to_string()),
+                            gen,
+                        ))
+                    },
+                )
+            }
+        }
+    }
+
+    fn validate_duress_contact_form(
+        dc: &mut DuressContactsState,
+    ) -> Option<ValidatedDuressContact> {
+        use crate::services::coincube::is_valid_e164;
+        let name = dc.form_name.trim().to_string();
+        let phone = dc.form_phone.trim().to_string();
+        let email = dc.form_email.trim().to_string();
+        if name.is_empty() {
+            dc.error = Some("Add a name for this contact.".to_string());
+            return None;
+        }
+        if phone.is_empty() && email.is_empty() {
+            dc.error = Some("Add a phone number or an email so we can reach them.".to_string());
+            return None;
+        }
+        if !phone.is_empty() && !is_valid_e164(&phone) {
+            dc.error =
+                Some("Enter the phone in international format, e.g. +15551234567.".to_string());
+            return None;
+        }
+        if !email.is_empty()
+            && email_address::EmailAddress::parse_with_options(
+                &email,
+                email_address::Options::default().with_required_tld(),
+            )
+            .is_err()
+        {
+            dc.error = Some("That email doesn't look right.".to_string());
+            return None;
+        }
+        let mut channels = Vec::new();
+        if dc.form_ch_sms && !phone.is_empty() {
+            channels.push(DURESS_CHANNEL_SMS.to_string());
+        }
+        if dc.form_ch_whatsapp && !phone.is_empty() {
+            channels.push(DURESS_CHANNEL_WHATSAPP.to_string());
+        }
+        if dc.form_ch_email && !email.is_empty() {
+            channels.push(DURESS_CHANNEL_EMAIL.to_string());
+        }
+        if channels.is_empty() {
+            dc.error =
+                Some("Pick at least one way to reach them (SMS, WhatsApp, or email).".to_string());
+            return None;
+        }
+        Some(ValidatedDuressContact {
+            name,
+            phone,
+            email,
+            channels,
+        })
+    }
+
+    fn delete_duress_contact(&mut self, id: u64) -> iced::Task<Message> {
+        if !self.is_duress_alerts_entitled() {
+            return iced::Task::none();
+        }
+        // Same-row delete already in flight — drop the duplicate
+        // before issuing a second DELETE (see the Submit guard above).
+        if self.duress_contacts.deleting_ids.contains(&id) {
+            return iced::Task::none();
+        }
+        self.duress_contacts.deleting_ids.insert(id);
+        self.duress_contacts.error = None;
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move { client.delete_duress_alert_contact(id).await },
+            move |res| {
+                duress_contacts_msg(DuressContactsMessage::DeleteResult(
+                    id,
+                    res.map_err(|e| e.to_string()),
+                    gen,
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_contact_delete(
+        &mut self,
+        id: u64,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        self.duress_contacts.deleting_ids.remove(&id);
+        match res {
+            Ok(()) => {
+                // Optimistically drop the row, then refetch.
+                if let Some(cs) = self.duress_contacts.contacts.as_mut() {
+                    cs.retain(|c| c.id != id);
+                }
+                return self.reload_duress_contacts();
+            }
+            Err(e) => self.duress_contacts.error = Some(e),
+        }
+        iced::Task::none()
+    }
+
+    /// Dispatch account recovery, enrollment, and disable messages.
     fn update_duress(&mut self, msg: DuressMessage) -> iced::Task<Message> {
-        use crate::services::duress::enroll;
         match msg {
-            // ── Recovery (Phase 6) ──
+            message @ (DuressMessage::RecoveryPassphraseChanged(_)
+            | DuressMessage::SubmitClear
+            | DuressMessage::ClearResult(_, _)
+            | DuressMessage::ForgotAllClear
+            | DuressMessage::FinishRecovery) => self.update_duress_recovery(message),
+            message @ (DuressMessage::StartEnrollment
+            | DuressMessage::ReloadCubes
+            | DuressMessage::CancelEnrollment
+            | DuressMessage::DuressPinChanged(_)
+            | DuressMessage::DuressPinConfirmChanged(_)
+            | DuressMessage::AllClearChanged(_)
+            | DuressMessage::CrkPasswordChanged(_)
+            | DuressMessage::DelaySelected(_)
+            | DuressMessage::MemorizedToggled(_)
+            | DuressMessage::EnrollBack
+            | DuressMessage::EnrollNext) => self.update_duress_enrollment_form(message),
+            message @ (DuressMessage::SubmitEnrollment
+            | DuressMessage::EnrollPreflightDone(_, _)
+            | DuressMessage::EnrollResult(_, _)) => self.update_duress_enrollment_requests(message),
+            message @ (DuressMessage::CubesLoaded(_, _, _)
+            | DuressMessage::StateLoaded(_, _)
+            | DuressMessage::EnrollmentPersisted) => self.update_duress_device_state(message),
+            message @ (DuressMessage::DisableStart
+            | DuressMessage::DisableMethodProbed(_, _)
+            | DuressMessage::DisablePinChanged(_)
+            | DuressMessage::DisableCancel
+            | DuressMessage::DisableSubmit
+            | DuressMessage::DisablePasskeySubmit) => self.update_duress_disable_dialog(message),
+            message @ (DuressMessage::DisableStepUpDone(_, _)
+            | DuressMessage::DisableResult(_, _)
+            | DuressMessage::DisarmComplete(_, _)) => self.update_duress_disable_results(message),
+        }
+    }
+
+    fn update_duress_recovery(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::RecoveryPassphraseChanged(text) => {
                 if let ConnectFlowStep::DuressRecovery { passphrase, .. } = &mut self.step {
                     *passphrase = text;
                 }
             }
-            DuressMessage::SubmitClear => {
-                let ConnectFlowStep::DuressRecovery {
-                    passphrase,
-                    submitting,
-                    ..
-                } = &mut self.step
-                else {
-                    return iced::Task::none();
-                };
-                if *submitting {
-                    return iced::Task::none();
-                }
-                let passphrase = zeroize::Zeroizing::new(passphrase.clone());
-                *submitting = true;
-                let client = self.client.clone();
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move { client.clear_duress(&passphrase).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::ClearResult(
-                                res.map_err(|e| e.to_string()),
-                                gen,
-                            )),
-                        ))
-                    },
-                );
-            }
+            DuressMessage::SubmitClear => return self.submit_duress_recovery(),
             DuressMessage::ClearResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                let mut cleared_ok = false;
-                if let ConnectFlowStep::DuressRecovery {
-                    submitting,
-                    cleared,
-                    ..
-                } = &mut self.step
-                {
-                    *submitting = false;
-                    match res {
-                        Ok(()) => {
-                            *cleared = true;
-                            cleared_ok = true;
-                        }
-                        Err(e) => {
-                            // The all-clear screen has its own Submit; a
-                            // second button on the card would race it.
-                            self.error = Some(PanelError::settled(UserError::logged(
-                                "Couldn't confirm the all-clear",
-                                "Check your internet connection and try again.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                e,
-                            )))
-                        }
-                    }
-                }
-                if cleared_ok {
-                    // The server confirmed the all-clear. The post-sign-in mirror
-                    // may have set DuressLocalState.active = true on this device,
-                    // so reset it durably — otherwise the next launch reconcile
-                    // routes back into the cryptic screen for an account that's
-                    // already been cleared. Mirrors the gRPC DuressCleared and
-                    // cryptic-screen poll resets.
-                    return iced::Task::perform(
-                        async move {
-                            if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
-                                let root = dir.path();
-                                match crate::services::duress::DuressLocalState::load(root) {
-                                    Ok(mut st) if st.active => {
-                                        st.active = false;
-                                        st.unlock_at = None;
-                                        if let Err(e) = st.save(root) {
-                                            log::warn!(
-                                                "[CONNECT] failed to clear local duress \
-                                                 active state: {e}"
-                                            );
-                                        }
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => log::warn!(
-                                        "[CONNECT] reading duress state failed; \
-                                         not overwriting: {e}"
-                                    ),
-                                }
-                            }
-                        },
-                        |_| {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::DuressDeviceRegistered,
-                            ))
-                        },
-                    );
-                }
+                return self.apply_duress_recovery_result(res, gen)
             }
             DuressMessage::ForgotAllClear => {
                 return iced::Task::done(Message::View(view::Message::OpenUrl(
@@ -5600,346 +6218,96 @@ impl ConnectAccountPanel {
             }
 
             // ── Enrollment wizard (Phases 2 & 8) ──
-            DuressMessage::StartEnrollment => {
-                // An abandoned submission still owns the server response and
-                // its local arming payload; do not replace it with a new wizard.
-                if self.duress_enroll_abandoned {
-                    return iced::Task::none();
-                }
-                // Duress is a paid (Pro/Estate) feature behind a launch
-                // kill-switch. The nav hides the surface and the CTA for anyone
-                // who fails the show-rule (entitlement AND the launch gate);
-                // re-check the full gate here as a defensive backstop so a stale
-                // view can never open the wizard while duress is dark. Fails
-                // closed for an un-enrolled account with the flag off.
-                if !self.show_duress() {
-                    return iced::Task::none();
-                }
-                // The hard vault gate (PLAN-duress-vault-gate). The CTA is
-                // rendered disabled while blocked, but re-check here as a
-                // belt-and-suspenders backstop: a stale view (kit status that
-                // landed after the last paint) could still fire this. With the
-                // Tier-2 bypass and the Sovereign path removed, this gate is the
-                // single hard requirement for enrollment.
-                //
-                // Fail closed when the checklist hasn't loaded (`None`): an
-                // unverified fleet must not open enrollment (master I7 / Resolved
-                // decision 4) — `duress_tier1_gate_blocked` returns true for
-                // `None`. Reload so the checklist (and any retry affordance)
-                // becomes current instead of silently proceeding.
-                if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
-                    // No-op: gate blocked (or fleet not yet verified). A fresh
-                    // reload keeps the checklist current.
-                    return self.reload_duress_cubes();
-                }
-                if let Err(error) = crate::app::check_import_duress_compatibility() {
-                    self.error = Some(PanelError::settled(UserError::new(
-                        "Duress Mode is unavailable",
-                        error,
-                        crate::user_error::CC_CONFIG,
-                        false,
-                    )));
-                    return iced::Task::none();
-                }
-                self.open_enroll_wizard();
-                // Kick a fresh checklist fetch as the user commits to enrolling.
-                // The cached list the gate just read could be briefly stale (a
-                // routine reload keeps the prior list in place while its refetch
-                // is in flight); firing one now guarantees the `SubmitEnrollment`
-                // re-check runs against current completeness by the time the
-                // wizard is finished.
-                return self.reload_duress_cubes();
-            }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_enrollment_form(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::StartEnrollment => return self.start_duress_enrollment(),
             DuressMessage::ReloadCubes => {
                 return self.reload_duress_cubes();
             }
-            DuressMessage::CancelEnrollment => {
-                // Ignore cancel while a server enroll_duress is in flight:
-                // clear_duress_enroll zeroizes the duress PIN/code, so the
-                // EnrollResult success handler would have nothing left to
-                // persist — leaving the server enrolled but this device
-                // un-armed. The Cancel button is disabled in this state too;
-                // this is the authoritative backstop.
-                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
-                    self.clear_duress_enroll();
-                }
+            // Ignore cancel while a server enroll_duress is in flight:
+            // clear_duress_enroll zeroizes the duress PIN/code, so the
+            // EnrollResult success handler would have nothing left to
+            // persist — leaving the server enrolled but this device
+            // un-armed. The Cancel button is disabled in this state too;
+            // this is the authoritative backstop.
+            DuressMessage::CancelEnrollment
+                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) =>
+            {
+                self.clear_duress_enroll();
             }
+            message @ (DuressMessage::DuressPinChanged(_)
+            | DuressMessage::DuressPinConfirmChanged(_)
+            | DuressMessage::AllClearChanged(_)
+            | DuressMessage::CrkPasswordChanged(_)
+            | DuressMessage::DelaySelected(_)
+            | DuressMessage::MemorizedToggled(_)
+            | DuressMessage::EnrollBack
+            | DuressMessage::EnrollNext) => self.edit_duress_enrollment(message),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn edit_duress_enrollment(&mut self, message: DuressMessage) {
+        let Some(e) = self.duress_enroll.as_mut() else {
+            return;
+        };
+        match message {
             DuressMessage::DuressPinChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
-                }
+                e.duress_pin = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
             }
             DuressMessage::DuressPinConfirmChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.duress_pin_confirm =
-                        v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
-                }
+                e.duress_pin_confirm = v.chars().filter(|c| c.is_ascii_digit()).take(4).collect();
             }
             DuressMessage::AllClearChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.all_clear = v;
-                }
+                e.all_clear = v;
             }
             DuressMessage::CrkPasswordChanged(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.crk_password = v;
-                }
+                e.crk_password = v;
             }
             DuressMessage::DelaySelected(d) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.delay = d;
-                }
+                e.delay = d;
             }
             DuressMessage::MemorizedToggled(v) => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.memorized = v;
-                }
+                e.memorized = v;
             }
             DuressMessage::EnrollBack => {
-                if let Some(e) = &mut self.duress_enroll {
-                    e.error = None;
-                    e.step = prev_enroll_step(e.step);
-                }
+                e.error = None;
+                e.step = prev_enroll_step(e.step);
             }
             DuressMessage::EnrollNext => {
-                if let Some(e) = &mut self.duress_enroll {
-                    if let Err(msg) = validate_enroll_step(e) {
-                        e.error = Some(msg);
-                    } else {
-                        e.error = None;
-                        e.step = next_enroll_step(e.step);
-                    }
-                }
-            }
-            DuressMessage::SubmitEnrollment => {
-                // Vault gate backstop (PLAN-duress-vault-gate). The gate is
-                // enforced at StartEnrollment, but Cube state can change while
-                // the wizard is open — a mid-session Vault creation calls
-                // `invalidate_duress_cubes` and expects the gate to stay closed
-                // until the new Vault's kit is complete. Re-check at the actual
-                // commit (the single hard-gated path), mirroring the
-                // PIN-collision pre-flight below: surface the block on the wizard
-                // and refresh the checklist, without firing the enroll. Fails
-                // closed on an invalidated/unloaded checklist (`None`), which is
-                // exactly the mid-wizard-Vault case.
-                if self.duress_enroll.is_some()
-                    && duress_tier1_gate_blocked(self.duress_cubes.as_deref())
-                {
-                    if let Some(e) = &mut self.duress_enroll {
-                        e.error = Some(
-                            "A Vault Cube still needs its Recovery Kit finished — its Master \
-                             Seed Phrase and Vault Wallet Descriptor — before you can enable \
-                             Duress Mode. Finish it, then try again."
-                                .to_string(),
-                        );
-                    }
-                    // Refresh so the intro checklist is current if the user
-                    // cancels back to it.
-                    return self.reload_duress_cubes();
-                }
-                let Some(e) = &mut self.duress_enroll else {
-                    return iced::Task::none();
-                };
-                // Reject re-entrant submits: a second enroll while one is in
-                // flight would fire a duplicate server call and replace the
-                // stashed pending_code out from under the first. The button is
-                // disabled while submitting; this is the backstop.
-                if e.submitting {
-                    return iced::Task::none();
-                }
                 if let Err(msg) = validate_enroll_step(e) {
                     e.error = Some(msg);
-                    return iced::Task::none();
+                } else {
+                    e.error = None;
+                    e.step = next_enroll_step(e.step);
                 }
-                // The blocking preflight also rejects pending/imported wallets
-                // before server enrollment. Keep this filesystem check there so
-                // the wizard receives the error without blocking the UI thread.
-                // Pre-flight: reject a duress PIN that collides with any Cube's
-                // real unlock PIN BEFORE anything irreversible. Connect tiers
-                // enroll on the server first, so catching the collision only in
-                // the later local persist would leave the account
-                // server-enrolled with no Cube armed. (Persist re-checks as the
-                // authoritative guard.)
-                //
-                // The check is a trial decryption of every Cube's seed file now
-                // that there is no stored PIN hash to compare against — ~831 ms
-                // per Cube — so it runs on the blocking pool and comes back as
-                // `EnrollPreflightDone`. `submitting` is set here so the button
-                // stays disabled for the whole round trip.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        e.error = Some(
-                            UserError::logged(
-                                "Couldn't open your Cube data",
-                                "COINCUBE Desktop can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
-                                crate::user_error::CC_CONFIG,
-                                true,
-                                err,
-                            )
-                            .toast(),
-                        );
-                        return iced::Task::none();
-                    }
-                };
-                e.submitting = true;
-                e.error = None;
-                let gen = self.session_generation;
-                let duress_pin = zeroize::Zeroizing::new(e.duress_pin.clone());
-                return iced::Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
-                        })
-                        .await
-                        .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::EnrollPreflightDone(
-                                res, gen,
-                            )),
-                        ))
-                    },
-                );
             }
+            _ => {}
+        }
+    }
+
+    fn update_duress_enrollment_requests(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::SubmitEnrollment => return self.submit_duress_enrollment(),
             DuressMessage::EnrollPreflightDone(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                if self.duress_enroll.is_none() {
-                    return iced::Task::none();
-                }
-                if let Err(msg) = res {
-                    self.fail_duress_enrollment(msg);
-                    return iced::Task::none();
-                }
-                let e = self.duress_enroll.as_mut().unwrap();
-                let gen = self.session_generation;
-
-                // Generate this device's duress code ONCE: its hash goes to the
-                // server, the same plaintext is persisted (encrypted) locally.
-                // Held in `Zeroizing` so the local plaintext is scrubbed on drop
-                // — on normal completion and on every early-return below.
-                let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
-
-                // Enroll on the server FIRST. The duress PIN + code are persisted
-                // locally only after a successful EnrollResult, so a server
-                // failure can't leave a half-armed duress PIN on disk. Stash the
-                // code for that success handler. Zeroize any code stashed by a
-                // prior submit (retry) before replacing it, so the superseded
-                // plaintext doesn't linger.
-                if let Some(mut old) = e.pending_code.replace((*code).clone()) {
-                    zeroize::Zeroize::zeroize(&mut old);
-                }
-                let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
-                // Single path always collects the account-level duress
-                // recovery-kit password (Approach C).
-                let crk_hash = enroll::hash_duress_secret(&e.crk_password);
-                let code_hash = enroll::hash_duress_secret(&code);
-                let delay_minutes = e.delay.minutes();
-
-                let (all_clear_hash, code_hash) = match (all_clear_hash, code_hash) {
-                    (Ok(a), Ok(c)) => (a, c),
-                    _ => {
-                        self.fail_duress_enrollment("Failed to hash credentials.".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                let crk_hash = match crk_hash {
-                    Ok(h) => Some(h),
-                    Err(_) => {
-                        self.fail_duress_enrollment("Failed to hash credentials.".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                // A stable device fingerprint is required so the server can
-                // recognise this desktop. If it can't be resolved, fail the
-                // enrollment rather than send an unstable one.
-                let fingerprint = match device_fingerprint() {
-                    Ok(fp) => fp,
-                    Err(msg) => {
-                        self.fail_duress_enrollment(msg);
-                        return iced::Task::none();
-                    }
-                };
-                let client = self.client.clone();
-                let req = crate::services::coincube::EnrollDuressRequest {
-                    all_clear_hash,
-                    duress_crk_password_hash: crk_hash,
-                    unlock_delay_minutes: delay_minutes,
-                    device_fingerprint: fingerprint,
-                    duress_code_hash: code_hash,
-                };
-                return iced::Task::perform(
-                    async move { client.enroll_duress(req).await },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::EnrollResult(
-                                res.map_err(|e| e.to_string()),
-                                gen,
-                            )),
-                        ))
-                    },
-                );
+                return self.apply_duress_preflight(res, gen)
             }
             DuressMessage::EnrollResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                match res {
-                    Ok(()) => {
-                        // Server enrolled — NOW persist locally (PIN hash +
-                        // encrypted code) from the wizard state, then close it.
-                        // Doing this only on success means a server failure
-                        // never leaves a half-armed duress PIN on disk.
-                        let account_id = self.user.as_ref().map(|u| u.id.to_string());
-                        // Clone the forwarded secrets into the Zeroizing payload,
-                        // then scrub the wizard via the shared helper — this path
-                        // must not drop the leftover fields (all_clear, CRK
-                        // password) unzeroized.
-                        let payload = self.duress_enroll.as_ref().map(|e| {
-                            crate::app::message::DuressEnrollmentPayload {
-                                duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
-                                duress_code: zeroize::Zeroizing::new(
-                                    e.pending_code.clone().unwrap_or_default(),
-                                ),
-                                account_id,
-                                gen,
-                            }
-                        });
-                        if let Some(payload) = payload {
-                            self.clear_duress_enroll();
-                            // The server accepted enrollment, but the duress PIN
-                            // still has to be armed locally on every Cube. Defer
-                            // marking the cached state "enrolled" to the persist
-                            // success path (`EnrollmentPersisted`) — otherwise a
-                            // local failure (PIN collision, no Cubes, disk error)
-                            // would leave a false "enabled" view while no Cube is
-                            // actually armed.
-                            return iced::Task::done(Message::CompleteDuressEnrollment(payload));
-                        }
-                        // No wizard to build a payload from: it was torn down
-                        // mid-flight (same session — a cross-session teardown
-                        // bumps `session_generation` and is caught by the guard
-                        // above). All same-session teardowns now preserve a
-                        // submitting wizard (Cancel is blocked while submitting;
-                        // the active-duress routing skips a submitting wizard),
-                        // so this should be unreachable — log loudly if it ever
-                        // fires, since it means the account is server-enrolled
-                        // with no local arming.
-                        log::error!(
-                            "[CONNECT] duress EnrollResult(Ok) with no wizard to persist — \
-                             account may be server-enrolled but not armed locally"
-                        );
-                    }
-                    Err(msg) => {
-                        // A hidden wizard has no retry surface. Scrub its
-                        // secrets as soon as the server has rejected it.
-                        self.fail_duress_enrollment(msg);
-                    }
-                }
+                return self.apply_duress_enrollment_result(res, gen)
             }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_device_state(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
             DuressMessage::CubesLoaded(cubes, gen, seq) => {
                 // Apply only the newest fetch: `gen` guards against a prior
                 // session, `seq` against an older in-flight fetch in this
@@ -5952,69 +6320,7 @@ impl ConnectAccountPanel {
                     self.duress_cubes = cubes;
                 }
             }
-            DuressMessage::StateLoaded(st, gen) => {
-                if gen == self.session_generation {
-                    if let Some(new) = st {
-                        // Don't let a stale fetch downgrade a locally-confirmed
-                        // enrollment. `reload_duress_state` is fired on opening
-                        // the tab; a slow one issued *before* the user finished
-                        // enrolling could return pre-enrollment data after
-                        // `EnrollmentPersisted` and clobber the enabled view back
-                        // to the setup flow. Enrolled is monotonic within a
-                        // session (there is no un-enroll path), so a fetch that
-                        // flips it true→false can only be stale — drop it.
-                        let downgrades_enrollment = self
-                            .duress_state
-                            .as_ref()
-                            .is_some_and(|cur| cur.enrolled && !new.enrolled);
-                        if !downgrades_enrollment {
-                            let active = new.active;
-                            let unlock_at = new.unlock_at;
-                            self.duress_state = Some(new);
-                            // If the server reports the account is in ACTIVE
-                            // duress, route this (signed-in, trusted) device to
-                            // the all-clear recovery screen — same as the
-                            // post-sign-in `DuressStateChecked` gate. Covers
-                            // duress activated by another device after this
-                            // session passed the sign-in gate. Skip if already
-                            // in recovery so an in-flight all-clear entry isn't
-                            // wiped. Like the gate, this does NOT persist
-                            // `DuressLocalState.active` (that flag is owned by
-                            // the paths that actually lock this device).
-                            if active
-                                && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. })
-                            {
-                                // Tear down any open enrollment wizard before
-                                // routing to recovery: recovery supersedes it,
-                                // and `duress_ux` prioritizes a `Some`
-                                // `duress_enroll` over the intro/enabled view —
-                                // so a leftover wizard would re-appear (possibly
-                                // mid-submit) when the user returns to the tab
-                                // after clearing. Also scrubs the wizard's
-                                // in-memory secrets (PINs / passphrases).
-                                //
-                                // EXCEPT while a server enroll is in flight
-                                // (`submitting`): its `EnrollResult` reads the
-                                // wizard to run local persist, then clears it.
-                                // Dropping it here would orphan that enroll
-                                // (server enrolled, no local arm). Leave it; the
-                                // in-flight result tears it down.
-                                if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
-                                    self.clear_duress_enroll();
-                                }
-                                self.step = ConnectFlowStep::DuressRecovery {
-                                    unlock_at,
-                                    passphrase: String::new(),
-                                    submitting: false,
-                                    cleared: false,
-                                };
-                            }
-                        }
-                    }
-                    // `None` = the fetch failed; keep the prior state rather than
-                    // blanking it.
-                }
-            }
+            DuressMessage::StateLoaded(st, gen) => return self.apply_duress_device_state(st, gen),
             DuressMessage::EnrollmentPersisted => {
                 // Local persistence succeeded (duress PIN armed on every Cube on
                 // THIS device), so it's now safe to reflect the enabled state.
@@ -6024,53 +6330,14 @@ impl ConnectAccountPanel {
                 self.mark_duress_enrolled();
             }
 
-            // ── Disable (Issue 2 — turn duress off) ──
-            DuressMessage::DisableStart => {
-                // Open the step-up re-auth dialog. The trigger is only surfaced
-                // when enrolled & inactive (see `duress_ux`).
-                self.duress_disable = Some(DuressDisableState::default());
-                // Which factor to demand depends on what is on this disk, so
-                // ask before drawing the form. Filesystem work, hence the
-                // blocking pool.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
-                            d.error = Some(
-                                UserError::logged(
-                                    "Couldn't open your Cube data",
-                                    "COINCUBE Desktop can't read its data folder, so it can't verify it's you. Restart the app and try again.",
-                                    crate::user_error::CC_CONFIG,
-                                    true,
-                                    err,
-                                )
-                                .toast(),
-                            );
-                        }
-                        return iced::Task::none();
-                    }
-                };
-                let gen = self.session_generation;
-                return iced::Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::duress_step_up_method_blocking(dir.path())
-                        })
-                        .await
-                        .unwrap_or_else(|err| {
-                            Err(format!("Couldn't check how to verify it's you: {err}"))
-                        })
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::DisableMethodProbed(
-                                res, gen,
-                            )),
-                        ))
-                    },
-                );
-            }
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_disable_dialog(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::DisableStart => return self.open_duress_disable_dialog(),
             DuressMessage::DisableMethodProbed(res, gen) => {
                 if gen != self.session_generation {
                     return iced::Task::none();
@@ -6104,55 +6371,618 @@ impl ConnectAccountPanel {
                     d.zeroize_secrets();
                 }
             }
-            DuressMessage::DisableSubmit => {
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
-                };
-                // Re-entrancy guard: the confirm button is disabled while
-                // submitting, but two presses can queue in one frame.
-                if d.submitting {
-                    return iced::Task::none();
+            DuressMessage::DisableSubmit => return self.submit_duress_disable_pin(),
+            DuressMessage::DisablePasskeySubmit => return self.submit_duress_disable_passkey(),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn update_duress_disable_results(&mut self, message: DuressMessage) -> iced::Task<Message> {
+        match message {
+            DuressMessage::DisableStepUpDone(res, gen) => {
+                return self.apply_duress_disable_step_up(res, gen)
+            }
+            DuressMessage::DisableResult(res, gen) => {
+                return self.apply_duress_disable_result(res, gen)
+            }
+            DuressMessage::DisarmComplete(res, gen) => return self.apply_duress_disarm(res, gen),
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn submit_duress_recovery(&mut self) -> iced::Task<Message> {
+        let ConnectFlowStep::DuressRecovery {
+            passphrase,
+            submitting,
+            ..
+        } = &mut self.step
+        else {
+            return iced::Task::none();
+        };
+        if *submitting {
+            return iced::Task::none();
+        }
+        let passphrase = zeroize::Zeroizing::new(passphrase.clone());
+        *submitting = true;
+        let client = self.client.clone();
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move { client.clear_duress(&passphrase).await },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::ClearResult(
+                        res.map_err(|e| e.to_string()),
+                        gen,
+                    )),
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_recovery_result(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let mut cleared_ok = false;
+        if let ConnectFlowStep::DuressRecovery {
+            submitting,
+            cleared,
+            ..
+        } = &mut self.step
+        {
+            *submitting = false;
+            match res {
+                Ok(()) => {
+                    *cleared = true;
+                    cleared_ok = true;
                 }
-                // Only the PIN branch may run the PIN check. On a passkey device
-                // it would fail with "use a device where you unlock a Cube with
-                // its PIN" — advice that is wrong here, since this device can
-                // authorize with its passkey.
-                if !matches!(d.method, Some(crate::app::DuressStepUpMethod::Pin)) {
-                    return iced::Task::none();
+                Err(e) => {
+                    // The all-clear screen has its own Submit; a
+                    // second button on the card would race it.
+                    self.error = Some(PanelError::settled(UserError::logged(
+                        "Couldn't confirm the all-clear",
+                        "Check your internet connection and try again.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        e,
+                    )))
                 }
-                // Step-up: the entered PIN must match a Cube's REAL unlock PIN
-                // (never the duress PIN). Verify BEFORE any server call — a wrong
-                // PIN makes no call at all.
-                //
-                // Verification is a trial decryption of the seed file, so it
-                // runs on the blocking pool and resumes at `DisableStepUpDone`.
-                let dir = match crate::dir::CoincubeDirectory::active() {
-                    Ok(dir) => dir,
-                    Err(err) => {
-                        d.error = Some(
-                            UserError::logged(
-                                "Couldn't open your Cube data",
-                                "COINCUBE Desktop can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
-                                crate::user_error::CC_CONFIG,
-                                true,
-                                err,
-                            )
-                            .toast(),
-                        );
-                        return iced::Task::none();
+            }
+        }
+        if cleared_ok {
+            // The server confirmed the all-clear. The post-sign-in mirror
+            // may have set DuressLocalState.active = true on this device,
+            // so reset it durably — otherwise the next launch reconcile
+            // routes back into the cryptic screen for an account that's
+            // already been cleared. Mirrors the gRPC DuressCleared and
+            // cryptic-screen poll resets.
+            return iced::Task::perform(
+                async move {
+                    if let Ok(dir) = crate::dir::CoincubeDirectory::active() {
+                        let root = dir.path();
+                        match crate::services::duress::DuressLocalState::load(root) {
+                            Ok(mut st) if st.active => {
+                                st.active = false;
+                                st.unlock_at = None;
+                                if let Err(e) = st.save(root) {
+                                    log::warn!(
+                                        "[CONNECT] failed to clear local duress \
+                                         active state: {e}"
+                                    );
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(e) => log::warn!(
+                                "[CONNECT] reading duress state failed; \
+                                 not overwriting: {e}"
+                            ),
+                        }
                     }
-                };
-                d.submitting = true;
-                d.error = None;
-                let gen = self.session_generation;
-                let pin = zeroize::Zeroizing::new(d.pin.clone());
-                return iced::Task::perform(
+                },
+                |_| {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::DuressDeviceRegistered,
+                    ))
+                },
+            );
+        }
+        iced::Task::none()
+    }
+
+    fn start_duress_enrollment(&mut self) -> iced::Task<Message> {
+        // An abandoned submission still owns the server response and
+        // its local arming payload; do not replace it with a new wizard.
+        if self.duress_enroll_abandoned {
+            return iced::Task::none();
+        }
+        // Duress is a paid (Pro/Estate) feature behind a launch
+        // kill-switch. The nav hides the surface and the CTA for anyone
+        // who fails the show-rule (entitlement AND the launch gate);
+        // re-check the full gate here as a defensive backstop so a stale
+        // view can never open the wizard while duress is dark. Fails
+        // closed for an un-enrolled account with the flag off.
+        if !self.show_duress() {
+            return iced::Task::none();
+        }
+        // The hard vault gate (PLAN-duress-vault-gate). The CTA is
+        // rendered disabled while blocked, but re-check here as a
+        // belt-and-suspenders backstop: a stale view (kit status that
+        // landed after the last paint) could still fire this. With the
+        // Tier-2 bypass and the Sovereign path removed, this gate is the
+        // single hard requirement for enrollment.
+        //
+        // Fail closed when the checklist hasn't loaded (`None`): an
+        // unverified fleet must not open enrollment (master I7 / Resolved
+        // decision 4) — `duress_tier1_gate_blocked` returns true for
+        // `None`. Reload so the checklist (and any retry affordance)
+        // becomes current instead of silently proceeding.
+        if duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+            // No-op: gate blocked (or fleet not yet verified). A fresh
+            // reload keeps the checklist current.
+            return self.reload_duress_cubes();
+        }
+        if let Err(error) = crate::app::check_import_duress_compatibility() {
+            self.error = Some(PanelError::settled(UserError::new(
+                "Duress Mode is unavailable",
+                error,
+                crate::user_error::CC_CONFIG,
+                false,
+            )));
+            return iced::Task::none();
+        }
+        self.open_enroll_wizard();
+        // Kick a fresh checklist fetch as the user commits to enrolling.
+        // The cached list the gate just read could be briefly stale (a
+        // routine reload keeps the prior list in place while its refetch
+        // is in flight); firing one now guarantees the `SubmitEnrollment`
+        // re-check runs against current completeness by the time the
+        // wizard is finished.
+        self.reload_duress_cubes()
+    }
+
+    fn submit_duress_enrollment(&mut self) -> iced::Task<Message> {
+        // Vault gate backstop (PLAN-duress-vault-gate). The gate is
+        // enforced at StartEnrollment, but Cube state can change while
+        // the wizard is open — a mid-session Vault creation calls
+        // `invalidate_duress_cubes` and expects the gate to stay closed
+        // until the new Vault's kit is complete. Re-check at the actual
+        // commit (the single hard-gated path), mirroring the
+        // PIN-collision pre-flight below: surface the block on the wizard
+        // and refresh the checklist, without firing the enroll. Fails
+        // closed on an invalidated/unloaded checklist (`None`), which is
+        // exactly the mid-wizard-Vault case.
+        if self.duress_enroll.is_some() && duress_tier1_gate_blocked(self.duress_cubes.as_deref()) {
+            if let Some(e) = &mut self.duress_enroll {
+                e.error = Some(
+                    "A Vault Cube still needs its Recovery Kit finished — its Master \
+                     Seed Phrase and Vault Wallet Descriptor — before you can enable \
+                     Duress Mode. Finish it, then try again."
+                        .to_string(),
+                );
+            }
+            // Refresh so the intro checklist is current if the user
+            // cancels back to it.
+            return self.reload_duress_cubes();
+        }
+        let Some(e) = &mut self.duress_enroll else {
+            return iced::Task::none();
+        };
+        // Reject re-entrant submits: a second enroll while one is in
+        // flight would fire a duplicate server call and replace the
+        // stashed pending_code out from under the first. The button is
+        // disabled while submitting; this is the backstop.
+        if e.submitting {
+            return iced::Task::none();
+        }
+        if let Err(msg) = validate_enroll_step(e) {
+            e.error = Some(msg);
+            return iced::Task::none();
+        }
+        // The blocking preflight also rejects pending/imported wallets
+        // before server enrollment. Keep this filesystem check there so
+        // the wizard receives the error without blocking the UI thread.
+        // Pre-flight: reject a duress PIN that collides with any Cube's
+        // real unlock PIN BEFORE anything irreversible. Connect tiers
+        // enroll on the server first, so catching the collision only in
+        // the later local persist would leave the account
+        // server-enrolled with no Cube armed. (Persist re-checks as the
+        // authoritative guard.)
+        //
+        // The check is a trial decryption of every Cube's seed file now
+        // that there is no stored PIN hash to compare against — ~831 ms
+        // per Cube — so it runs on the blocking pool and comes back as
+        // `EnrollPreflightDone`. `submitting` is set here so the button
+        // stays disabled for the whole round trip.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                e.error = Some(
+                    UserError::logged(
+                        "Couldn't open your Cube data",
+                        "COINCUBE Desktop can't read its data folder, so it can't verify the duress PIN. Restart the app and try again.",
+                        crate::user_error::CC_CONFIG,
+                        true,
+                        err,
+                    )
+                    .toast(),
+                );
+                return iced::Task::none();
+            }
+        };
+        e.submitting = true;
+        e.error = None;
+        let gen = self.session_generation;
+        let duress_pin = zeroize::Zeroizing::new(e.duress_pin.clone());
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::duress_pin_collision_check_blocking(dir.path(), &duress_pin)
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't verify the duress PIN: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::EnrollPreflightDone(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn apply_duress_preflight(&mut self, res: Result<(), String>, gen: u64) -> iced::Task<Message> {
+        use crate::services::duress::enroll;
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        if self.duress_enroll.is_none() {
+            return iced::Task::none();
+        }
+        if let Err(msg) = res {
+            self.fail_duress_enrollment(msg);
+            return iced::Task::none();
+        }
+        let e = self.duress_enroll.as_mut().unwrap();
+        let gen = self.session_generation;
+
+        // Generate this device's duress code ONCE: its hash goes to the
+        // server, the same plaintext is persisted (encrypted) locally.
+        // Held in `Zeroizing` so the local plaintext is scrubbed on drop
+        // — on normal completion and on every early-return below.
+        let code = zeroize::Zeroizing::new(enroll::generate_duress_code());
+
+        // Enroll on the server FIRST. The duress PIN + code are persisted
+        // locally only after a successful EnrollResult, so a server
+        // failure can't leave a half-armed duress PIN on disk. Stash the
+        // code for that success handler. Zeroize any code stashed by a
+        // prior submit (retry) before replacing it, so the superseded
+        // plaintext doesn't linger.
+        if let Some(mut old) = e.pending_code.replace((*code).clone()) {
+            zeroize::Zeroize::zeroize(&mut old);
+        }
+        let all_clear_hash = enroll::hash_duress_secret(&e.all_clear);
+        // Single path always collects the account-level duress
+        // recovery-kit password (Approach C).
+        let crk_hash = enroll::hash_duress_secret(&e.crk_password);
+        let code_hash = enroll::hash_duress_secret(&code);
+        let delay_minutes = e.delay.minutes();
+
+        let (all_clear_hash, code_hash) = match (all_clear_hash, code_hash) {
+            (Ok(a), Ok(c)) => (a, c),
+            _ => {
+                self.fail_duress_enrollment("Failed to hash credentials.".to_string());
+                return iced::Task::none();
+            }
+        };
+        let crk_hash = match crk_hash {
+            Ok(h) => Some(h),
+            Err(_) => {
+                self.fail_duress_enrollment("Failed to hash credentials.".to_string());
+                return iced::Task::none();
+            }
+        };
+        // A stable device fingerprint is required so the server can
+        // recognise this desktop. If it can't be resolved, fail the
+        // enrollment rather than send an unstable one.
+        let fingerprint = match device_fingerprint() {
+            Ok(fp) => fp,
+            Err(msg) => {
+                self.fail_duress_enrollment(msg);
+                return iced::Task::none();
+            }
+        };
+        let client = self.client.clone();
+        let req = crate::services::coincube::EnrollDuressRequest {
+            all_clear_hash,
+            duress_crk_password_hash: crk_hash,
+            unlock_delay_minutes: delay_minutes,
+            device_fingerprint: fingerprint,
+            duress_code_hash: code_hash,
+        };
+        iced::Task::perform(async move { client.enroll_duress(req).await }, move |res| {
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::EnrollResult(
+                    res.map_err(|e| e.to_string()),
+                    gen,
+                )),
+            ))
+        })
+    }
+
+    fn apply_duress_enrollment_result(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                // Server enrolled — NOW persist locally (PIN hash +
+                // encrypted code) from the wizard state, then close it.
+                // Doing this only on success means a server failure
+                // never leaves a half-armed duress PIN on disk.
+                let account_id = self.user.as_ref().map(|u| u.id.to_string());
+                // Clone the forwarded secrets into the Zeroizing payload,
+                // then scrub the wizard via the shared helper — this path
+                // must not drop the leftover fields (all_clear, CRK
+                // password) unzeroized.
+                let payload = self.duress_enroll.as_ref().map(|e| {
+                    crate::app::message::DuressEnrollmentPayload {
+                        duress_pin: zeroize::Zeroizing::new(e.duress_pin.clone()),
+                        duress_code: zeroize::Zeroizing::new(
+                            e.pending_code.clone().unwrap_or_default(),
+                        ),
+                        account_id,
+                        gen,
+                    }
+                });
+                if let Some(payload) = payload {
+                    self.clear_duress_enroll();
+                    // The server accepted enrollment, but the duress PIN
+                    // still has to be armed locally on every Cube. Defer
+                    // marking the cached state "enrolled" to the persist
+                    // success path (`EnrollmentPersisted`) — otherwise a
+                    // local failure (PIN collision, no Cubes, disk error)
+                    // would leave a false "enabled" view while no Cube is
+                    // actually armed.
+                    return iced::Task::done(Message::CompleteDuressEnrollment(payload));
+                }
+                // No wizard to build a payload from: it was torn down
+                // mid-flight (same session — a cross-session teardown
+                // bumps `session_generation` and is caught by the guard
+                // above). All same-session teardowns now preserve a
+                // submitting wizard (Cancel is blocked while submitting;
+                // the active-duress routing skips a submitting wizard),
+                // so this should be unreachable — log loudly if it ever
+                // fires, since it means the account is server-enrolled
+                // with no local arming.
+                log::error!(
+                    "[CONNECT] duress EnrollResult(Ok) with no wizard to persist — \
+                     account may be server-enrolled but not armed locally"
+                );
+            }
+            Err(msg) => {
+                // A hidden wizard has no retry surface. Scrub its
+                // secrets as soon as the server has rejected it.
+                self.fail_duress_enrollment(msg);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_duress_device_state(
+        &mut self,
+        st: Option<crate::services::coincube::DuressState>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            if let Some(new) = st {
+                // Don't let a stale fetch downgrade a locally-confirmed
+                // enrollment. `reload_duress_state` is fired on opening
+                // the tab; a slow one issued *before* the user finished
+                // enrolling could return pre-enrollment data after
+                // `EnrollmentPersisted` and clobber the enabled view back
+                // to the setup flow. Enrolled is monotonic within a
+                // session (there is no un-enroll path), so a fetch that
+                // flips it true→false can only be stale — drop it.
+                let downgrades_enrollment = self
+                    .duress_state
+                    .as_ref()
+                    .is_some_and(|cur| cur.enrolled && !new.enrolled);
+                if !downgrades_enrollment {
+                    let active = new.active;
+                    let unlock_at = new.unlock_at;
+                    self.duress_state = Some(new);
+                    // If the server reports the account is in ACTIVE
+                    // duress, route this (signed-in, trusted) device to
+                    // the all-clear recovery screen — same as the
+                    // post-sign-in `DuressStateChecked` gate. Covers
+                    // duress activated by another device after this
+                    // session passed the sign-in gate. Skip if already
+                    // in recovery so an in-flight all-clear entry isn't
+                    // wiped. Like the gate, this does NOT persist
+                    // `DuressLocalState.active` (that flag is owned by
+                    // the paths that actually lock this device).
+                    self.enter_recovery_for_active_duress(active, unlock_at);
+                }
+            }
+            // `None` = the fetch failed; keep the prior state rather than
+            // blanking it.
+        }
+        iced::Task::none()
+    }
+
+    fn enter_recovery_for_active_duress(
+        &mut self,
+        active: bool,
+        unlock_at: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        if active && !matches!(self.step, ConnectFlowStep::DuressRecovery { .. }) {
+            // Tear down any open enrollment wizard before
+            // routing to recovery: recovery supersedes it,
+            // and `duress_ux` prioritizes a `Some`
+            // `duress_enroll` over the intro/enabled view —
+            // so a leftover wizard would re-appear (possibly
+            // mid-submit) when the user returns to the tab
+            // after clearing. Also scrubs the wizard's
+            // in-memory secrets (PINs / passphrases).
+            //
+            // EXCEPT while a server enroll is in flight
+            // (`submitting`): its `EnrollResult` reads the
+            // wizard to run local persist, then clears it.
+            // Dropping it here would orphan that enroll
+            // (server enrolled, no local arm). Leave it; the
+            // in-flight result tears it down.
+            if self.duress_enroll.as_ref().is_none_or(|e| !e.submitting) {
+                self.clear_duress_enroll();
+            }
+            self.step = ConnectFlowStep::DuressRecovery {
+                unlock_at,
+                passphrase: String::new(),
+                submitting: false,
+                cleared: false,
+            };
+        }
+    }
+
+    fn open_duress_disable_dialog(&mut self) -> iced::Task<Message> {
+        // Open the step-up re-auth dialog. The trigger is only surfaced
+        // when enrolled & inactive (see `duress_ux`).
+        self.duress_disable = Some(DuressDisableState::default());
+        // Which factor to demand depends on what is on this disk, so
+        // ask before drawing the form. Filesystem work, hence the
+        // blocking pool.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.method = Some(crate::app::DuressStepUpMethod::Unavailable);
+                    d.error = Some(
+                        UserError::logged(
+                            "Couldn't open your Cube data",
+                            "COINCUBE Desktop can't read its data folder, so it can't verify it's you. Restart the app and try again.",
+                            crate::user_error::CC_CONFIG,
+                            true,
+                            err,
+                        )
+                        .toast(),
+                    );
+                }
+                return iced::Task::none();
+            }
+        };
+        let gen = self.session_generation;
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::duress_step_up_method_blocking(dir.path())
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't check how to verify it's you: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::DisableMethodProbed(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn submit_duress_disable_pin(&mut self) -> iced::Task<Message> {
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        // Re-entrancy guard: the confirm button is disabled while
+        // submitting, but two presses can queue in one frame.
+        if d.submitting {
+            return iced::Task::none();
+        }
+        // Only the PIN branch may run the PIN check. On a passkey device
+        // it would fail with "use a device where you unlock a Cube with
+        // its PIN" — advice that is wrong here, since this device can
+        // authorize with its passkey.
+        if !matches!(d.method, Some(crate::app::DuressStepUpMethod::Pin)) {
+            return iced::Task::none();
+        }
+        // Step-up: the entered PIN must match a Cube's REAL unlock PIN
+        // (never the duress PIN). Verify BEFORE any server call — a wrong
+        // PIN makes no call at all.
+        //
+        // Verification is a trial decryption of the seed file, so it
+        // runs on the blocking pool and resumes at `DisableStepUpDone`.
+        let dir = match crate::dir::CoincubeDirectory::active() {
+            Ok(dir) => dir,
+            Err(err) => {
+                d.error = Some(
+                    UserError::logged(
+                        "Couldn't open your Cube data",
+                        "COINCUBE Desktop can't read its data folder, so it can't verify your PIN. Restart the app and try again.",
+                        crate::user_error::CC_CONFIG,
+                        true,
+                        err,
+                    )
+                    .toast(),
+                );
+                return iced::Task::none();
+            }
+        };
+        d.submitting = true;
+        d.error = None;
+        let gen = self.session_generation;
+        let pin = zeroize::Zeroizing::new(d.pin.clone());
+        iced::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::app::verify_regular_cube_pin_blocking(dir.path(), &pin)
+                })
+                .await
+                .unwrap_or_else(|err| Err(format!("Couldn't verify your PIN: {err}")))
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Duress(DuressMessage::DisableStepUpDone(res, gen)),
+                ))
+            },
+        )
+    }
+
+    fn submit_duress_disable_passkey(&mut self) -> iced::Task<Message> {
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        if d.submitting {
+            return iced::Task::none();
+        }
+        // Only the passkey branch may raise a prompt. A stale press on
+        // any other method must not, or a PIN device would get a system
+        // sheet no credential can answer.
+        let Some(crate::app::DuressStepUpMethod::Passkey(cube)) = d.method.clone() else {
+            return iced::Task::none();
+        };
+        d.submitting = true;
+        d.error = None;
+        let gen = self.session_generation;
+        // Started on the UI thread — `NativePasskeyCeremony` is
+        // main-thread-only. `reauth::begin` parks it and hands back a
+        // plain future, so no polling subscription is needed here.
+        match crate::services::passkey::reauth::begin(&cube) {
+            Ok(fut) => {
+                iced::Task::perform(
                     async move {
-                        tokio::task::spawn_blocking(move || {
-                            crate::app::verify_regular_cube_pin_blocking(dir.path(), &pin)
-                        })
-                        .await
-                        .unwrap_or_else(|err| Err(format!("Couldn't verify your PIN: {err}")))
+                        // The words are dropped (and zeroized) right
+                        // here. What authorizes the disable is that the
+                        // assertion succeeded AND derived this Cube's
+                        // own fingerprint — `reauth::begin` enforces the
+                        // latter. The seed itself is not wanted, and
+                        // must not ride in a message iced will clone.
+                        fut.await.map(drop).map_err(|e| e.user_message())
                     },
                     move |res| {
                         Message::View(view::Message::ConnectAccount(
@@ -6161,201 +6991,162 @@ impl ConnectAccountPanel {
                             )),
                         ))
                     },
-                );
+                )
             }
-            DuressMessage::DisablePasskeySubmit => {
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
-                };
-                if d.submitting {
-                    return iced::Task::none();
+            Err(e) => {
+                d.submitting = false;
+                d.error = Some(e.user_message());
+                iced::Task::none()
+            }
+        }
+    }
+
+    fn apply_duress_disable_step_up(
+        &mut self,
+        res: Result<(), String>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let Some(d) = &mut self.duress_disable else {
+            return iced::Task::none();
+        };
+        if let Err(msg) = res {
+            d.submitting = false;
+            d.error = Some(msg);
+            return iced::Task::none();
+        }
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(async move { client.disable_duress().await }, move |res| {
+            let mapped = res.map_err(|e| match &e {
+                crate::services::coincube::CoincubeError::Unsuccessful(info)
+                    if info.status_code == 423 =>
+                {
+                    view::DuressDisableError::Active
                 }
-                // Only the passkey branch may raise a prompt. A stale press on
-                // any other method must not, or a PIN device would get a system
-                // sheet no credential can answer.
-                let Some(crate::app::DuressStepUpMethod::Passkey(cube)) = d.method.clone() else {
-                    return iced::Task::none();
-                };
-                d.submitting = true;
-                d.error = None;
-                let gen = self.session_generation;
-                // Started on the UI thread — `NativePasskeyCeremony` is
-                // main-thread-only. `reauth::begin` parks it and hands back a
-                // plain future, so no polling subscription is needed here.
-                match crate::services::passkey::reauth::begin(&cube) {
-                    Ok(fut) => {
-                        return iced::Task::perform(
-                            async move {
-                                // The words are dropped (and zeroized) right
-                                // here. What authorizes the disable is that the
-                                // assertion succeeded AND derived this Cube's
-                                // own fingerprint — `reauth::begin` enforces the
-                                // latter. The seed itself is not wanted, and
-                                // must not ride in a message iced will clone.
-                                fut.await.map(drop).map_err(|e| e.user_message())
-                            },
-                            move |res| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Duress(
-                                        DuressMessage::DisableStepUpDone(res, gen),
-                                    ),
-                                ))
-                            },
-                        );
-                    }
-                    Err(e) => {
-                        d.submitting = false;
-                        d.error = Some(e.user_message());
+                _ => view::DuressDisableError::Failed(e.to_string()),
+            });
+            Message::View(view::Message::ConnectAccount(
+                ConnectAccountMessage::Duress(DuressMessage::DisableResult(mapped, gen)),
+            ))
+        })
+    }
+
+    fn apply_duress_disable_result(
+        &mut self,
+        res: Result<(), view::DuressDisableError>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        match res {
+            Ok(()) => {
+                // Server disabled — now disarm THIS device locally (clear
+                // Cube PIN hashes + local state + queue), via the active
+                // datadir (same one the enroll pre-flight uses).
+                let dir = match crate::dir::CoincubeDirectory::active() {
+                    Ok(d) => d,
+                    Err(err) => {
+                        if let Some(d) = &mut self.duress_disable {
+                            d.submitting = false;
+                            d.error = Some(
+                                UserError::logged(
+                                    "Duress is off on your account, but not on this device",
+                                    "COINCUBE Desktop couldn't read its data folder to finish. Reopen Settings to retry.",
+                                    crate::user_error::CC_CONFIG,
+                                    true,
+                                    err,
+                                )
+                                .toast(),
+                            );
+                        }
                         return iced::Task::none();
                     }
-                }
-            }
-            DuressMessage::DisableStepUpDone(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                let Some(d) = &mut self.duress_disable else {
-                    return iced::Task::none();
                 };
-                if let Err(msg) = res {
-                    d.submitting = false;
-                    d.error = Some(msg);
-                    return iced::Task::none();
-                }
-                let gen = self.session_generation;
-                let client = self.client.clone();
                 return iced::Task::perform(
-                    async move { client.disable_duress().await },
+                    async move {
+                        crate::app::clear_duress_enrollment(dir)
+                            .await
+                            .map(|()| true)
+                    },
                     move |res| {
-                        let mapped = res.map_err(|e| match &e {
-                            crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                if info.status_code == 423 =>
-                            {
-                                view::DuressDisableError::Active
-                            }
-                            _ => view::DuressDisableError::Failed(e.to_string()),
-                        });
                         Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Duress(DuressMessage::DisableResult(
-                                mapped, gen,
-                            )),
+                            ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(res, gen)),
                         ))
                     },
                 );
             }
-            DuressMessage::DisableResult(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
+            Err(view::DuressDisableError::Active) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some("Duress is currently active and can't be disabled.".to_string());
                 }
-                match res {
-                    Ok(()) => {
-                        // Server disabled — now disarm THIS device locally (clear
-                        // Cube PIN hashes + local state + queue), via the active
-                        // datadir (same one the enroll pre-flight uses).
-                        let dir = match crate::dir::CoincubeDirectory::active() {
-                            Ok(d) => d,
-                            Err(err) => {
-                                if let Some(d) = &mut self.duress_disable {
-                                    d.submitting = false;
-                                    d.error = Some(
-                                        UserError::logged(
-                                            "Duress is off on your account, but not on this device",
-                                            "COINCUBE Desktop couldn't read its data folder to finish. Reopen Settings to retry.",
-                                            crate::user_error::CC_CONFIG,
-                                            true,
-                                            err,
-                                        )
-                                        .toast(),
-                                    );
-                                }
-                                return iced::Task::none();
-                            }
-                        };
-                        return iced::Task::perform(
-                            async move {
-                                crate::app::clear_duress_enrollment(dir)
-                                    .await
-                                    .map(|()| true)
-                            },
-                            move |res| {
-                                Message::View(view::Message::ConnectAccount(
-                                    ConnectAccountMessage::Duress(DuressMessage::DisarmComplete(
-                                        res, gen,
-                                    )),
-                                ))
-                            },
-                        );
-                    }
-                    Err(view::DuressDisableError::Active) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(
-                                "Duress is currently active and can't be disabled.".to_string(),
-                            );
-                        }
-                        // Re-sync state: if duress really is active, the
-                        // `StateLoaded` handler routes this device to recovery.
-                        return self.reload_duress_state();
-                    }
-                    Err(view::DuressDisableError::Failed(msg)) => {
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(msg);
-                        }
-                    }
+                // Re-sync state: if duress really is active, the
+                // `StateLoaded` handler routes this device to recovery.
+                return self.reload_duress_state();
+            }
+            Err(view::DuressDisableError::Failed(msg)) => {
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some(msg);
                 }
             }
-            DuressMessage::DisarmComplete(res, gen) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
+        }
+        iced::Task::none()
+    }
+
+    fn apply_duress_disarm(&mut self, res: Result<bool, String>, gen: u64) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let had_dialog = self.duress_disable.is_some();
+        match res {
+            Ok(changed) => {
+                if changed {
+                    // This device is no longer armed; reflect the
+                    // disabled state in the panel immediately.
+                    self.duress_locally_armed = false;
+                    if let Some(s) = &mut self.duress_state {
+                        s.enrolled = false;
+                        s.active = false;
+                        s.this_device_registered = false;
+                    }
                 }
-                let had_dialog = self.duress_disable.is_some();
-                match res {
-                    Ok(changed) => {
-                        if changed {
-                            // This device is no longer armed; reflect the
-                            // disabled state in the panel immediately.
-                            self.duress_locally_armed = false;
-                            if let Some(s) = &mut self.duress_state {
-                                s.enrolled = false;
-                                s.active = false;
-                                s.this_device_registered = false;
-                            }
-                        }
-                        if let Some(mut d) = self.duress_disable.take() {
-                            d.zeroize_secrets();
-                        }
-                        // Confirmation toast only for the explicit, user-driven
-                        // disable (a dialog was open). The cross-device event and
-                        // launch reconcile disarm silently.
-                        if changed && had_dialog {
-                            return iced::Task::done(Message::View(view::Message::ShowSuccess(
-                                "Duress mode disabled.".to_string(),
-                            )));
-                        }
-                    }
-                    Err(e) => {
-                        // Built once, logged once, rendered in whichever of the
-                        // two places is on screen. The dialog branch used to
-                        // interpolate `{e}` — the common path, and the one that
-                        // actually reached a user.
-                        let user = UserError::logged(
-                            "Couldn't turn off duress mode",
-                            "Try again. If it keeps failing, contact support and quote the reference below.",
-                            crate::user_error::CC_API_BADRESP,
-                            true,
-                            &e,
-                        );
-                        if let Some(d) = &mut self.duress_disable {
-                            d.submitting = false;
-                            d.error = Some(user.toast());
-                        } else {
-                            // Settled on the panel card: the dialog is gone, so
-                            // there is no control left for the user to re-press
-                            // and nothing for a card button to re-run.
-                            self.error = Some(PanelError::settled(user));
-                        }
-                    }
+                if let Some(mut d) = self.duress_disable.take() {
+                    d.zeroize_secrets();
+                }
+                // Confirmation toast only for the explicit, user-driven
+                // disable (a dialog was open). The cross-device event and
+                // launch reconcile disarm silently.
+                if changed && had_dialog {
+                    return iced::Task::done(Message::View(view::Message::ShowSuccess(
+                        "Duress mode disabled.".to_string(),
+                    )));
+                }
+            }
+            Err(e) => {
+                // Built once, logged once, rendered in whichever of the
+                // two places is on screen. The dialog branch used to
+                // interpolate `{e}` — the common path, and the one that
+                // actually reached a user.
+                let user = UserError::logged(
+                    "Couldn't turn off duress mode",
+                    "Try again. If it keeps failing, contact support and quote the reference below.",
+                    crate::user_error::CC_API_BADRESP,
+                    true,
+                    &e,
+                );
+                if let Some(d) = &mut self.duress_disable {
+                    d.submitting = false;
+                    d.error = Some(user.toast());
+                } else {
+                    // Settled on the panel card: the dialog is gone, so
+                    // there is no control left for the user to re-press
+                    // and nothing for a card button to re-run.
+                    self.error = Some(PanelError::settled(user));
                 }
             }
         }
@@ -6367,70 +7158,55 @@ impl ConnectAccountPanel {
     fn update_contacts(&mut self, msg: ContactsMessage) -> iced::Task<Message> {
         match msg {
             ContactsMessage::ContactsLoaded(contacts, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.contacts = Some(contacts);
-                    // Clear loading only when all three sibling fetches
-                    // (contacts, sent invites, received invites) have
-                    // landed; otherwise the view flips from spinner to
-                    // empty-state before the late arrival paints.
-                    if self.contacts_state.invites.is_some()
-                        && self.contacts_state.received_invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                self.apply_contacts_loaded(contacts, gen)
             }
 
+            message @ (ContactsMessage::InvitesLoaded(_, _)
+            | ContactsMessage::ReceivedInvitesLoaded(_, _)
+            | ContactsMessage::AcceptReceivedInvite(_)
+            | ContactsMessage::ReceivedInviteAccepted(_)
+            | ContactsMessage::AcceptReceivedInviteFailed(_, _)
+            | ContactsMessage::ShowInviteForm
+            | ContactsMessage::InviteCubesAvailable(_, _)
+            | ContactsMessage::ToggleInviteCube(_)
+            | ContactsMessage::BackToList
+            | ContactsMessage::ShowDetail(_)
+            | ContactsMessage::InviteEmailChanged(_)
+            | ContactsMessage::SubmitInvite
+            | ContactsMessage::InviteCubeForbidden(_)
+            | ContactsMessage::InviteCreated
+            | ContactsMessage::ResendInvite(_)
+            | ContactsMessage::InviteResent(_)
+            | ContactsMessage::RevokeInvite(_)
+            | ContactsMessage::InviteRevoked(_)) => self.update_contact_invites(message),
+            message @ (ContactsMessage::ContactCubesLoaded(_, _, _)
+            | ContactsMessage::ContactCubesFailed(_, _)
+            | ContactsMessage::OpenAddToCubeDialog(_)
+            | ContactsMessage::AddToCubeCandidatesLoaded(_, _, _)
+            | ContactsMessage::ToggleAddToCubeSelection(_)
+            | ContactsMessage::ConfirmAddToCube
+            | ContactsMessage::AddToCubeResult(_, _, _)
+            | ContactsMessage::CloseAddToCubeDialog
+            | ContactsMessage::AddContactToCurrentCube(_)
+            | ContactsMessage::AddContactToCurrentCubeResult(_, _)) => {
+                self.update_contact_membership(message)
+            }
+            ContactsMessage::Error(e) => self.apply_contact_error(e),
+        }
+    }
+
+    fn update_contact_invites(&mut self, message: ContactsMessage) -> iced::Task<Message> {
+        match message {
             ContactsMessage::InvitesLoaded(invites, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.invites = Some(invites);
-                    if self.contacts_state.contacts.is_some()
-                        && self.contacts_state.received_invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                self.apply_contact_invites(invites, gen)
             }
 
             ContactsMessage::ReceivedInvitesLoaded(received, gen) => {
-                if gen == self.session_generation {
-                    self.contacts_state.received_invites = Some(received);
-                    if self.contacts_state.contacts.is_some()
-                        && self.contacts_state.invites.is_some()
-                    {
-                        self.contacts_state.loading = false;
-                    }
-                }
+                self.apply_received_contact_invites(received, gen)
             }
 
             ContactsMessage::AcceptReceivedInvite(invite_id) => {
-                // Guard against double-tap. The button is disabled
-                // while the id is in-flight, but the message can still
-                // arrive twice via keyboard activation; we drop the
-                // second silently.
-                if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
-                    return iced::Task::none();
-                }
-                self.contacts_state.error = None;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.accept_invite_by_id(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::ReceivedInviteAccepted(invite_id),
-                            ),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::AcceptReceivedInviteFailed(
-                                    invite_id,
-                                    e.to_string(),
-                                ),
-                            ),
-                        )),
-                    },
-                );
+                return self.accept_received_invite(invite_id)
             }
 
             ContactsMessage::ReceivedInviteAccepted(invite_id) => {
@@ -6449,42 +7225,10 @@ impl ConnectAccountPanel {
                 self.contacts_state.error = Some(msg);
             }
 
-            ContactsMessage::ShowInviteForm => {
-                self.contacts_state.step = ContactsStep::InviteForm;
-                self.contacts_state.invite_email.clear();
-                self.contacts_state.invite_role = ContactRole::Keyholder;
-                self.contacts_state.invite_sending = false;
-                self.contacts_state.error = None;
-                self.contacts_state.invite_cube_selections.clear();
-                self.contacts_state.invite_cube_error = None;
-                // Drop the prior cube list so re-opens don't briefly
-                // render stale checkboxes from a previous session while
-                // the fresh `list_cubes()` call is in flight. The view
-                // hides the "Also add to Cube(s)" section entirely when
-                // this is `None`.
-                self.contacts_state.invite_available_cubes = None;
-                // Load the user's cubes for the "Also add to Cube(s)"
-                // multi-select (W12). Hidden in the view until this
-                // resolves; empty Vec renders as "no cubes section".
-                return load_invite_cubes(
-                    &self.client,
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
-            }
+            ContactsMessage::ShowInviteForm => return self.show_contact_invite_form(),
 
             ContactsMessage::InviteCubesAvailable(cubes, gen) => {
-                if gen == self.session_generation {
-                    // Drop any prior selection that's no longer in the
-                    // authoritative list (e.g. after a 403 reload where
-                    // the user lost access to a cube mid-form).
-                    let valid_ids: std::collections::HashSet<u64> =
-                        cubes.iter().map(|c| c.id).collect();
-                    self.contacts_state
-                        .invite_cube_selections
-                        .retain(|id| valid_ids.contains(id));
-                    self.contacts_state.invite_available_cubes = Some(cubes);
-                }
+                return self.apply_invite_cubes(cubes, gen)
             }
 
             ContactsMessage::ToggleInviteCube(cube_id) => {
@@ -6520,78 +7264,10 @@ impl ConnectAccountPanel {
                 self.contacts_state.error = None;
             }
 
-            ContactsMessage::SubmitInvite => {
-                if self.contacts_state.invite_sending {
-                    return iced::Task::none();
-                }
-                let email = self.contacts_state.invite_email.trim().to_string();
-                let valid = email_address::EmailAddress::parse_with_options(
-                    &email,
-                    email_address::Options::default().with_required_tld(),
-                )
-                .is_ok();
-                if !valid {
-                    self.contacts_state.error = Some("Please enter a valid email address".into());
-                    return iced::Task::none();
-                }
-                self.contacts_state.invite_sending = true;
-                self.contacts_state.error = None;
-                self.contacts_state.invite_cube_error = None;
-                let client = self.client.clone();
-                let role = self.contacts_state.invite_role;
-                let cube_ids = self.contacts_state.invite_cube_selections.clone();
-                let had_cubes = !cube_ids.is_empty();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_invite(CreateInviteRequest {
-                                email,
-                                role,
-                                cube_ids,
-                            })
-                            .await
-                    },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
-                        )),
-                        // A 403 when cubes were attached almost always means
-                        // the caller is no longer a member of one of them
-                        // (the per-cube membership check failed). Route to
-                        // the dedicated handler so the form stays open with
-                        // a clear "some cubes are no longer available" msg.
-                        Err(e)
-                            if had_cubes
-                                && matches!(
-                                    &e,
-                                    crate::services::coincube::CoincubeError::Unsuccessful(info)
-                                        if info.status_code == 403
-                                ) =>
-                        {
-                            Message::View(view::Message::ConnectAccount(
-                                ConnectAccountMessage::Contacts(
-                                    ContactsMessage::InviteCubeForbidden(e.to_string()),
-                                ),
-                            ))
-                        }
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
-            }
+            ContactsMessage::SubmitInvite => return self.submit_contact_invite(),
 
             ContactsMessage::InviteCubeForbidden(msg) => {
-                self.contacts_state.invite_sending = false;
-                self.contacts_state.invite_cube_error = Some(msg);
-                // Refresh the cube list so the checkboxes reflect the
-                // user's current memberships. We stay on the form so
-                // the user can adjust and retry.
-                return load_invite_cubes(
-                    &self.client,
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
+                return self.recover_unavailable_invite_cubes(msg)
             }
 
             ContactsMessage::InviteCreated => {
@@ -6600,45 +7276,13 @@ impl ConnectAccountPanel {
             }
 
             ContactsMessage::ResendInvite(invite_id) => {
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.resend_invite(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteResent(
-                                invite_id,
-                            )),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
+                return self.resend_contact_invite(invite_id)
             }
 
-            ContactsMessage::InviteResent(_invite_id) => {
-                log::info!("[CONTACTS] Invite resent successfully");
-                self.contacts_state.error = None;
-                return iced::Task::done(Message::View(view::Message::ShowSuccess(
-                    "Invite resent".to_string(),
-                )));
-            }
+            ContactsMessage::InviteResent(_invite_id) => return self.show_contact_invite_resent(),
 
             ContactsMessage::RevokeInvite(invite_id) => {
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move { client.revoke_invite(invite_id).await },
-                    move |res| match res {
-                        Ok(()) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::InviteRevoked(
-                                invite_id,
-                            )),
-                        )),
-                        Err(e) => Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
-                        )),
-                    },
-                );
+                return self.revoke_contact_invite(invite_id)
             }
 
             ContactsMessage::InviteRevoked(invite_id) => {
@@ -6647,6 +7291,88 @@ impl ConnectAccountPanel {
                 }
             }
 
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contact_invites(&mut self, invites: Vec<crate::services::coincube::Invite>, gen: u64) {
+        if gen == self.session_generation {
+            self.contacts_state.invites = Some(invites);
+            if self.contacts_state.contacts.is_some()
+                && self.contacts_state.received_invites.is_some()
+            {
+                self.contacts_state.loading = false;
+            }
+        }
+    }
+
+    fn apply_received_contact_invites(
+        &mut self,
+        received: Vec<crate::services::coincube::ReceivedInvite>,
+        gen: u64,
+    ) {
+        if gen == self.session_generation {
+            self.contacts_state.received_invites = Some(received);
+            if self.contacts_state.contacts.is_some() && self.contacts_state.invites.is_some() {
+                self.contacts_state.loading = false;
+            }
+        }
+    }
+
+    fn resend_contact_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.resend_invite(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteResent(invite_id)),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn revoke_contact_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.revoke_invite(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteRevoked(invite_id)),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn recover_unavailable_invite_cubes(&mut self, msg: String) -> iced::Task<Message> {
+        self.contacts_state.invite_sending = false;
+        self.contacts_state.invite_cube_error = Some(msg);
+        // Refresh the cube list so the checkboxes reflect the
+        // user's current memberships. We stay on the form so
+        // the user can adjust and retry.
+        load_invite_cubes(
+            &self.client,
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn show_contact_invite_resent(&mut self) -> iced::Task<Message> {
+        log::info!("[CONTACTS] Invite resent successfully");
+        self.contacts_state.error = None;
+        iced::Task::done(Message::View(view::Message::ShowSuccess(
+            "Invite resent".to_string(),
+        )))
+    }
+
+    fn update_contact_membership(&mut self, message: ContactsMessage) -> iced::Task<Message> {
+        match message {
             ContactsMessage::ContactCubesLoaded(contact_id, cubes, gen) => {
                 // Only store if session is current and we're still viewing this contact
                 if gen == self.session_generation
@@ -6666,58 +7392,11 @@ impl ConnectAccountPanel {
 
             // ── W14: Add-existing-contact-to-Cube ─────────────────────
             ContactsMessage::OpenAddToCubeDialog(contact_id) => {
-                let Some(contact) = self
-                    .contacts_state
-                    .contacts
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| c.id == contact_id)
-                    .cloned()
-                else {
-                    log::warn!("[CONTACTS] OpenAddToCubeDialog: contact {contact_id} not found");
-                    return iced::Task::none();
-                };
-                let email = match contact.contact_user.as_ref() {
-                    Some(u) if !u.email.is_empty() => u.email.clone(),
-                    _ => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, "Contact has no linked user".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                self.contacts_state
-                    .add_to_current_cube_errors
-                    .remove(&contact_id);
-                self.contacts_state.add_to_cube_target = Some(AddToCubeDialog {
-                    contact_id,
-                    contact_email: email,
-                    candidate_cubes: None,
-                    selections: Vec::new(),
-                    submitting: false,
-                    failures: std::collections::HashMap::new(),
-                });
-                return load_add_to_cube_candidates(
-                    &self.client,
-                    contact_id,
-                    contact.effective_contact_user_id(),
-                    self.session_generation,
-                    self.contacts_state.active_network.clone(),
-                );
+                return self.open_add_contact_dialog(contact_id)
             }
 
             ContactsMessage::AddToCubeCandidatesLoaded(contact_id, cubes, gen) => {
-                // Stale-guard: session turnover OR a different contact's
-                // dialog opened in the meantime.
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                if let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() {
-                    if dialog.contact_id == contact_id {
-                        dialog.candidate_cubes = Some(cubes);
-                    }
-                }
+                return self.apply_add_contact_candidates(contact_id, cubes, gen)
             }
 
             ContactsMessage::ToggleAddToCubeSelection(cube_id) => {
@@ -6731,82 +7410,10 @@ impl ConnectAccountPanel {
                 }
             }
 
-            ContactsMessage::ConfirmAddToCube => {
-                let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
-                    return iced::Task::none();
-                };
-                if dialog.submitting || dialog.selections.is_empty() {
-                    return iced::Task::none();
-                }
-                dialog.submitting = true;
-                dialog.failures.clear();
-                let email = dialog.contact_email.clone();
-                let cube_ids = dialog.selections.clone();
-                let contact_id = dialog.contact_id;
-                let gen = self.session_generation;
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        // Sequential per-cube calls — N is small and
-                        // sequential keeps the result order deterministic
-                        // for the failures map.
-                        let mut results = Vec::with_capacity(cube_ids.len());
-                        for cube_id in cube_ids {
-                            let r = client.create_cube_invite(cube_id, &email).await;
-                            results.push((cube_id, r.map(|_| ()).map_err(|e| e.to_string())));
-                        }
-                        results
-                    },
-                    move |results| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(ContactsMessage::AddToCubeResult(
-                                contact_id, gen, results,
-                            )),
-                        ))
-                    },
-                );
-            }
+            ContactsMessage::ConfirmAddToCube => return self.confirm_add_contact(),
 
             ContactsMessage::AddToCubeResult(contact_id, gen, results) => {
-                if gen != self.session_generation {
-                    return iced::Task::none();
-                }
-                let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
-                    return iced::Task::none();
-                };
-                if dialog.contact_id != contact_id {
-                    return iced::Task::none();
-                }
-                dialog.submitting = false;
-                let mut failures = std::collections::HashMap::new();
-                let mut succeeded_ids: Vec<u64> = Vec::new();
-                for (cube_id, r) in results {
-                    match r {
-                        Ok(()) => succeeded_ids.push(cube_id),
-                        Err(msg) => {
-                            failures.insert(cube_id, msg);
-                        }
-                    }
-                }
-                if failures.is_empty() {
-                    // Full success: close the dialog and refresh the
-                    // Associated-Cubes section so the UI reflects the
-                    // new memberships.
-                    let contact_id = dialog.contact_id;
-                    self.contacts_state.add_to_cube_target = None;
-                    if matches!(
-                        self.contacts_state.step,
-                        ContactsStep::Detail(id) if id == contact_id
-                    ) {
-                        return self.fetch_contact_cubes(contact_id);
-                    }
-                    return iced::Task::none();
-                }
-                // Partial / full failure: keep the dialog open and surface
-                // per-cube messages. Drop succeeded selections so the user
-                // can't re-submit them (re-submit would 409 on duplicate).
-                dialog.selections.retain(|id| !succeeded_ids.contains(id));
-                dialog.failures = failures;
+                return self.apply_add_contact_result(contact_id, gen, results)
             }
 
             ContactsMessage::CloseAddToCubeDialog => {
@@ -6814,120 +7421,429 @@ impl ConnectAccountPanel {
             }
 
             ContactsMessage::AddContactToCurrentCube(contact_id) => {
-                if self
-                    .contacts_state
-                    .add_to_current_cube_pending
-                    .contains(&contact_id)
-                {
-                    return iced::Task::none();
-                }
-                let Some(contact) = self
-                    .contacts_state
-                    .contacts
-                    .as_deref()
-                    .unwrap_or_default()
-                    .iter()
-                    .find(|c| c.id == contact_id)
-                    .cloned()
-                else {
-                    log::warn!(
-                        "[CONTACTS] AddContactToCurrentCube: contact {contact_id} not found"
-                    );
-                    return iced::Task::none();
-                };
-                let email = match contact.contact_user.as_ref() {
-                    Some(u) if !u.email.is_empty() => u.email.clone(),
-                    _ => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, "Contact has no linked user".to_string());
-                        return iced::Task::none();
-                    }
-                };
-                // Target the server-side id of the cube the user is
-                // actually loaded into. This works regardless of how
-                // many other cubes the user owns on the same network —
-                // the prior "match-by-network" heuristic broke when
-                // there were multiple mainnet cubes.
-                let Some(cube_id) = self.contacts_state.active_cube_server_id else {
-                    self.contacts_state.add_to_current_cube_errors.insert(
-                        contact_id,
-                        "Current cube isn't registered yet — please retry in a moment.".to_string(),
-                    );
-                    return iced::Task::none();
-                };
-                // Clear any prior error for this contact so retries show
-                // fresh state.
-                self.contacts_state
-                    .add_to_current_cube_errors
-                    .remove(&contact_id);
-                self.contacts_state
-                    .add_to_current_cube_pending
-                    .insert(contact_id);
-                let client = self.client.clone();
-                return iced::Task::perform(
-                    async move {
-                        client
-                            .create_cube_invite(cube_id, &email)
-                            .await
-                            .map(|_| cube_id)
-                            .map_err(|e| e.to_string())
-                    },
-                    move |res| {
-                        Message::View(view::Message::ConnectAccount(
-                            ConnectAccountMessage::Contacts(
-                                ContactsMessage::AddContactToCurrentCubeResult(contact_id, res),
-                            ),
-                        ))
-                    },
-                );
+                return self.add_contact_to_current_cube(contact_id)
             }
 
             ContactsMessage::AddContactToCurrentCubeResult(contact_id, res) => {
-                self.contacts_state
-                    .add_to_current_cube_pending
-                    .remove(&contact_id);
-                match res {
-                    Ok(_cube_id) => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .remove(&contact_id);
-                        // Refresh the Associated Cubes section if we're on
-                        // that contact's detail view.
-                        if matches!(
-                            self.contacts_state.step,
-                            ContactsStep::Detail(id) if id == contact_id
-                        ) {
-                            return self.fetch_contact_cubes(contact_id);
-                        }
-                    }
-                    Err(msg) => {
-                        self.contacts_state
-                            .add_to_current_cube_errors
-                            .insert(contact_id, msg);
-                    }
-                }
+                return self.apply_add_to_current_cube_result(contact_id, res)
             }
 
-            ContactsMessage::Error(e) => {
-                log::error!("[CONTACTS] Error: {}", e);
-                // Determine which operation failed based on current state,
-                // and only reset the relevant flag.
-                if self.contacts_state.invite_sending {
-                    // Error from SubmitInvite
-                    self.contacts_state.invite_sending = false;
-                    self.contacts_state.error = Some(e);
-                } else if self.contacts_state.loading {
-                    // Error from initial load (contacts/invites fetch)
-                    self.contacts_state.loading = false;
-                    // Don't display load errors — the empty state is shown instead
-                } else {
-                    // Error from resend/revoke/cubes fetch — display inline
-                    self.contacts_state.error = Some(e);
+            _ => {}
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contacts_loaded(
+        &mut self,
+        contacts: Vec<crate::services::coincube::Contact>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            self.contacts_state.contacts = Some(contacts);
+            // Clear loading only when all three sibling fetches
+            // (contacts, sent invites, received invites) have
+            // landed; otherwise the view flips from spinner to
+            // empty-state before the late arrival paints.
+            if self.contacts_state.invites.is_some()
+                && self.contacts_state.received_invites.is_some()
+            {
+                self.contacts_state.loading = false;
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn accept_received_invite(&mut self, invite_id: u64) -> iced::Task<Message> {
+        // Guard against double-tap. The button is disabled
+        // while the id is in-flight, but the message can still
+        // arrive twice via keyboard activation; we drop the
+        // second silently.
+        if !self.contacts_state.accepting_invite_ids.insert(invite_id) {
+            return iced::Task::none();
+        }
+        self.contacts_state.error = None;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move { client.accept_invite_by_id(invite_id).await },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::ReceivedInviteAccepted(
+                        invite_id,
+                    )),
+                )),
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::AcceptReceivedInviteFailed(
+                        invite_id,
+                        e.to_string(),
+                    )),
+                )),
+            },
+        )
+    }
+
+    fn show_contact_invite_form(&mut self) -> iced::Task<Message> {
+        self.contacts_state.step = ContactsStep::InviteForm;
+        self.contacts_state.invite_email.clear();
+        self.contacts_state.invite_role = ContactRole::Keyholder;
+        self.contacts_state.invite_sending = false;
+        self.contacts_state.error = None;
+        self.contacts_state.invite_cube_selections.clear();
+        self.contacts_state.invite_cube_error = None;
+        // Drop the prior cube list so re-opens don't briefly
+        // render stale checkboxes from a previous session while
+        // the fresh `list_cubes()` call is in flight. The view
+        // hides the "Also add to Cube(s)" section entirely when
+        // this is `None`.
+        self.contacts_state.invite_available_cubes = None;
+        // Load the user's cubes for the "Also add to Cube(s)"
+        // multi-select (W12). Hidden in the view until this
+        // resolves; empty Vec renders as "no cubes section".
+        load_invite_cubes(
+            &self.client,
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn apply_invite_cubes(
+        &mut self,
+        cubes: Vec<InviteCubeOption>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        if gen == self.session_generation {
+            // Drop any prior selection that's no longer in the
+            // authoritative list (e.g. after a 403 reload where
+            // the user lost access to a cube mid-form).
+            let valid_ids: std::collections::HashSet<u64> = cubes.iter().map(|c| c.id).collect();
+            self.contacts_state
+                .invite_cube_selections
+                .retain(|id| valid_ids.contains(id));
+            self.contacts_state.invite_available_cubes = Some(cubes);
+        }
+        iced::Task::none()
+    }
+
+    fn submit_contact_invite(&mut self) -> iced::Task<Message> {
+        if self.contacts_state.invite_sending {
+            return iced::Task::none();
+        }
+        let email = self.contacts_state.invite_email.trim().to_string();
+        let valid = email_address::EmailAddress::parse_with_options(
+            &email,
+            email_address::Options::default().with_required_tld(),
+        )
+        .is_ok();
+        if !valid {
+            self.contacts_state.error = Some("Please enter a valid email address".into());
+            return iced::Task::none();
+        }
+        self.contacts_state.invite_sending = true;
+        self.contacts_state.error = None;
+        self.contacts_state.invite_cube_error = None;
+        let client = self.client.clone();
+        let role = self.contacts_state.invite_role;
+        let cube_ids = self.contacts_state.invite_cube_selections.clone();
+        let had_cubes = !cube_ids.is_empty();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_invite(CreateInviteRequest {
+                        email,
+                        role,
+                        cube_ids,
+                    })
+                    .await
+            },
+            move |res| match res {
+                Ok(()) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::InviteCreated),
+                )),
+                // A 403 when cubes were attached almost always means
+                // the caller is no longer a member of one of them
+                // (the per-cube membership check failed). Route to
+                // the dedicated handler so the form stays open with
+                // a clear "some cubes are no longer available" msg.
+                Err(e)
+                    if had_cubes
+                        && matches!(
+                            &e,
+                            crate::services::coincube::CoincubeError::Unsuccessful(info)
+                                if info.status_code == 403
+                        ) =>
+                {
+                    Message::View(view::Message::ConnectAccount(
+                        ConnectAccountMessage::Contacts(ContactsMessage::InviteCubeForbidden(
+                            e.to_string(),
+                        )),
+                    ))
+                }
+                Err(e) => Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::Error(e.to_string())),
+                )),
+            },
+        )
+    }
+
+    fn open_add_contact_dialog(&mut self, contact_id: u64) -> iced::Task<Message> {
+        let Some(contact) = self
+            .contacts_state
+            .contacts
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|c| c.id == contact_id)
+            .cloned()
+        else {
+            log::warn!("[CONTACTS] OpenAddToCubeDialog: contact {contact_id} not found");
+            return iced::Task::none();
+        };
+        let email = match contact.contact_user.as_ref() {
+            Some(u) if !u.email.is_empty() => u.email.clone(),
+            _ => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, "Contact has no linked user".to_string());
+                return iced::Task::none();
+            }
+        };
+        self.contacts_state
+            .add_to_current_cube_errors
+            .remove(&contact_id);
+        self.contacts_state.add_to_cube_target = Some(AddToCubeDialog {
+            contact_id,
+            contact_email: email,
+            candidate_cubes: None,
+            selections: Vec::new(),
+            submitting: false,
+            failures: std::collections::HashMap::new(),
+        });
+        load_add_to_cube_candidates(
+            &self.client,
+            contact_id,
+            contact.effective_contact_user_id(),
+            self.session_generation,
+            self.contacts_state.active_network.clone(),
+        )
+    }
+
+    fn apply_add_contact_candidates(
+        &mut self,
+        contact_id: u64,
+        cubes: Vec<InviteCubeOption>,
+        gen: u64,
+    ) -> iced::Task<Message> {
+        // Stale-guard: session turnover OR a different contact's
+        // dialog opened in the meantime.
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        if let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() {
+            if dialog.contact_id == contact_id {
+                dialog.candidate_cubes = Some(cubes);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn confirm_add_contact(&mut self) -> iced::Task<Message> {
+        let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
+            return iced::Task::none();
+        };
+        if dialog.submitting || dialog.selections.is_empty() {
+            return iced::Task::none();
+        }
+        dialog.submitting = true;
+        dialog.failures.clear();
+        let email = dialog.contact_email.clone();
+        let cube_ids = dialog.selections.clone();
+        let contact_id = dialog.contact_id;
+        let gen = self.session_generation;
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                // Sequential per-cube calls — N is small and
+                // sequential keeps the result order deterministic
+                // for the failures map.
+                let mut results = Vec::with_capacity(cube_ids.len());
+                for cube_id in cube_ids {
+                    let r = client.create_cube_invite(cube_id, &email).await;
+                    results.push((cube_id, r.map(|_| ()).map_err(|e| e.to_string())));
+                }
+                results
+            },
+            move |results| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(ContactsMessage::AddToCubeResult(
+                        contact_id, gen, results,
+                    )),
+                ))
+            },
+        )
+    }
+
+    fn apply_add_contact_result(
+        &mut self,
+        contact_id: u64,
+        gen: u64,
+        results: Vec<(u64, Result<(), String>)>,
+    ) -> iced::Task<Message> {
+        if gen != self.session_generation {
+            return iced::Task::none();
+        }
+        let Some(dialog) = self.contacts_state.add_to_cube_target.as_mut() else {
+            return iced::Task::none();
+        };
+        if dialog.contact_id != contact_id {
+            return iced::Task::none();
+        }
+        dialog.submitting = false;
+        let mut failures = std::collections::HashMap::new();
+        let mut succeeded_ids: Vec<u64> = Vec::new();
+        for (cube_id, r) in results {
+            match r {
+                Ok(()) => succeeded_ids.push(cube_id),
+                Err(msg) => {
+                    failures.insert(cube_id, msg);
                 }
             }
         }
+        if failures.is_empty() {
+            // Full success: close the dialog and refresh the
+            // Associated-Cubes section so the UI reflects the
+            // new memberships.
+            let contact_id = dialog.contact_id;
+            self.contacts_state.add_to_cube_target = None;
+            if matches!(
+                self.contacts_state.step,
+                ContactsStep::Detail(id) if id == contact_id
+            ) {
+                return self.fetch_contact_cubes(contact_id);
+            }
+            return iced::Task::none();
+        }
+        // Partial / full failure: keep the dialog open and surface
+        // per-cube messages. Drop succeeded selections so the user
+        // can't re-submit them (re-submit would 409 on duplicate).
+        dialog.selections.retain(|id| !succeeded_ids.contains(id));
+        dialog.failures = failures;
+        iced::Task::none()
+    }
 
+    fn add_contact_to_current_cube(&mut self, contact_id: u64) -> iced::Task<Message> {
+        if self
+            .contacts_state
+            .add_to_current_cube_pending
+            .contains(&contact_id)
+        {
+            return iced::Task::none();
+        }
+        let Some(contact) = self
+            .contacts_state
+            .contacts
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .find(|c| c.id == contact_id)
+            .cloned()
+        else {
+            log::warn!("[CONTACTS] AddContactToCurrentCube: contact {contact_id} not found");
+            return iced::Task::none();
+        };
+        let email = match contact.contact_user.as_ref() {
+            Some(u) if !u.email.is_empty() => u.email.clone(),
+            _ => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, "Contact has no linked user".to_string());
+                return iced::Task::none();
+            }
+        };
+        // Target the server-side id of the cube the user is
+        // actually loaded into. This works regardless of how
+        // many other cubes the user owns on the same network —
+        // the prior "match-by-network" heuristic broke when
+        // there were multiple mainnet cubes.
+        let Some(cube_id) = self.contacts_state.active_cube_server_id else {
+            self.contacts_state.add_to_current_cube_errors.insert(
+                contact_id,
+                "Current cube isn't registered yet — please retry in a moment.".to_string(),
+            );
+            return iced::Task::none();
+        };
+        // Clear any prior error for this contact so retries show
+        // fresh state.
+        self.contacts_state
+            .add_to_current_cube_errors
+            .remove(&contact_id);
+        self.contacts_state
+            .add_to_current_cube_pending
+            .insert(contact_id);
+        let client = self.client.clone();
+        iced::Task::perform(
+            async move {
+                client
+                    .create_cube_invite(cube_id, &email)
+                    .await
+                    .map(|_| cube_id)
+                    .map_err(|e| e.to_string())
+            },
+            move |res| {
+                Message::View(view::Message::ConnectAccount(
+                    ConnectAccountMessage::Contacts(
+                        ContactsMessage::AddContactToCurrentCubeResult(contact_id, res),
+                    ),
+                ))
+            },
+        )
+    }
+
+    fn apply_add_to_current_cube_result(
+        &mut self,
+        contact_id: u64,
+        res: Result<u64, String>,
+    ) -> iced::Task<Message> {
+        self.contacts_state
+            .add_to_current_cube_pending
+            .remove(&contact_id);
+        match res {
+            Ok(_cube_id) => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .remove(&contact_id);
+                // Refresh the Associated Cubes section if we're on
+                // that contact's detail view.
+                if matches!(
+                    self.contacts_state.step,
+                    ContactsStep::Detail(id) if id == contact_id
+                ) {
+                    return self.fetch_contact_cubes(contact_id);
+                }
+            }
+            Err(msg) => {
+                self.contacts_state
+                    .add_to_current_cube_errors
+                    .insert(contact_id, msg);
+            }
+        }
+        iced::Task::none()
+    }
+
+    fn apply_contact_error(&mut self, e: String) -> iced::Task<Message> {
+        log::error!("[CONTACTS] Error: {}", e);
+        // Determine which operation failed based on current state,
+        // and only reset the relevant flag.
+        if self.contacts_state.invite_sending {
+            // Error from SubmitInvite
+            self.contacts_state.invite_sending = false;
+            self.contacts_state.error = Some(e);
+        } else if self.contacts_state.loading {
+            // Error from initial load (contacts/invites fetch)
+            self.contacts_state.loading = false;
+            // Don't display load errors — the empty state is shown instead
+        } else {
+            // Error from resend/revoke/cubes fetch — display inline
+            self.contacts_state.error = Some(e);
+        }
         iced::Task::none()
     }
 }
