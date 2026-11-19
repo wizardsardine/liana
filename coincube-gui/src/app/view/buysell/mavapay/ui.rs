@@ -942,6 +942,31 @@ fn format_currency_amount(amount: u64, currency: &MavapayUnitCurrency) -> String
     }
 }
 
+fn order_detail_fees(transaction: &OrderTransaction, order: Option<&GetOrderResponse>) -> String {
+    // Get total fees from all quotes if available, otherwise use transaction fees.
+    order
+        .map(|o| {
+            let quotes = o.quotes();
+            if quotes.is_empty() {
+                return format_fees(transaction.fees, &transaction.currency);
+            }
+
+            // Sum up fees from all quotes (use target currency fees)
+            let total_fees: u64 = quotes
+                .iter()
+                .map(|q| q.transaction_fees_in_target_currency)
+                .sum();
+
+            // Use the target currency from the first quote for formatting
+            if let Some(first_quote) = quotes.first() {
+                format_currency_amount(total_fees, &first_quote.target_currency)
+            } else {
+                format_fees(transaction.fees, &transaction.currency)
+            }
+        })
+        .unwrap_or_else(|| format_fees(transaction.fees, &transaction.currency))
+}
+
 fn order_detail_view<'a>(
     state: &'a MavapayState,
     mask_amounts: bool,
@@ -979,30 +1004,8 @@ fn order_detail_view<'a>(
     ]
     .align_y(Alignment::Center);
 
-    // Get total fees from all quotes if available, otherwise use transaction fees
     let fees_display = passive_amount(mask_amounts, || {
-        order
-            .as_ref()
-            .map(|o| {
-                let quotes = o.quotes();
-                if quotes.is_empty() {
-                    return format_fees(transaction.fees, &transaction.currency);
-                }
-
-                // Sum up fees from all quotes (use target currency fees)
-                let total_fees: u64 = quotes
-                    .iter()
-                    .map(|q| q.transaction_fees_in_target_currency)
-                    .sum();
-
-                // Use the target currency from the first quote for formatting
-                if let Some(first_quote) = quotes.first() {
-                    format_currency_amount(total_fees, &first_quote.target_currency)
-                } else {
-                    format_fees(transaction.fees, &transaction.currency)
-                }
-            })
-            .unwrap_or_else(|| format_fees(transaction.fees, &transaction.currency))
+        order_detail_fees(transaction, order.as_ref())
     });
 
     // Transaction summary card (always shown)
