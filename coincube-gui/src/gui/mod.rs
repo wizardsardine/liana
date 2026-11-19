@@ -2507,6 +2507,59 @@ impl GUI {
         }
     }
 
+    // Reuse a sibling session when opening Home or a Bitcoin Cube. Separate
+    // keyring refreshes race token rotation and can leave older Cubes with
+    // an unauthenticated account panel. Each adopter still checks /user.
+    fn adopt_sibling_session_on_init(&mut self, message: &Message) -> Option<Task<Message>> {
+        let (origin_pane, origin_tab) = match message {
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
+                if matches!(
+                    inner.as_ref(),
+                    tab::Message::Launch(home::Message::View(home::ViewMessage::ConnectAccount(
+                        crate::app::view::ConnectAccountMessage::Init
+                    ))) | tab::Message::Run(AppMessage::View(
+                        crate::app::view::Message::ConnectAccount(
+                            crate::app::view::ConnectAccountMessage::Init
+                        )
+                    ))
+                ) =>
+            {
+                Some((*pane_id, *tab_id))
+            }
+            _ => None,
+        }?;
+        let client = self.panes.iter().find_map(|(&pane_id, pane)| {
+            pane.tabs.iter().find_map(|tab| {
+                if pane_id == origin_pane && tab.id == origin_tab {
+                    return None;
+                }
+                (match &tab.state {
+                    tab::State::App(app) => app.shareable_connect_client(),
+                    tab::State::Home(home) => home.connect_account.authenticated_client(),
+                    _ => None,
+                })
+                .filter(|client| client.token().is_some_and(|token| !token.is_empty()))
+            })
+        })?;
+        let tab = self
+            .panes
+            .get_mut(origin_pane)
+            .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == origin_tab))?;
+        let task = match &mut tab.state {
+            tab::State::Home(home) if home.connect_account.can_adopt_shared_session() => {
+                Some(home.adopt_connect_client(client).map(tab::Message::Launch))
+            }
+            tab::State::App(app) if app.can_adopt_shared_connect_session() => {
+                let task = app.adopt_shared_connect_client(client);
+                Some(tab.emit_app_task(task))
+            }
+            _ => None,
+        }?;
+        Some(task.map(move |message| {
+            Message::Pane(origin_pane, pane::Message::tab(origin_tab, message))
+        }))
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2585,65 +2638,8 @@ impl GUI {
             }
             _ => None,
         };
-        // Reuse a sibling session when opening Home or a Bitcoin Cube. Separate
-        // keyring refreshes race token rotation and can leave older Cubes with
-        // an unauthenticated account panel. Each adopter still checks /user.
-        let session_init = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner))
-                if matches!(
-                    inner.as_ref(),
-                    tab::Message::Launch(home::Message::View(home::ViewMessage::ConnectAccount(
-                        crate::app::view::ConnectAccountMessage::Init
-                    ))) | tab::Message::Run(AppMessage::View(
-                        crate::app::view::Message::ConnectAccount(
-                            crate::app::view::ConnectAccountMessage::Init
-                        )
-                    ))
-                ) =>
-            {
-                Some((*pane_id, *tab_id))
-            }
-            _ => None,
-        };
-        if let Some((origin_pane, origin_tab)) = session_init {
-            let active_client = self.panes.iter().find_map(|(&pane_id, pane)| {
-                pane.tabs.iter().find_map(|tab| {
-                    if pane_id == origin_pane && tab.id == origin_tab {
-                        return None;
-                    }
-                    (match &tab.state {
-                        tab::State::App(app) => app.shareable_connect_client(),
-                        tab::State::Home(home) => home.connect_account.authenticated_client(),
-                        _ => None,
-                    })
-                    .filter(|client| client.token().is_some_and(|token| !token.is_empty()))
-                })
-            });
-            if let Some(client) = active_client {
-                if let Some(tab) = self
-                    .panes
-                    .get_mut(origin_pane)
-                    .and_then(|pane| pane.tabs.iter_mut().find(|tab| tab.id == origin_tab))
-                {
-                    let adopted = match &mut tab.state {
-                        tab::State::Home(home)
-                            if home.connect_account.can_adopt_shared_session() =>
-                        {
-                            Some(home.adopt_connect_client(client).map(tab::Message::Launch))
-                        }
-                        tab::State::App(app) if app.can_adopt_shared_connect_session() => {
-                            let task = app.adopt_shared_connect_client(client);
-                            Some(tab.emit_app_task(task))
-                        }
-                        _ => None,
-                    };
-                    if let Some(task) = adopted {
-                        return task.map(move |message| {
-                            Message::Pane(origin_pane, pane::Message::tab(origin_tab, message))
-                        });
-                    }
-                }
-            }
+        if let Some(task) = self.adopt_sibling_session_on_init(&message) {
+            return task;
         }
         // The signed-out-by-Connect notice is one notice for the whole app
         // (L3): whichever tab learns it, or dismisses it, every tab follows.
