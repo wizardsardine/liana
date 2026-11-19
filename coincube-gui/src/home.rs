@@ -2308,109 +2308,7 @@ impl Home {
             Message::View(ViewMessage::SubmitRecovery) => self.submit_recovery(),
             Message::View(ViewMessage::CancelRecovery) => self.cancel_recovery(),
 
-            Message::View(ViewMessage::GoToSection(section)) => {
-                self.catalog.dismiss_popovers();
-                // Duress launch kill-switch backstop: a deep-linked or otherwise
-                // programmatic navigation to the Duress section while it's gated
-                // off (the nav hides the entry, so a click can't produce this)
-                // redirects to Overview — fail-closed, hidden not greyed, the
-                // same shape as the Marketplace route guard. See
-                // `ConnectAccountPanel::show_duress`.
-                let section = if matches!(
-                    section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && !self.connect_account.show_duress()
-                {
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                } else {
-                    section
-                };
-                if !matches!(
-                    section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) {
-                    self.leave_recovery_services();
-                }
-                // Update the account panel's active_sub when navigating to a Connect submenu
-                if let HomeSection::Connect(ref sub) = section {
-                    self.connect_account.active_sub = sub.clone();
-                }
-                self.active_section = section;
-                if matches!(self.active_section, HomeSection::Settings) {
-                    return self.recheck_global_feature();
-                }
-                if matches!(self.active_section, HomeSection::Cubes) {
-                    return self.on_focus();
-                }
-                // If navigating to Connect and not yet initialized, trigger Init
-                if matches!(self.active_section, HomeSection::Connect(_))
-                    && matches!(
-                        self.connect_account.step,
-                        crate::app::state::connect::ConnectFlowStep::CheckingSession
-                    )
-                {
-                    return map_connect_task(
-                        self.connect_account
-                            .update_message(ConnectAccountMessage::Init),
-                    );
-                }
-                // Load Security data on demand (mirrors App::set_current_panel)
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Security)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_security());
-                }
-                // Load Overview summary counts on demand
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_overview());
-                }
-                // Load Contacts data on demand
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Contacts)
-                ) && self.connect_account.is_authenticated()
-                {
-                    return map_connect_task(self.connect_account.reload_contacts());
-                }
-                // Load duress Emergency-contacts on demand (Estate Notifications).
-                // `reload_duress_contacts` no-ops for non-Estate accounts, so this
-                // never fires a request that would just 403.
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && self.connect_account.is_authenticated()
-                {
-                    // Load the Emergency-contacts list, the per-Cube
-                    // recovery-kit checklist, and the server-side duress state
-                    // (so the screen reflects the enabled state); each no-ops
-                    // for accounts that lack the relevant entitlement.
-                    return map_connect_task(iced::Task::batch([
-                        self.connect_account.reload_duress_contacts(),
-                        self.connect_account.reload_duress_cubes(),
-                        self.connect_account.reload_duress_state(),
-                    ]));
-                }
-                // Load the recoverable-vault list on demand when opening the
-                // heir discovery surface (once per session — `is_loaded()`
-                // guards re-fetch on every reopen).
-                if matches!(self.active_section, HomeSection::RecoverVault)
-                    && !self.recover_vault.is_loaded()
-                {
-                    let client = self.connect_account.authenticated_client();
-                    let gen = self.connect_account.session_generation();
-                    return self
-                        .recover_vault
-                        .update(RecoverVaultMessage::Load, client, gen)
-                        .map(|m| Message::View(ViewMessage::RecoverVault(m)));
-                }
-                Task::none()
-            }
+            Message::View(ViewMessage::GoToSection(section)) => self.go_to_section(section),
 
             // Heir clicked "Recover" on an actionable row: launch the installer's
             // inheritance-recovery flow (COIN-377 PR 3). Intercepted here (not
@@ -2559,307 +2457,7 @@ impl Home {
             }
             Message::View(
                 view @ (ViewMessage::ConnectAccount(_) | ViewMessage::ConnectSheetAccount(_)),
-            ) => {
-                let sheet_message = matches!(view, ViewMessage::ConnectSheetAccount(_));
-                let msg = match view {
-                    ViewMessage::ConnectAccount(msg) | ViewMessage::ConnectSheetAccount(msg) => msg,
-                    _ => unreachable!(),
-                };
-                // The banner CTAs navigate the panel to Plan & Billing by
-                // setting its `active_sub`, but the sidebar highlight follows
-                // the host's `active_section`. Mirror the move here so the two
-                // stay in sync (otherwise the rail keeps highlighting Overview
-                // while the pane shows the picker/checkout, and re-selecting
-                // Overview would silently reset `active_sub`).
-                if !sheet_message
-                    && matches!(
-                        msg,
-                        ConnectAccountMessage::OpenPlanBilling
-                            | ConnectAccountMessage::RenewCurrentPlan
-                    )
-                {
-                    self.leave_recovery_services();
-                    self.active_section =
-                        HomeSection::Connect(app::menu::ConnectSubMenu::PlanBilling);
-                }
-                let explicit_logout = matches!(&msg, ConnectAccountMessage::LogOut);
-                if explicit_logout {
-                    self.connect_account.forget_shared_session_for_logout();
-                }
-                let was_authenticated = self.connect_account.is_authenticated();
-                let task = map_connect_task(self.connect_account.update_message(msg));
-                let now_authenticated = self.connect_account.is_authenticated();
-                self.refresh_displayed_networks();
-                // Update cached keyring state on login/logout transitions
-                if was_authenticated != now_authenticated {
-                    self.has_stored_session = now_authenticated;
-                }
-                // A rejected stored-session refresh dispatches `LogOut` into
-                // a fresh Home that is already unauthenticated. Treat that
-                // explicit invalidation like a signed-in -> signed-out edge so
-                // a pending post-install Split intent cannot survive and resume
-                // after a later login.
-                if !now_authenticated && (was_authenticated || explicit_logout) {
-                    self.server_cube_limit = None;
-                    // Refusal reasons are account-scoped: they say what
-                    // *that* account's server said about a Cube. The local
-                    // Cube outlives the sign-out, so leaving them keyed by
-                    // its id would show the previous account's refusal —
-                    // rendered with the new account's tier and limits — to
-                    // someone who may have slots to spare. Nothing else
-                    // clears them promptly: the next catch-up sync only
-                    // replaces them if it completes, and an aborted round
-                    // deliberately keeps what it already has.
-                    self.cube_sync_errors.clear();
-                    self.remote_cubes.clear();
-                    self.connect_off_cubes.clear();
-                    // Clearing alone isn't enough: a fetch issued for the
-                    // account we just left is still in flight and would
-                    // repopulate the list. Bump the generation so its
-                    // result is discarded on arrival.
-                    self.invalidate_remote_cubes();
-                    // Reset the heir discovery surface back to Idle so the
-                    // next sign-in re-fetches: otherwise its `Loaded` state
-                    // (and `is_loaded()` re-fetch guard) would persist and a
-                    // later account would see the prior account's vault rows.
-                    self.recover_vault = RecoverVaultPanel::new();
-                    // Drop any open recovery-method picker so it can't
-                    // reference a prior account's remote cube.
-                    self.recovery_method_modal = None;
-                }
-                // Auto-expand Connect submenu and navigate to Cubes after login
-                if !was_authenticated && now_authenticated {
-                    self.connect_expanded = true;
-                    self.active_section = HomeSection::Cubes;
-                }
-                // Duress launch kill-switch backstop for a mid-session flip: if
-                // the features refetch (or a duress-state change) that just flowed
-                // through `update_message` turned the gate off while the user is
-                // sitting on the Duress section, redirect to Overview. The surface
-                // is hidden, not greyed, so a stale route must not keep rendering
-                // it — a server flag flip propagates on the next `/connect/
-                // features` poll without a restart. See `show_duress`.
-                if matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
-                ) && !self.connect_account.show_duress()
-                {
-                    // Hiding the surface out from under an in-flight enrollment
-                    // wizard or step-up dialog: scrub its secrets the same way
-                    // Cancel would, so the flag flip can't strand duress
-                    // PINs/codes on the heap once the route is unreachable.
-                    self.connect_account.scrub_duress_dialogs();
-                    self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
-                    self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
-                }
-                // Sync account tier from the Connect plan data
-                let old_tier = self.account_tier;
-                self.account_tier =
-                    self.connect_account
-                        .plan
-                        .as_ref()
-                        .map_or(AccountTier::default(), |plan| match plan.tier() {
-                            crate::services::coincube::PlanTier::Free => AccountTier::Free,
-                            crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
-                            crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
-                        });
-                // When the plan tier changes (e.g. upgrade), invalidate the
-                // cached server limit so `cube_limit()` uses the new tier
-                // until fresh limits are fetched.
-                let tier_changed = old_tier != self.account_tier;
-                if tier_changed {
-                    self.server_cube_limit = None;
-                }
-                if let Err(e) = GlobalSettings::update_account_tier(
-                    &GlobalSettings::path(&self.datadir_path),
-                    self.account_tier,
-                ) {
-                    log::error!("[LAUNCHER] Failed to persist account tier: {e}");
-                }
-
-                // On first login: catch-up sync unsynced cubes + fetch limits
-                if !was_authenticated && now_authenticated {
-                    // The startup probe may precede Connect's session restore
-                    // and its local settings updates. Refresh the visible list
-                    // even when every Cube is already synced (so catch-up has
-                    // nothing to do). FocusedCubes preserves an in-progress form.
-                    let mut tasks = vec![task, self.on_focus()];
-
-                    // Tell the pane so it can rebroadcast the session
-                    // check to every other open Cube tab — those panels
-                    // hold their own ConnectAccountPanel and would
-                    // otherwise stay on the "Sign in" prompt until the
-                    // user clicked it or restarted the tab.
-                    tasks.push(Task::done(Message::ConnectSignedInBubble));
-
-                    // Fetch cube limits for the current network from the server
-                    if let Some(limits_client) = self.connect_account.authenticated_client() {
-                        let network_str = settings::network_to_api_string(self.network);
-                        tasks.push(Task::perform(
-                            async move {
-                                limits_client
-                                    .get_cube_limits(&network_str)
-                                    .await
-                                    .map_err(|e| e.to_string())
-                            },
-                            Message::CubeLimitsLoaded,
-                        ));
-                    }
-
-                    // Sync all unsynced cubes across ALL networks with the API.
-                    // Loads settings from each network directory, collects
-                    // unsynced cubes, fetches the server cube list once, then
-                    // for each unsynced local cube either registers (new) or
-                    // updates (already exists but name may have changed).
-                    if let Some(client) = self.connect_account.authenticated_client() {
-                        let datadir = self.datadir_path.clone();
-                        let owner = self.connect_owner();
-                        let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
-                            .into_iter()
-                            .filter(|cube| !cube.remote_synced)
-                            .collect();
-                        if !unsynced.is_empty() {
-                            tasks.push(Task::perform(
-                                async move {
-                                    // One entry per Cube this round examines,
-                                    // so the handler can say *why* a Cube is
-                                    // still unsynced instead of promising a
-                                    // sync that will never land — and can leave
-                                    // Cubes outside this round alone.
-                                    let mut outcomes: Vec<(String, Option<String>)> = Vec::new();
-                                    // Fetch all server cubes once — bail if this
-                                    // fails so we don't re-register everything.
-                                    let server_cubes = match client.list_cubes().await {
-                                        Ok(cubes) => cubes,
-                                        Err(e) => {
-                                            log::warn!(
-                                                "[LAUNCHER] Catch-up sync aborted: \
-                                                 failed to list server cubes: {}",
-                                                e
-                                            );
-                                            // Aborting says nothing about any
-                                            // individual Cube — reported as a
-                                            // distinct outcome so the handler
-                                            // keeps what it already knows
-                                            // instead of reading an empty list
-                                            // as "all clear".
-                                            return Err(());
-                                        }
-                                    };
-
-                                    for cube in &unsynced {
-                                        let server_match =
-                                            server_cubes.iter().find(|sc| sc.uuid == cube.id);
-                                        let outcome = match server_match {
-                                            Some(sc) => {
-                                                // Already registered — re-sync if the name differs
-                                                // or this device can *upgrade* the Vault flag
-                                                // (PLAN-duress-vault-gate PR 3: a Vault created
-                                                // while offline is reported on the next launch).
-                                                //
-                                                // Upgrade-only: report `hasVault=true` solely when
-                                                // this device holds the Vault and the server doesn't
-                                                // already show it. Never send `false` — this device
-                                                // can't tell a vaultless Cube from one whose Vault
-                                                // lives on another device, and a spurious `false`
-                                                // would clobber a `true` that device reported and
-                                                // silently unblock its duress gate.
-                                                let vault_report = vault_presence_report(
-                                                    cube.holds_vault(),
-                                                    sc.has_vault,
-                                                );
-                                                // Seed the server's Spark Stable Balance record
-                                                // from this device's decision only while the
-                                                // server has none: once it does, the live
-                                                // App reconciles against it and pushes changes
-                                                // as they're made, so catch-up never overrides.
-                                                let stable_report = cube
-                                                    .spark_stable_balance
-                                                    .filter(|_| sc.spark_stable_balance.is_none());
-                                                let name_drift = sc.name != cube.name;
-                                                if name_drift
-                                                    || vault_report.is_some()
-                                                    || stable_report.is_some()
-                                                {
-                                                    let req = UpdateCubeRequest {
-                                                        name: name_drift.then(|| cube.name.clone()),
-                                                        status: None,
-                                                        has_vault: vault_report,
-                                                        spark_stable_balance: stable_report,
-                                                    };
-                                                    client
-                                                        .update_cube(&sc.id.to_string(), req)
-                                                        .await
-                                                        .map(|_| ())
-                                                        .map_err(|e| e.to_string())
-                                                } else {
-                                                    Ok(())
-                                                }
-                                            }
-                                            None => {
-                                                // Not registered — create. Monotonic upgrade-only:
-                                                // report the Vault only when present.
-                                                let req = RegisterCubeRequest {
-                                                    uuid: cube.id.clone(),
-                                                    name: cube.name.clone(),
-                                                    network: cube.api_network_string(),
-                                                    has_vault: cube.holds_vault().then_some(true),
-                                                    spark_stable_balance: cube.spark_stable_balance,
-                                                };
-                                                client
-                                                    .register_cube(req)
-                                                    .await
-                                                    .map(|_| ())
-                                                    .map_err(|e| e.to_string())
-                                            }
-                                        };
-                                        match outcome {
-                                            Ok(()) => {
-                                                let nd = datadir.network_directory(cube.network);
-                                                let _ = settings::mark_cube_synced(
-                                                    &nd,
-                                                    &cube.id,
-                                                    owner.clone(),
-                                                )
-                                                .await;
-                                                outcomes.push((cube.id.clone(), None));
-                                            }
-                                            Err(e) => {
-                                                log::warn!(
-                                                    "[LAUNCHER] Catch-up sync failed for cube \
-                                                     {}: {}",
-                                                    cube.id,
-                                                    e
-                                                );
-                                                outcomes.push((cube.id.clone(), Some(e)));
-                                            }
-                                        }
-                                    }
-                                    Ok(outcomes)
-                                },
-                                Message::CatchUpSyncFinished,
-                            ));
-                        }
-                    }
-
-                    // Fetch full server cube list and compare with local cubes
-                    // to identify remote-only cubes.
-                    tasks.push(self.fetch_remote_cubes());
-
-                    return Task::batch(tasks);
-                }
-
-                // A mid-session upgrade or downgrade changes which Cubes
-                // Connect keeps on (billing v2: the oldest N per network), so
-                // re-read the list for the Connect-off tags. The fetch claims a
-                // new generation, so one started under the old tier is dropped.
-                // The sign-in edge above already fetched.
-                if tier_changed && now_authenticated {
-                    return Task::batch([task, self.fetch_remote_cubes()]);
-                }
-
-                task
-            }
+            ) => self.update_connect_account(view),
 
             Message::View(ViewMessage::DismissAdvisoryNotice) => self.dismiss_advisory(),
 
@@ -2871,6 +2469,435 @@ impl Home {
             }
 
             _ => self.update_delete_modal(message),
+        }
+    }
+
+    fn go_to_section(&mut self, section: HomeSection) -> Task<Message> {
+        self.catalog.dismiss_popovers();
+        // Duress launch kill-switch backstop: a deep-linked or otherwise
+        // programmatic navigation to the Duress section while it's gated
+        // off (the nav hides the entry, so a click can't produce this)
+        // redirects to Overview — fail-closed, hidden not greyed, the
+        // same shape as the Marketplace route guard. See
+        // `ConnectAccountPanel::show_duress`.
+        let section = if matches!(
+            section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && !self.connect_account.show_duress()
+        {
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        } else {
+            section
+        };
+        if !matches!(
+            section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) {
+            self.leave_recovery_services();
+        }
+        // Update the account panel's active_sub when navigating to a Connect submenu
+        if let HomeSection::Connect(ref sub) = section {
+            self.connect_account.active_sub = sub.clone();
+        }
+        self.active_section = section;
+        if matches!(self.active_section, HomeSection::Settings) {
+            return self.recheck_global_feature();
+        }
+        if matches!(self.active_section, HomeSection::Cubes) {
+            return self.on_focus();
+        }
+        self.load_section_data()
+    }
+
+    fn load_section_data(&mut self) -> Task<Message> {
+        // If navigating to Connect and not yet initialized, trigger Init
+        if matches!(self.active_section, HomeSection::Connect(_))
+            && matches!(
+                self.connect_account.step,
+                crate::app::state::connect::ConnectFlowStep::CheckingSession
+            )
+        {
+            return map_connect_task(
+                self.connect_account
+                    .update_message(ConnectAccountMessage::Init),
+            );
+        }
+        // Load Security data on demand (mirrors App::set_current_panel)
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Security)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_security());
+        }
+        // Load Overview summary counts on demand
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_overview());
+        }
+        // Load Contacts data on demand
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Contacts)
+        ) && self.connect_account.is_authenticated()
+        {
+            return map_connect_task(self.connect_account.reload_contacts());
+        }
+        // Load duress Emergency-contacts on demand (Estate Notifications).
+        // `reload_duress_contacts` no-ops for non-Estate accounts, so this
+        // never fires a request that would just 403.
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && self.connect_account.is_authenticated()
+        {
+            // Load the Emergency-contacts list, the per-Cube
+            // recovery-kit checklist, and the server-side duress state
+            // (so the screen reflects the enabled state); each no-ops
+            // for accounts that lack the relevant entitlement.
+            return map_connect_task(iced::Task::batch([
+                self.connect_account.reload_duress_contacts(),
+                self.connect_account.reload_duress_cubes(),
+                self.connect_account.reload_duress_state(),
+            ]));
+        }
+        // Load the recoverable-vault list on demand when opening the
+        // heir discovery surface (once per session — `is_loaded()`
+        // guards re-fetch on every reopen).
+        if matches!(self.active_section, HomeSection::RecoverVault)
+            && !self.recover_vault.is_loaded()
+        {
+            let client = self.connect_account.authenticated_client();
+            let gen = self.connect_account.session_generation();
+            return self
+                .recover_vault
+                .update(RecoverVaultMessage::Load, client, gen)
+                .map(|m| Message::View(ViewMessage::RecoverVault(m)));
+        }
+        Task::none()
+    }
+
+    fn update_connect_account(&mut self, view: ViewMessage) -> Task<Message> {
+        let sheet_message = matches!(view, ViewMessage::ConnectSheetAccount(_));
+        let msg = match view {
+            ViewMessage::ConnectAccount(msg) | ViewMessage::ConnectSheetAccount(msg) => msg,
+            _ => unreachable!(),
+        };
+        // The banner CTAs navigate the panel to Plan & Billing by
+        // setting its `active_sub`, but the sidebar highlight follows
+        // the host's `active_section`. Mirror the move here so the two
+        // stay in sync (otherwise the rail keeps highlighting Overview
+        // while the pane shows the picker/checkout, and re-selecting
+        // Overview would silently reset `active_sub`).
+        if !sheet_message
+            && matches!(
+                msg,
+                ConnectAccountMessage::OpenPlanBilling | ConnectAccountMessage::RenewCurrentPlan
+            )
+        {
+            self.leave_recovery_services();
+            self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::PlanBilling);
+        }
+        let explicit_logout = matches!(&msg, ConnectAccountMessage::LogOut);
+        if explicit_logout {
+            self.connect_account.forget_shared_session_for_logout();
+        }
+        let was_authenticated = self.connect_account.is_authenticated();
+        let task = map_connect_task(self.connect_account.update_message(msg));
+        let now_authenticated = self.connect_account.is_authenticated();
+        self.refresh_displayed_networks();
+        self.reconcile_launcher_session(was_authenticated, now_authenticated, explicit_logout);
+        self.redirect_unavailable_duress();
+        let tier_changed = self.sync_launcher_account_tier();
+
+        // On first login: catch-up sync unsynced cubes + fetch limits
+        if !was_authenticated && now_authenticated {
+            return self.first_connect_login(task);
+        }
+
+        // A mid-session upgrade or downgrade changes which Cubes
+        // Connect keeps on (billing v2: the oldest N per network), so
+        // re-read the list for the Connect-off tags. The fetch claims a
+        // new generation, so one started under the old tier is dropped.
+        // The sign-in edge above already fetched.
+        if tier_changed && now_authenticated {
+            return Task::batch([task, self.fetch_remote_cubes()]);
+        }
+
+        task
+    }
+
+    fn reconcile_launcher_session(
+        &mut self,
+        was_authenticated: bool,
+        now_authenticated: bool,
+        explicit_logout: bool,
+    ) {
+        // Update cached keyring state on login/logout transitions
+        if was_authenticated != now_authenticated {
+            self.has_stored_session = now_authenticated;
+        }
+        // A rejected stored-session refresh dispatches `LogOut` into
+        // a fresh Home that is already unauthenticated. Treat that
+        // explicit invalidation like a signed-in -> signed-out edge so
+        // a pending post-install Split intent cannot survive and resume
+        // after a later login.
+        if !now_authenticated && (was_authenticated || explicit_logout) {
+            self.server_cube_limit = None;
+            // Refusal reasons are account-scoped: they say what
+            // *that* account's server said about a Cube. The local
+            // Cube outlives the sign-out, so leaving them keyed by
+            // its id would show the previous account's refusal —
+            // rendered with the new account's tier and limits — to
+            // someone who may have slots to spare. Nothing else
+            // clears them promptly: the next catch-up sync only
+            // replaces them if it completes, and an aborted round
+            // deliberately keeps what it already has.
+            self.cube_sync_errors.clear();
+            self.remote_cubes.clear();
+            self.connect_off_cubes.clear();
+            // Clearing alone isn't enough: a fetch issued for the
+            // account we just left is still in flight and would
+            // repopulate the list. Bump the generation so its
+            // result is discarded on arrival.
+            self.invalidate_remote_cubes();
+            // Reset the heir discovery surface back to Idle so the
+            // next sign-in re-fetches: otherwise its `Loaded` state
+            // (and `is_loaded()` re-fetch guard) would persist and a
+            // later account would see the prior account's vault rows.
+            self.recover_vault = RecoverVaultPanel::new();
+            // Drop any open recovery-method picker so it can't
+            // reference a prior account's remote cube.
+            self.recovery_method_modal = None;
+        }
+        // Auto-expand Connect submenu and navigate to Cubes after login
+        if !was_authenticated && now_authenticated {
+            self.connect_expanded = true;
+            self.active_section = HomeSection::Cubes;
+        }
+    }
+
+    fn redirect_unavailable_duress(&mut self) {
+        // Duress launch kill-switch backstop for a mid-session flip: if
+        // the features refetch (or a duress-state change) that just flowed
+        // through `update_message` turned the gate off while the user is
+        // sitting on the Duress section, redirect to Overview. The surface
+        // is hidden, not greyed, so a stale route must not keep rendering
+        // it — a server flag flip propagates on the next `/connect/
+        // features` poll without a restart. See `show_duress`.
+        if matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Duress)
+        ) && !self.connect_account.show_duress()
+        {
+            // Hiding the surface out from under an in-flight enrollment
+            // wizard or step-up dialog: scrub its secrets the same way
+            // Cancel would, so the flag flip can't strand duress
+            // PINs/codes on the heap once the route is unreachable.
+            self.connect_account.scrub_duress_dialogs();
+            self.active_section = HomeSection::Connect(app::menu::ConnectSubMenu::Overview);
+            self.connect_account.active_sub = app::menu::ConnectSubMenu::Overview;
+        }
+    }
+
+    fn sync_launcher_account_tier(&mut self) -> bool {
+        // Sync account tier from the Connect plan data
+        let old_tier = self.account_tier;
+        self.account_tier =
+            self.connect_account
+                .plan
+                .as_ref()
+                .map_or(AccountTier::default(), |plan| match plan.tier() {
+                    crate::services::coincube::PlanTier::Free => AccountTier::Free,
+                    crate::services::coincube::PlanTier::Pro => AccountTier::Pro,
+                    crate::services::coincube::PlanTier::Estate => AccountTier::Estate,
+                });
+        // When the plan tier changes (e.g. upgrade), invalidate the
+        // cached server limit so `cube_limit()` uses the new tier
+        // until fresh limits are fetched.
+        let tier_changed = old_tier != self.account_tier;
+        if tier_changed {
+            self.server_cube_limit = None;
+        }
+        if let Err(e) = GlobalSettings::update_account_tier(
+            &GlobalSettings::path(&self.datadir_path),
+            self.account_tier,
+        ) {
+            log::error!("[LAUNCHER] Failed to persist account tier: {e}");
+        }
+        tier_changed
+    }
+
+    fn first_connect_login(&mut self, task: Task<Message>) -> Task<Message> {
+        // The startup probe may precede Connect's session restore
+        // and its local settings updates. Refresh the visible list
+        // even when every Cube is already synced (so catch-up has
+        // nothing to do). FocusedCubes preserves an in-progress form.
+        let mut tasks = vec![task, self.on_focus()];
+
+        // Tell the pane so it can rebroadcast the session
+        // check to every other open Cube tab — those panels
+        // hold their own ConnectAccountPanel and would
+        // otherwise stay on the "Sign in" prompt until the
+        // user clicked it or restarted the tab.
+        tasks.push(Task::done(Message::ConnectSignedInBubble));
+
+        // Fetch cube limits for the current network from the server
+        if let Some(limits_client) = self.connect_account.authenticated_client() {
+            let network_str = settings::network_to_api_string(self.network);
+            tasks.push(Task::perform(
+                async move {
+                    limits_client
+                        .get_cube_limits(&network_str)
+                        .await
+                        .map_err(|e| e.to_string())
+                },
+                Message::CubeLimitsLoaded,
+            ));
+        }
+
+        // Sync all unsynced cubes across ALL networks with the API.
+        // Loads settings from each network directory, collects
+        // unsynced cubes, fetches the server cube list once, then
+        // for each unsynced local cube either registers (new) or
+        // updates (already exists but name may have changed).
+        if let Some(client) = self.connect_account.authenticated_client() {
+            let datadir = self.datadir_path.clone();
+            let owner = self.connect_owner();
+            let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
+                .into_iter()
+                .filter(|cube| !cube.remote_synced)
+                .collect();
+            if !unsynced.is_empty() {
+                tasks.push(Task::perform(
+                    async move {
+                        // One entry per Cube this round examines,
+                        // so the handler can say *why* a Cube is
+                        // still unsynced instead of promising a
+                        // sync that will never land — and can leave
+                        // Cubes outside this round alone.
+                        let mut outcomes: Vec<(String, Option<String>)> = Vec::new();
+                        // Fetch all server cubes once — bail if this
+                        // fails so we don't re-register everything.
+                        let server_cubes = match client.list_cubes().await {
+                            Ok(cubes) => cubes,
+                            Err(e) => {
+                                log::warn!(
+                                    "[LAUNCHER] Catch-up sync aborted: \
+                                     failed to list server cubes: {}",
+                                    e
+                                );
+                                // Aborting says nothing about any
+                                // individual Cube — reported as a
+                                // distinct outcome so the handler
+                                // keeps what it already knows
+                                // instead of reading an empty list
+                                // as "all clear".
+                                return Err(());
+                            }
+                        };
+
+                        for cube in &unsynced {
+                            let server_match = server_cubes.iter().find(|sc| sc.uuid == cube.id);
+                            let outcome =
+                                Self::sync_catch_up_cube(&client, cube, server_match).await;
+                            match outcome {
+                                Ok(()) => {
+                                    let nd = datadir.network_directory(cube.network);
+                                    let _ =
+                                        settings::mark_cube_synced(&nd, &cube.id, owner.clone())
+                                            .await;
+                                    outcomes.push((cube.id.clone(), None));
+                                }
+                                Err(e) => {
+                                    log::warn!(
+                                        "[LAUNCHER] Catch-up sync failed for cube \
+                                         {}: {}",
+                                        cube.id,
+                                        e
+                                    );
+                                    outcomes.push((cube.id.clone(), Some(e)));
+                                }
+                            }
+                        }
+                        Ok(outcomes)
+                    },
+                    Message::CatchUpSyncFinished,
+                ));
+            }
+        }
+
+        // Fetch full server cube list and compare with local cubes
+        // to identify remote-only cubes.
+        tasks.push(self.fetch_remote_cubes());
+
+        Task::batch(tasks)
+    }
+
+    async fn sync_catch_up_cube(
+        client: &CoincubeClient,
+        cube: &CubeSettings,
+        server_match: Option<&CubeResponse>,
+    ) -> Result<(), String> {
+        match server_match {
+            Some(sc) => {
+                // Already registered — re-sync if the name differs
+                // or this device can *upgrade* the Vault flag
+                // (PLAN-duress-vault-gate PR 3: a Vault created
+                // while offline is reported on the next launch).
+                //
+                // Upgrade-only: report `hasVault=true` solely when
+                // this device holds the Vault and the server doesn't
+                // already show it. Never send `false` — this device
+                // can't tell a vaultless Cube from one whose Vault
+                // lives on another device, and a spurious `false`
+                // would clobber a `true` that device reported and
+                // silently unblock its duress gate.
+                let vault_report = vault_presence_report(cube.holds_vault(), sc.has_vault);
+                // Seed the server's Spark Stable Balance record
+                // from this device's decision only while the
+                // server has none: once it does, the live
+                // App reconciles against it and pushes changes
+                // as they're made, so catch-up never overrides.
+                let stable_report = cube
+                    .spark_stable_balance
+                    .filter(|_| sc.spark_stable_balance.is_none());
+                let name_drift = sc.name != cube.name;
+                if name_drift || vault_report.is_some() || stable_report.is_some() {
+                    let req = UpdateCubeRequest {
+                        name: name_drift.then(|| cube.name.clone()),
+                        status: None,
+                        has_vault: vault_report,
+                        spark_stable_balance: stable_report,
+                    };
+                    client
+                        .update_cube(&sc.id.to_string(), req)
+                        .await
+                        .map(|_| ())
+                        .map_err(|e| e.to_string())
+                } else {
+                    Ok(())
+                }
+            }
+            None => {
+                // Not registered — create. Monotonic upgrade-only:
+                // report the Vault only when present.
+                let req = RegisterCubeRequest {
+                    uuid: cube.id.clone(),
+                    name: cube.name.clone(),
+                    network: cube.api_network_string(),
+                    has_vault: cube.holds_vault().then_some(true),
+                    spark_stable_balance: cube.spark_stable_balance,
+                };
+                client
+                    .register_cube(req)
+                    .await
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            }
         }
     }
 
