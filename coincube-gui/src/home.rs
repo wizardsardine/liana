@@ -1654,133 +1654,8 @@ impl Home {
             return Task::none();
         }
         self.refresh_displayed_networks();
-        if self.network.is_blake2b() {
-            // Explicitly supported launcher actions only: the Create Cube
-            // journey (name, PIN or passkey, backup), opening, renaming and
-            // deleting a Cube, and bringing a Connect Cube back from its
-            // recovery phrase, its Recovery Kit or a paired phone. Its Vault
-            // is created from inside the Cube. No Bitcoin wallet import or
-            // duress completion route.
-            let allowed = match &message {
-                // An unfinished import's Cube is never on this chain; its
-                // request switches the Launcher to the Cube's network.
-                Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModalFor {
-                    chain,
-                    ..
-                })) => !chain.is_blake2b(),
-                Message::View(view) => matches!(
-                    view,
-                    ViewMessage::CreateCube
-                        | ViewMessage::ShowCreateCube(_)
-                        | ViewMessage::CubeNameEdited(_)
-                        | ViewMessage::PinInput(_)
-                        | ViewMessage::PinConfirmInput(_)
-                        | ViewMessage::TogglePasskeyMode(_)
-                        | ViewMessage::CreationBackup(_)
-                        | ViewMessage::CreationBackupBypassRequested
-                        | ViewMessage::CreationBackupChoiceRequested
-                        | ViewMessage::CreationBackupContinue
-                        | ViewMessage::CreationBackupAcknowledgeBypass(_)
-                        | ViewMessage::CreationBackupBypassConfirmed
-                        | ViewMessage::CancelCreationBackup
-                        | ViewMessage::CreationKitRequested
-                        | ViewMessage::CreationKit(_)
-                        | ViewMessage::CreationKitUploaded(_)
-                        | ViewMessage::CreateNetworkMenu(_)
-                        | ViewMessage::ShowRestoreHub
-                        | ViewMessage::ShowRestorePhone
-                        | ViewMessage::ShowRestoreAllNetworks(_)
-                        | ViewMessage::SelectNetwork(_)
-                        | ViewMessage::Check
-                        | ViewMessage::Run(_)
-                        | ViewMessage::ConnectAccount(_)
-                        | ViewMessage::ConnectSheetAccount(_)
-                        | ViewMessage::ToggleConnect
-                        | ViewMessage::ToggleDeveloperMode(_)
-                        | ViewMessage::ToggleBitcoinBlake2bBeta(_)
-                        | ViewMessage::ToggleTheme
-                        | ViewMessage::OpenAppPreferences
-                        | ViewMessage::ChangeDevicePreference(_)
-                        | ViewMessage::GoToSection(
-                            HomeSection::Cubes | HomeSection::Settings | HomeSection::Connect(_),
-                        )
-                        | ViewMessage::OpenUrl(_)
-                        | ViewMessage::DismissAdvisoryNotice
-                        | ViewMessage::RenameCube(_)
-                        | ViewMessage::RenameCubeNameEdited(_)
-                        | ViewMessage::RenameCubeConfirm
-                        | ViewMessage::RenameCubeCancel
-                        | ViewMessage::ImportGhostWithPhrase(_)
-                        | ViewMessage::RecoveryWordInput { .. }
-                        | ViewMessage::SelectRecoverySuggestion { .. }
-                        | ViewMessage::SubmitRecovery
-                        | ViewMessage::CancelRecovery
-                        | ViewMessage::RestoreFromRecoveryKit(_)
-                        | ViewMessage::RestoreFromAnyRecoveryKit
-                        | ViewMessage::RestoreWithPhone { .. }
-                        | ViewMessage::RestoreWithPhoneOn { .. }
-                        | ViewMessage::ShowRecoveryMethodPicker(_)
-                        | ViewMessage::CloseRecoveryMethodPicker
-                        | ViewMessage::DeleteCube(
-                            DeleteCubeMessage::ShowModal(_)
-                                | DeleteCubeMessage::CloseModal
-                                | DeleteCubeMessage::Confirm(_)
-                                | DeleteCubeMessage::DeleteConnectBackup(_)
-                                | DeleteCubeMessage::Deleted
-                                | DeleteCubeMessage::DaemonStopped(_)
-                                | DeleteCubeMessage::PinInput(_)
-                                | DeleteCubeMessage::ShowRemoteModal(_)
-                                | DeleteCubeMessage::CloseRemoteModal
-                                | DeleteCubeMessage::RemoteNameInput(_)
-                                | DeleteCubeMessage::ConfirmRemoteDelete(_)
-                                | DeleteCubeMessage::RestoreInstead(_)
-                        )
-                ),
-                Message::StartRecovery
-                | Message::Checked { .. }
-                | Message::CubeLimitsLoaded(_)
-                | Message::RemoteCubesLoaded { .. }
-                | Message::NetworkCatalogLoaded { .. }
-                | Message::ConnectSignedInBubble
-                | Message::CatchUpSyncFinished(_)
-                | Message::CubeRemoteRegistered { .. }
-                | Message::CubeRemoteUpdated { .. }
-                | Message::CubeCreated(_)
-                | Message::CubeBackupDeleted(_)
-                | Message::RemoteCubeDeleted(_)
-                | Message::CubeRenamed(_)
-                | Message::PasskeyWindowId(_)
-                | Message::PasskeyWebviewUpdate(_)
-                | Message::PasskeyCeremonyResult(_)
-                | Message::CancelPasskeyCeremony
-                | Message::NativePasskeyTick => true,
-                _ => false,
-            };
-            if !allowed {
-                self.set_error("Bitcoin Blake2b Cubes can't be imported or restored here yet");
-                return Task::none();
-            }
-            // Nothing on the Create Cube journey runs while this chain is
-            // unavailable: no seed, keystore or passkey work starts.
-            if matches!(
-                &message,
-                Message::View(
-                    ViewMessage::CreateCube
-                        | ViewMessage::ShowCreateCube(true)
-                        | ViewMessage::Run(_)
-                        | ViewMessage::TogglePasskeyMode(_)
-                        | ViewMessage::CreationBackup(_)
-                        | ViewMessage::CreationBackupBypassConfirmed
-                        | ViewMessage::CreationBackupContinue
-                        | ViewMessage::CreationKitRequested
-                        | ViewMessage::CreationKit(_)
-                )
-            ) {
-                if let Some(reason) = self.chain_availability(self.network).reason() {
-                    self.set_error(reason.to_string());
-                    return Task::none();
-                }
-            }
+        if self.network.is_blake2b() && !self.permit_blake2b_launcher_message(&message) {
+            return Task::none();
         }
         match message {
             Message::View(ViewMessage::Check) => self.on_focus(),
@@ -1817,67 +1692,12 @@ impl Home {
                 chain,
                 cube_id,
                 full_cube,
-            }) => {
-                let switch = if chain == self.network {
-                    Task::none()
-                } else {
-                    self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
-                };
-                if self.network != chain {
-                    // The switch was refused; its reason is on screen.
-                    return switch;
-                }
-                Task::batch([
-                    switch,
-                    self.update_inner(Message::View(ViewMessage::RestoreWithPhone {
-                        cube_id,
-                        full_cube,
-                    })),
-                ])
-            }
+            }) => self.restore_with_phone_on(chain, cube_id, full_cube),
             Message::View(ViewMessage::CreateNetworkMenu(open)) => {
                 self.set_create_network_menu(open)
             }
-            Message::View(ViewMessage::ShowRestoreHub) => {
-                // Leaving a path for the Overview drops that path's intent;
-                // the Cube name and PIN stay as entered.
-                if self.creating_cube
-                    || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
-                {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.pending_bitcoin_import = None;
-                self.restore_hub = true;
-                self.restore_phone = false;
-                self.restore_all_networks = false;
-                if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                    &mut self.state
-                {
-                    *create_cube = true;
-                }
-                self.error = None;
-                Task::none()
-            }
-            Message::View(ViewMessage::ShowRestorePhone) => {
-                if self.creating_cube
-                    || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
-                    || !feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED
-                {
-                    return Task::none();
-                }
-                self.catalog.dismiss_popovers();
-                self.pending_bitcoin_import = None;
-                self.restore_hub = true;
-                self.restore_phone = true;
-                if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } =
-                    &mut self.state
-                {
-                    *create_cube = true;
-                }
-                self.error = None;
-                Task::none()
-            }
+            Message::View(ViewMessage::ShowRestoreHub) => self.show_restore_hub(),
+            Message::View(ViewMessage::ShowRestorePhone) => self.show_restore_phone(),
             Message::View(ViewMessage::RestoreFromAnyRecoveryKit) => self.restore_from_any_kit(),
             Message::View(ViewMessage::ShowImportBitcoin) => self.show_import_bitcoin(),
             Message::View(ViewMessage::CubeNameEdited(name)) => {
@@ -2092,101 +1912,10 @@ impl Home {
                 Task::none()
             }
 
-            Message::PersistDuressEnrollment(payload) => {
-                // Drop a completion that outlived its Connect session: a logout
-                // or session reset bumps `session_generation`, and persisting
-                // now would arm the duress PIN + DuressLocalState for an account
-                // the user is no longer signed into.
-                if payload.gen != self.connect_account.session_generation() {
-                    log::warn!("duress: ignoring enrollment completion from a stale session");
-                    return Task::none();
-                }
-                let app::message::DuressEnrollmentPayload {
-                    duress_pin,
-                    duress_code,
-                    account_id,
-                    ..
-                } = payload;
-                Task::perform(
-                    app::persist_duress_enrollment(
-                        self.datadir_path.clone(),
-                        duress_pin,
-                        duress_code,
-                        account_id,
-                    ),
-                    |res| res,
-                )
-                .then(|res| match res {
-                    Ok(()) => Task::batch([
-                        // Reflect the enabled state only now that the duress PIN
-                        // is actually armed on every Cube.
-                        Task::done(Message::View(ViewMessage::ConnectAccount(
-                            ConnectAccountMessage::Duress(
-                                app::view::DuressMessage::EnrollmentPersisted,
-                            ),
-                        ))),
-                        Task::done(Message::View(ViewMessage::Check)),
-                    ]),
-                    Err(e) => {
-                        log::error!("duress: failed to persist enrollment: {e}");
-                        // Surface via the Connect panel's error display.
-                        Task::done(Message::View(ViewMessage::ConnectAccount(
-                            ConnectAccountMessage::Error(crate::user_error::UserError::logged(
-                                "Couldn't finish enabling duress mode",
-                                "Try again. If it keeps failing, contact support and quote the reference below.",
-                                crate::user_error::CC_API_BADRESP,
-                                true,
-                                e,
-                            )),
-                        )))
-                    }
-                })
-            }
+            Message::PersistDuressEnrollment(payload) => self.persist_duress_enrollment(payload),
             Message::View(ViewMessage::ConnectAccount(
                 ConnectAccountMessage::OpenRecoveryService(target),
-            )) => {
-                if !matches!(
-                    self.active_section,
-                    HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
-                ) || !self.connect_account.is_authenticated()
-                    || !matches!(
-                        &self.connect_account.recovery_services,
-                        RecoveryServicesState::Ready(rows)
-                            if rows.iter().filter(|row| row.target == target).count() == 1
-                    )
-                {
-                    return Task::none();
-                }
-                let (Some(client), Some(user)) = (
-                    self.connect_account.authenticated_client(),
-                    self.connect_account.user.as_ref(),
-                ) else {
-                    return Task::none();
-                };
-                let user_id = user.id;
-                let session_generation = self.connect_account.session_generation();
-                self.recovery_open_request = self.recovery_open_request.wrapping_add(1);
-                let request = self.recovery_open_request;
-                self.connect_account.error = None;
-                let datadir = self.datadir_path.clone();
-                let resolve_target = target.clone();
-                Task::perform(
-                    async move {
-                        let cubes = client
-                            .list_cubes()
-                            .await
-                            .map_err(|error| error.to_string())?;
-                        resolve_recovery_service_destination(&datadir, &resolve_target, &cubes)
-                    },
-                    move |result| Message::RecoveryServiceResolved {
-                        target: target.clone(),
-                        session_generation,
-                        user_id,
-                        request,
-                        result,
-                    },
-                )
-            }
+            )) => self.open_recovery_service(target),
             Message::RecoveryServiceResolved {
                 target,
                 session_generation,
@@ -2512,6 +2241,294 @@ impl Home {
                 Task::none()
             }
         }
+    }
+
+    fn permit_blake2b_launcher_message(&mut self, message: &Message) -> bool {
+        // Explicitly supported launcher actions only: the Create Cube
+        // journey (name, PIN or passkey, backup), opening, renaming and
+        // deleting a Cube, and bringing a Connect Cube back from its
+        // recovery phrase, its Recovery Kit or a paired phone. Its Vault
+        // is created from inside the Cube. No Bitcoin wallet import or
+        // duress completion route.
+        let allowed = match message {
+            // An unfinished import's Cube is never on this chain; its
+            // request switches the Launcher to the Cube's network.
+            Message::View(ViewMessage::DeleteCube(DeleteCubeMessage::ShowModalFor {
+                chain,
+                ..
+            })) => !chain.is_blake2b(),
+            Message::View(view) => matches!(
+                view,
+                ViewMessage::CreateCube
+                    | ViewMessage::ShowCreateCube(_)
+                    | ViewMessage::CubeNameEdited(_)
+                    | ViewMessage::PinInput(_)
+                    | ViewMessage::PinConfirmInput(_)
+                    | ViewMessage::TogglePasskeyMode(_)
+                    | ViewMessage::CreationBackup(_)
+                    | ViewMessage::CreationBackupBypassRequested
+                    | ViewMessage::CreationBackupChoiceRequested
+                    | ViewMessage::CreationBackupContinue
+                    | ViewMessage::CreationBackupAcknowledgeBypass(_)
+                    | ViewMessage::CreationBackupBypassConfirmed
+                    | ViewMessage::CancelCreationBackup
+                    | ViewMessage::CreationKitRequested
+                    | ViewMessage::CreationKit(_)
+                    | ViewMessage::CreationKitUploaded(_)
+                    | ViewMessage::CreateNetworkMenu(_)
+                    | ViewMessage::ShowRestoreHub
+                    | ViewMessage::ShowRestorePhone
+                    | ViewMessage::ShowRestoreAllNetworks(_)
+                    | ViewMessage::SelectNetwork(_)
+                    | ViewMessage::Check
+                    | ViewMessage::Run(_)
+                    | ViewMessage::ConnectAccount(_)
+                    | ViewMessage::ConnectSheetAccount(_)
+                    | ViewMessage::ToggleConnect
+                    | ViewMessage::ToggleDeveloperMode(_)
+                    | ViewMessage::ToggleBitcoinBlake2bBeta(_)
+                    | ViewMessage::ToggleTheme
+                    | ViewMessage::OpenAppPreferences
+                    | ViewMessage::ChangeDevicePreference(_)
+                    | ViewMessage::GoToSection(
+                        HomeSection::Cubes | HomeSection::Settings | HomeSection::Connect(_),
+                    )
+                    | ViewMessage::OpenUrl(_)
+                    | ViewMessage::DismissAdvisoryNotice
+                    | ViewMessage::RenameCube(_)
+                    | ViewMessage::RenameCubeNameEdited(_)
+                    | ViewMessage::RenameCubeConfirm
+                    | ViewMessage::RenameCubeCancel
+                    | ViewMessage::ImportGhostWithPhrase(_)
+                    | ViewMessage::RecoveryWordInput { .. }
+                    | ViewMessage::SelectRecoverySuggestion { .. }
+                    | ViewMessage::SubmitRecovery
+                    | ViewMessage::CancelRecovery
+                    | ViewMessage::RestoreFromRecoveryKit(_)
+                    | ViewMessage::RestoreFromAnyRecoveryKit
+                    | ViewMessage::RestoreWithPhone { .. }
+                    | ViewMessage::RestoreWithPhoneOn { .. }
+                    | ViewMessage::ShowRecoveryMethodPicker(_)
+                    | ViewMessage::CloseRecoveryMethodPicker
+                    | ViewMessage::DeleteCube(
+                        DeleteCubeMessage::ShowModal(_)
+                            | DeleteCubeMessage::CloseModal
+                            | DeleteCubeMessage::Confirm(_)
+                            | DeleteCubeMessage::DeleteConnectBackup(_)
+                            | DeleteCubeMessage::Deleted
+                            | DeleteCubeMessage::DaemonStopped(_)
+                            | DeleteCubeMessage::PinInput(_)
+                            | DeleteCubeMessage::ShowRemoteModal(_)
+                            | DeleteCubeMessage::CloseRemoteModal
+                            | DeleteCubeMessage::RemoteNameInput(_)
+                            | DeleteCubeMessage::ConfirmRemoteDelete(_)
+                            | DeleteCubeMessage::RestoreInstead(_)
+                    )
+            ),
+            Message::StartRecovery
+            | Message::Checked { .. }
+            | Message::CubeLimitsLoaded(_)
+            | Message::RemoteCubesLoaded { .. }
+            | Message::NetworkCatalogLoaded { .. }
+            | Message::ConnectSignedInBubble
+            | Message::CatchUpSyncFinished(_)
+            | Message::CubeRemoteRegistered { .. }
+            | Message::CubeRemoteUpdated { .. }
+            | Message::CubeCreated(_)
+            | Message::CubeBackupDeleted(_)
+            | Message::RemoteCubeDeleted(_)
+            | Message::CubeRenamed(_)
+            | Message::PasskeyWindowId(_)
+            | Message::PasskeyWebviewUpdate(_)
+            | Message::PasskeyCeremonyResult(_)
+            | Message::CancelPasskeyCeremony
+            | Message::NativePasskeyTick => true,
+            _ => false,
+        };
+        if !allowed {
+            self.set_error("Bitcoin Blake2b Cubes can't be imported or restored here yet");
+            return false;
+        }
+        // Nothing on the Create Cube journey runs while this chain is
+        // unavailable: no seed, keystore or passkey work starts.
+        if matches!(
+            message,
+            Message::View(
+                ViewMessage::CreateCube
+                    | ViewMessage::ShowCreateCube(true)
+                    | ViewMessage::Run(_)
+                    | ViewMessage::TogglePasskeyMode(_)
+                    | ViewMessage::CreationBackup(_)
+                    | ViewMessage::CreationBackupBypassConfirmed
+                    | ViewMessage::CreationBackupContinue
+                    | ViewMessage::CreationKitRequested
+                    | ViewMessage::CreationKit(_)
+            )
+        ) {
+            if let Some(reason) = self.chain_availability(self.network).reason() {
+                self.set_error(reason.to_string());
+                return false;
+            }
+        }
+        true
+    }
+
+    fn restore_with_phone_on(
+        &mut self,
+        chain: ChainId,
+        cube_id: u64,
+        full_cube: bool,
+    ) -> Task<Message> {
+        let switch = if chain == self.network {
+            Task::none()
+        } else {
+            self.update_inner(Message::View(ViewMessage::SelectNetwork(chain)))
+        };
+        if self.network != chain {
+            // The switch was refused; its reason is on screen.
+            return switch;
+        }
+        Task::batch([
+            switch,
+            self.update_inner(Message::View(ViewMessage::RestoreWithPhone {
+                cube_id,
+                full_cube,
+            })),
+        ])
+    }
+
+    fn show_restore_hub(&mut self) -> Task<Message> {
+        // Leaving a path for the Overview drops that path's intent;
+        // the Cube name and PIN stay as entered.
+        if self.creating_cube || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. }) {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.pending_bitcoin_import = None;
+        self.restore_hub = true;
+        self.restore_phone = false;
+        self.restore_all_networks = false;
+        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut self.state {
+            *create_cube = true;
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn show_restore_phone(&mut self) -> Task<Message> {
+        if self.creating_cube
+            || !matches!(self.state, State::Cubes { .. } | State::NoCube { .. })
+            || !feature_flags::OWNER_KEYCHAIN_RECOVERY_ENABLED
+        {
+            return Task::none();
+        }
+        self.catalog.dismiss_popovers();
+        self.pending_bitcoin_import = None;
+        self.restore_hub = true;
+        self.restore_phone = true;
+        if let State::Cubes { create_cube, .. } | State::NoCube { create_cube } = &mut self.state {
+            *create_cube = true;
+        }
+        self.error = None;
+        Task::none()
+    }
+
+    fn persist_duress_enrollment(
+        &mut self,
+        payload: app::message::DuressEnrollmentPayload,
+    ) -> Task<Message> {
+        // Drop a completion that outlived its Connect session: a logout
+        // or session reset bumps `session_generation`, and persisting
+        // now would arm the duress PIN + DuressLocalState for an account
+        // the user is no longer signed into.
+        if payload.gen != self.connect_account.session_generation() {
+            log::warn!("duress: ignoring enrollment completion from a stale session");
+            return Task::none();
+        }
+        let app::message::DuressEnrollmentPayload {
+            duress_pin,
+            duress_code,
+            account_id,
+            ..
+        } = payload;
+        Task::perform(
+            app::persist_duress_enrollment(
+                self.datadir_path.clone(),
+                duress_pin,
+                duress_code,
+                account_id,
+            ),
+            |res| res,
+        )
+        .then(|res| match res {
+            Ok(()) => Task::batch([
+                // Reflect the enabled state only now that the duress PIN
+                // is actually armed on every Cube.
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Duress(
+                        app::view::DuressMessage::EnrollmentPersisted,
+                    ),
+                ))),
+                Task::done(Message::View(ViewMessage::Check)),
+            ]),
+            Err(e) => {
+                log::error!("duress: failed to persist enrollment: {e}");
+                // Surface via the Connect panel's error display.
+                Task::done(Message::View(ViewMessage::ConnectAccount(
+                    ConnectAccountMessage::Error(crate::user_error::UserError::logged(
+                        "Couldn't finish enabling duress mode",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_API_BADRESP,
+                        true,
+                        e,
+                    )),
+                )))
+            }
+        })
+    }
+
+    fn open_recovery_service(&mut self, target: RecoveryServiceTarget) -> Task<Message> {
+        if !matches!(
+            self.active_section,
+            HomeSection::Connect(app::menu::ConnectSubMenu::Overview)
+        ) || !self.connect_account.is_authenticated()
+            || !matches!(
+                &self.connect_account.recovery_services,
+                RecoveryServicesState::Ready(rows)
+                    if rows.iter().filter(|row| row.target == target).count() == 1
+            )
+        {
+            return Task::none();
+        }
+        let (Some(client), Some(user)) = (
+            self.connect_account.authenticated_client(),
+            self.connect_account.user.as_ref(),
+        ) else {
+            return Task::none();
+        };
+        let user_id = user.id;
+        let session_generation = self.connect_account.session_generation();
+        self.recovery_open_request = self.recovery_open_request.wrapping_add(1);
+        let request = self.recovery_open_request;
+        self.connect_account.error = None;
+        let datadir = self.datadir_path.clone();
+        let resolve_target = target.clone();
+        Task::perform(
+            async move {
+                let cubes = client
+                    .list_cubes()
+                    .await
+                    .map_err(|error| error.to_string())?;
+                resolve_recovery_service_destination(&datadir, &resolve_target, &cubes)
+            },
+            move |result| Message::RecoveryServiceResolved {
+                target: target.clone(),
+                session_generation,
+                user_id,
+                request,
+                result,
+            },
+        )
     }
 
     fn go_to_section(&mut self, section: HomeSection) -> Task<Message> {
