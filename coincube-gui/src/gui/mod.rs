@@ -3174,6 +3174,112 @@ impl GUI {
         Task::batch([screen, resized])
     }
 
+    fn close_window(&mut self) -> Task<Message> {
+        for (_, pane) in self.panes.iter_mut() {
+            pane.stop();
+        }
+        if let Some(window_config) = &self.window_config {
+            let path = GlobalSettings::path(&self.config.coincube_directory);
+            if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
+                tracing::error!("Failed to update the window config: {e}");
+            }
+        }
+        iced::window::latest().and_then(iced::window::close)
+    }
+
+    fn move_keyboard_focus(&mut self, shift: bool) -> Task<Message> {
+        if self.preferences_sheet.is_some() {
+            return if shift {
+                action::focus_previous_visible(preferences_view::CONTENT_SCROLL_ID)
+            } else {
+                action::focus_next_visible(preferences_view::CONTENT_SCROLL_ID)
+            };
+        }
+        if self.connect_sheet.is_some() {
+            return if shift {
+                action::focus_previous_visible(CONTENT_SCROLL_ID)
+            } else {
+                action::focus_next_visible(CONTENT_SCROLL_ID)
+            };
+        }
+        log::debug!("Tab pressed!");
+        let focus = if shift {
+            action::focus_previous_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
+        } else {
+            action::focus_next_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
+        };
+        // The Border Wallet grid has its own clipped viewport. Revealing
+        // focus there is a no-op for every other screen.
+        let focus = focus.chain(action::reveal_focused(
+            crate::installer::step::descriptor::editor::border_wallet_wizard::BORDER_WALLET_GRID_SCROLL_ID,
+        ));
+        // The Create form scrolls inside its card while its footer stays
+        // fixed. Reveal keyboard focus for controls below that viewport.
+        let focus = focus.chain(action::reveal_focused(crate::home::CREATE_BODY_SCROLL_ID));
+        #[cfg(feature = "mcp-proposals")]
+        let focus = focus.chain(action::reveal_focused(
+            crate::installer::proposal_handoff::SCROLL_ID,
+        ));
+        // The RBF warning has its own clipped descendant list. Tab can
+        // reach every copy action, including those below its viewport.
+        focus.chain(action::reveal_focused(
+            crate::app::view::vault::transactions::RBF_DESCENDANTS_SCROLL_ID,
+        ))
+    }
+
+    fn apply_zoom_shortcut(&mut self, step: ZoomStep) -> Task<Message> {
+        let current = self.current_zoom();
+        let next = match step {
+            ZoomStep::In => current.zoomed_in().filter(|next| *next <= self.max_zoom()),
+            ZoomStep::Out => current.zoomed_out(),
+            ZoomStep::ActualSize => Some(Zoom::ACTUAL_SIZE),
+        };
+        // The pill also shows at the first and last step, so a press
+        // that changes nothing still says where the zoom is.
+        self.zoom.notice_until = Some(Instant::now() + ZOOM_NOTICE);
+        match next.filter(|next| *next != current) {
+            Some(next) => {
+                self.zoom.pending = Some(next);
+                self.save_pending_zoom()
+            }
+            None => Task::none(),
+        }
+    }
+
+    fn apply_escape_shortcut(&mut self) -> Task<Message> {
+        if self.preferences_sheet.is_some() {
+            return self.close_preferences_sheet();
+        }
+        if self.connect_sheet.is_some() {
+            return self.close_connect_sheet();
+        }
+        let Some((pane_id, tab_id, generation, intent)) = self.focus.and_then(|pane_id| {
+            let pane = self.panes.get(pane_id)?;
+            let tab = pane.tabs.get(pane.focused_tab)?;
+            let tab::State::App(app) = &tab.state else {
+                return None;
+            };
+            Some((
+                pane_id,
+                tab.id,
+                tab.app_generation_token()?,
+                app.shell_escape_intent()?,
+            ))
+        }) else {
+            return Task::none();
+        };
+        self.update(Message::Pane(
+            pane_id,
+            pane::Message::tab(
+                tab_id,
+                tab::Message::AppAsync(
+                    generation,
+                    Box::new(tab::Message::Run(AppMessage::View(intent))),
+                ),
+            ),
+        ))
+    }
+
     fn update_message(&mut self, message: Message) -> Task<Message> {
         match message {
             // we get this message only once at startup
@@ -3183,107 +3289,11 @@ impl GUI {
             Message::WindowMoved => self.query_screen_size(),
             Message::CtrlC
             | Message::Event(iced::Event::Window(iced::window::Event::CloseRequested)) => {
-                for (_, pane) in self.panes.iter_mut() {
-                    pane.stop();
-                }
-                if let Some(window_config) = &self.window_config {
-                    let path = GlobalSettings::path(&self.config.coincube_directory);
-                    if let Err(e) = GlobalSettings::update_window_config(&path, window_config) {
-                        tracing::error!("Failed to update the window config: {e}");
-                    }
-                }
-                iced::window::latest().and_then(iced::window::close)
+                self.close_window()
             }
-            Message::KeyPressed(Key::Tab(shift)) => {
-                if self.preferences_sheet.is_some() {
-                    return if shift {
-                        action::focus_previous_visible(preferences_view::CONTENT_SCROLL_ID)
-                    } else {
-                        action::focus_next_visible(preferences_view::CONTENT_SCROLL_ID)
-                    };
-                }
-                if self.connect_sheet.is_some() {
-                    return if shift {
-                        action::focus_previous_visible(CONTENT_SCROLL_ID)
-                    } else {
-                        action::focus_next_visible(CONTENT_SCROLL_ID)
-                    };
-                }
-                log::debug!("Tab pressed!");
-                let focus = if shift {
-                    action::focus_previous_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
-                } else {
-                    action::focus_next_visible(crate::app::view::nav::shell::MIDDLE_SCROLL_ID)
-                };
-                // The Border Wallet grid has its own clipped viewport. Revealing
-                // focus there is a no-op for every other screen.
-                let focus = focus.chain(action::reveal_focused(
-                    crate::installer::step::descriptor::editor::border_wallet_wizard::BORDER_WALLET_GRID_SCROLL_ID,
-                ));
-                // The Create form scrolls inside its card while its footer stays
-                // fixed. Reveal keyboard focus for controls below that viewport.
-                let focus = focus.chain(action::reveal_focused(crate::home::CREATE_BODY_SCROLL_ID));
-                #[cfg(feature = "mcp-proposals")]
-                let focus = focus.chain(action::reveal_focused(
-                    crate::installer::proposal_handoff::SCROLL_ID,
-                ));
-                // The RBF warning has its own clipped descendant list. Tab can
-                // reach every copy action, including those below its viewport.
-                focus.chain(action::reveal_focused(
-                    crate::app::view::vault::transactions::RBF_DESCENDANTS_SCROLL_ID,
-                ))
-            }
-            Message::KeyPressed(Key::Zoom(step)) => {
-                let current = self.current_zoom();
-                let next = match step {
-                    ZoomStep::In => current.zoomed_in().filter(|next| *next <= self.max_zoom()),
-                    ZoomStep::Out => current.zoomed_out(),
-                    ZoomStep::ActualSize => Some(Zoom::ACTUAL_SIZE),
-                };
-                // The pill also shows at the first and last step, so a press
-                // that changes nothing still says where the zoom is.
-                self.zoom.notice_until = Some(Instant::now() + ZOOM_NOTICE);
-                match next.filter(|next| *next != current) {
-                    Some(next) => {
-                        self.zoom.pending = Some(next);
-                        self.save_pending_zoom()
-                    }
-                    None => Task::none(),
-                }
-            }
-            Message::KeyPressed(Key::Escape) => {
-                if self.preferences_sheet.is_some() {
-                    return self.close_preferences_sheet();
-                }
-                if self.connect_sheet.is_some() {
-                    return self.close_connect_sheet();
-                }
-                let Some((pane_id, tab_id, generation, intent)) = self.focus.and_then(|pane_id| {
-                    let pane = self.panes.get(pane_id)?;
-                    let tab = pane.tabs.get(pane.focused_tab)?;
-                    let tab::State::App(app) = &tab.state else {
-                        return None;
-                    };
-                    Some((
-                        pane_id,
-                        tab.id,
-                        tab.app_generation_token()?,
-                        app.shell_escape_intent()?,
-                    ))
-                }) else {
-                    return Task::none();
-                };
-                self.update(Message::Pane(
-                    pane_id,
-                    pane::Message::tab(
-                        tab_id,
-                        tab::Message::AppAsync(
-                            generation,
-                            Box::new(tab::Message::Run(AppMessage::View(intent))),
-                        ),
-                    ),
-                ))
-            }
+            Message::KeyPressed(Key::Tab(shift)) => self.move_keyboard_focus(shift),
+            Message::KeyPressed(Key::Zoom(step)) => self.apply_zoom_shortcut(step),
+            Message::KeyPressed(Key::Escape) => self.apply_escape_shortcut(),
             Message::Fiat(FiatMessage::GetPriceResult(price)) => {
                 if price.request.origin.is_some() {
                     return Task::none();
