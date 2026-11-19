@@ -126,6 +126,9 @@ impl PriceSource {
                 (value, updated_at)
             }
         };
+        if !value.is_finite() || value <= 0.0 {
+            return Err(PriceApiError::CannotParseData("price".to_string()));
+        }
         Ok(GetPriceResult { value, updated_at })
     }
 
@@ -238,6 +241,31 @@ mod tests {
             PriceSource::MempoolSpace.list_currencies_url(),
             "https://mempool.space/api/v1/prices"
         );
+    }
+
+    #[test]
+    fn rejects_nonpositive_prices_in_every_provider_response() {
+        for (source, payload) in [
+            (PriceSource::Coincube, json!({"value": -12.0})),
+            (PriceSource::Coincube, json!({"value": 0})),
+            (
+                PriceSource::CoinGecko,
+                json!({"rates": {"usd": {"value": -12.0}}}),
+            ),
+            (
+                PriceSource::CoinGecko,
+                json!({"rates": {"usd": {"value": 0}}}),
+            ),
+            (PriceSource::MempoolSpace, json!({"USD": 0, "time": 123})),
+        ] {
+            assert!(
+                matches!(
+                    source.parse_price_data(Currency::USD, &payload),
+                    Err(PriceApiError::CannotParseData(_))
+                ),
+                "{source} accepted {payload}"
+            );
+        }
     }
 
     #[test]
