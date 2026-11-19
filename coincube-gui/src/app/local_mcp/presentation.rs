@@ -392,14 +392,30 @@ fn client_rows(settings: &Settings, available: bool, setup: bool) -> Vec<Ui<'_>>
             rows.push(client_controls(settings, client, runtime, ready));
         }
     }
-    let empty = clients.is_empty();
+    rows.push(pair_client_row(
+        clients.is_empty(),
+        setup,
+        available,
+        settings.pairing_open,
+        settings.pairing_poisoned,
+    ));
+    rows
+}
+
+fn pair_client_row(
+    empty: bool,
+    setup: bool,
+    available: bool,
+    pairing_open: bool,
+    pairing_poisoned: bool,
+) -> Ui<'static> {
     // While the form is open its own Cancel closes it; the row keeps only
     // its state so there is one way out.
-    let pair = (!settings.pairing_open).then(|| {
+    let pair = (!pairing_open).then(|| {
         page::primary(
             PAIR_OPEN_ID,
             localized_copy("Pair a client"),
-            (available && !settings.pairing_poisoned).then(|| message(Message::TogglePairing)),
+            (available && !pairing_poisoned).then(|| message(Message::TogglePairing)),
         )
     });
     let mut last = page::row(localized_copy(if empty {
@@ -414,8 +430,7 @@ fn client_rows(settings: &Settings, available: bool, setup: bool) -> Vec<Ui<'_>>
             PAIR_HINT
         }));
     }
-    rows.push(last.control_maybe(pair).into());
-    rows
+    last.control_maybe(pair).into()
 }
 
 /// A paired client's controls, inset under its row: what its label and
