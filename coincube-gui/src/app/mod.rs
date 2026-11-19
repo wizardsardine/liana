@@ -5410,20 +5410,7 @@ impl App {
         Task::batch([reload, recent])
     }
 
-    pub fn subscription(&self) -> Subscription<Message> {
-        let mut subscriptions = vec![];
-
-        // Subscribe to Spark bridge events when a Spark backend is
-        // active. The backend is optional (cubes without a Spark signer
-        // run with `wallet_registry.spark() == None`), so we only wire
-        // the subscription when there's actually a bridge to listen to.
-        // The subscription identity is keyed on the `Arc<SparkClient>`
-        // pointer inside the backend, so reconnecting produces a fresh
-        // subscription instead of stale wiring.
-        if let Some(spark_backend) = self.wallet_registry.spark() {
-            subscriptions.push(spark_backend.event_subscription().map(Message::SparkEvent));
-        }
-
+    fn subscribe_to_vault_sync(&self, subscriptions: &mut Vec<Subscription<Message>>) {
         // Only create tick subscription if we have a vault (daemon exists)
         if self.daemon.is_some() {
             subscriptions.push(
@@ -5465,6 +5452,56 @@ impl App {
                     .map(|_| Message::NodeHistory(node_history::Action::Poll)),
             );
         }
+    }
+
+    fn subscribe_to_bitcoind_log(&self, subscriptions: &mut Vec<Subscription<Message>>) {
+        // Stream the internal bitcoind's debug.log for UpdateTip lines.
+        //
+        // Prefer a pending node (one being set up or switched to), but fall back to
+        // the active managed node, so sync progress on a node that is already live,
+        // with nothing pending, is visible too.
+        if let Some(pending_cfg) = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
+            c.pending_bitcoind.clone().or_else(|| {
+                match c.bitcoin_backend.as_ref() {
+                    Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) => Some(cfg.clone()),
+                    // Electrum/Esplora backends have no debug.log to tail.
+                    _ => None,
+                }
+            })
+        }) {
+            let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
+            let is_internal = match &pending_cfg.rpc_auth {
+                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
+                _ => false,
+            };
+            if is_internal {
+                let log_path =
+                    internal_bitcoind_debug_log_path(&self.cache.datadir_path, self.cache.network);
+                subscriptions.push(
+                    iced::Subscription::run_with(log_path, |p| {
+                        crate::loader::get_bitcoind_log(p.clone())
+                    })
+                    .map(Message::PendingBitcoindLog),
+                );
+            }
+        }
+    }
+
+    pub fn subscription(&self) -> Subscription<Message> {
+        let mut subscriptions = vec![];
+
+        // Subscribe to Spark bridge events when a Spark backend is
+        // active. The backend is optional (cubes without a Spark signer
+        // run with `wallet_registry.spark() == None`), so we only wire
+        // the subscription when there's actually a bridge to listen to.
+        // The subscription identity is keyed on the `Arc<SparkClient>`
+        // pointer inside the backend, so reconnecting produces a fresh
+        // subscription instead of stale wiring.
+        if let Some(spark_backend) = self.wallet_registry.spark() {
+            subscriptions.push(spark_backend.event_subscription().map(Message::SparkEvent));
+        }
+
+        self.subscribe_to_vault_sync(&mut subscriptions);
 
         // Current panel's subscription
         let current_subscription = self
@@ -5505,36 +5542,7 @@ impl App {
             subscriptions.push(self.panels.spark_receive.sideshift_poll_subscription());
         }
 
-        // Stream the internal bitcoind's debug.log for UpdateTip lines.
-        //
-        // Prefer a pending node (one being set up or switched to), but fall back to
-        // the active managed node, so sync progress on a node that is already live,
-        // with nothing pending, is visible too.
-        if let Some(pending_cfg) = self.daemon.as_ref().and_then(|d| d.config()).and_then(|c| {
-            c.pending_bitcoind.clone().or_else(|| {
-                match c.bitcoin_backend.as_ref() {
-                    Some(coincubed::config::BitcoinBackend::Bitcoind(cfg)) => Some(cfg.clone()),
-                    // Electrum/Esplora backends have no debug.log to tail.
-                    _ => None,
-                }
-            })
-        }) {
-            let internal_datadir = internal_bitcoind_datadir(&self.cache.datadir_path);
-            let is_internal = match &pending_cfg.rpc_auth {
-                BitcoindRpcAuth::CookieFile(path) => path.starts_with(&internal_datadir),
-                _ => false,
-            };
-            if is_internal {
-                let log_path =
-                    internal_bitcoind_debug_log_path(&self.cache.datadir_path, self.cache.network);
-                subscriptions.push(
-                    iced::Subscription::run_with(log_path, |p| {
-                        crate::loader::get_bitcoind_log(p.clone())
-                    })
-                    .map(Message::PendingBitcoindLog),
-                );
-            }
-        }
+        self.subscribe_to_bitcoind_log(&mut subscriptions);
 
         // Connect realtime gRPC stream. Active once `Message::ConnectStreamReady`
         // has populated `connect_stream_config`. The subscription identity is
