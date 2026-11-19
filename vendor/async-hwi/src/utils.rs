@@ -243,14 +243,18 @@ impl MultisigPolicy {
         })
     }
 
-    /// Whether `xpubs` are this policy's keys, in any order and whatever
-    /// network prefix they were exported with.
+    /// Whether `xpubs` are this policy's keys, whatever network prefix they
+    /// were exported with: in any order for `sortedmulti` (BIP67 sorts them
+    /// in the script), in this order for `multi`, where order changes the
+    /// script.
     pub fn has_keys(&self, xpubs: &[bitcoin::bip32::Xpub]) -> bool {
         let id = |x: &bitcoin::bip32::Xpub| (x.public_key, x.chain_code);
         let mut ours: Vec<_> = self.keys.iter().map(|(_, x)| id(x)).collect();
         let mut theirs: Vec<_> = xpubs.iter().map(id).collect();
-        ours.sort();
-        theirs.sort();
+        if self.sorted {
+            ours.sort();
+            theirs.sort();
+        }
         ours == theirs
     }
 }
@@ -315,12 +319,21 @@ mod multisig_policy_tests {
     }
 
     #[test]
-    fn keys_compare_in_any_order() {
+    fn sortedmulti_keys_compare_in_any_order() {
         let policy = MultisigPolicy::parse(&desc("wsh(sortedmulti(2,KEYS))", "/**")).unwrap();
         let mut xpubs: Vec<_> = policy.keys.iter().map(|(_, x)| *x).collect();
         xpubs.reverse();
         assert!(policy.has_keys(&xpubs));
         assert!(!policy.has_keys(&xpubs[..2]));
+    }
+
+    #[test]
+    fn multi_keys_compare_in_order() {
+        let policy = MultisigPolicy::parse(&desc("wsh(multi(2,KEYS))", "/**")).unwrap();
+        let mut xpubs: Vec<_> = policy.keys.iter().map(|(_, x)| *x).collect();
+        assert!(policy.has_keys(&xpubs));
+        xpubs.reverse();
+        assert!(!policy.has_keys(&xpubs));
     }
 
     #[test]

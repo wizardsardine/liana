@@ -561,8 +561,8 @@ impl SigningSession {
 
     /// Multisig: asks the device whether the policy is registered, under
     /// any name, and registers it (the user approves on the device) when it
-    /// is not. The
-    /// token the device returns, if any, is held only in this session.
+    /// is not. The token the device returns, if any, is held only in this
+    /// session.
     pub async fn register(&mut self) -> Result<RegistrationOutcome, SignError> {
         if !self.policy.shape.is_multisig() {
             return Ok(RegistrationOutcome::NotNeeded);

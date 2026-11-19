@@ -12,7 +12,8 @@ use coldcard::protocol::DescriptorName;
 use hidapi::DeviceInfo;
 
 use crate::{
-    parse_version, AddressScript, DeviceKind, Error as HWIError, Version, WalletRegistration, HWI,
+    parse_version, utils, AddressScript, DeviceKind, Error as HWIError, Version,
+    WalletRegistration, HWI,
 };
 pub use coldcard as api;
 
@@ -54,9 +55,7 @@ impl Coldcard {
                 .miniscript_get(descriptor_name)
                 .ok()
                 .flatten();
-            if registered
-                .is_some_and(|registered| registered_descriptor_matches(&registered, policy))
-            {
+            if registered.is_some_and(|registered| registered_descriptor_is(&registered, policy)) {
                 return Ok(Some(WalletRegistration { name: Some(other) }));
             }
         }
@@ -161,6 +160,12 @@ impl HWI for Coldcard {
         name: &str,
         policy: &str,
     ) -> Result<Option<WalletRegistration>, HWIError> {
+        // Cleared first, so a failed search never leaves an earlier match
+        // for the next signature.
+        *self
+            .found
+            .lock()
+            .map_err(|_| HWIError::Unexpected("Failed to unlock"))? = None;
         let found = self.search_registrations(name, policy).await?;
         *self
             .found
@@ -238,8 +243,32 @@ impl From<Coldcard> for Arc<dyn HWI + Sync + Send> {
     }
 }
 
-/// Whether a descriptor the Coldcard returned is `policy` (its checksum
-/// aside, with `h` for hardened steps, as Coldcard writes them).
+/// Whether the descriptor of a miniscript wallet under another name is
+/// exactly `policy`, hardened markers and checksum aside. Exact, not
+/// [`registered_descriptor_matches`]'s substring test, which would take a
+/// `sh(wsh(P))` wallet for `wsh(P)`. The reply is either the descriptor or
+/// a JSON object carrying it as `"desc"`.
+fn registered_descriptor_is(registered: &str, policy: &str) -> bool {
+    let registered = registered.trim();
+    let descriptor = json_string_field(registered, "desc").unwrap_or(registered);
+    utils::same_descriptor(descriptor, policy)
+}
+
+/// The value of a top-level `"key": "value"` string in a flat JSON object
+/// whose strings hold no escapes, as Coldcard's descriptor replies are.
+fn json_string_field<'a>(json: &'a str, key: &str) -> Option<&'a str> {
+    if !json.starts_with('{') {
+        return None;
+    }
+    let after_key = &json[json.find(&format!("\"{key}\""))? + key.len() + 2..];
+    let value = after_key.trim_start().strip_prefix(':')?.trim_start();
+    let value = value.strip_prefix('"')?;
+    value.split_once('"').map(|(value, _)| value)
+}
+
+/// Whether the descriptor Coldcard returned under COINCUBE's own name holds
+/// `policy` (its checksum aside, with `h` for hardened steps, as Coldcard
+/// writes them). The check COINCUBE always made on its own registration.
 fn registered_descriptor_matches(registered: &str, policy: &str) -> bool {
     let policy = policy.replace('\'', "h");
     let policy = policy.split_once('#').map_or(policy.as_str(), |(p, _)| p);
@@ -259,6 +288,28 @@ mod tests {
         "[7fc39c07/48'/1'/0'/2']tpubDEvjgXtrUuH3Qtkapny9aE8gN847xiXsf9MDM5XueGf9nrvStqAuBSva3ajGyTvtp8Ti55FvVXsgYSXuS1tQkBeopFuodx2hRUDmQbvKxbZ",
         "[1a1ffd98/48'/1'/0'/2']tpubDFZqzTvGijYb13BC73CkS1er8DrP5YdzMhziN3kWCKUFaW51Yj6ggvf99YpdrkTJy4RT85mxQMHXDiFAKRxzf6BykQgT4pRRBNPshSJJcKo",
     ];
+
+    #[test]
+    fn another_wallet_must_be_exactly_the_policy() {
+        let policy = format!(
+            "wsh(sortedmulti(2,{}/<0;1>/*,{}/<0;1>/*))#abcdefgh",
+            KEYS[0], KEYS[1]
+        );
+        let bare = policy.split_once('#').unwrap().0.replace('\'', "h");
+        assert!(registered_descriptor_is(&bare, &policy));
+        assert!(registered_descriptor_is(
+            &format!("{{\"name\":\"Specter\",\"desc\":\"{bare}#zzzzzzzz\"}}"),
+            &policy
+        ));
+        // Nested segwit over the same script is another wallet.
+        let nested = format!("sh({bare})");
+        assert!(registered_descriptor_matches(&nested, &policy));
+        assert!(!registered_descriptor_is(&nested, &policy));
+        assert!(!registered_descriptor_is(
+            &format!("{{\"name\":\"Specter\",\"desc\":\"{nested}\"}}"),
+            &policy
+        ));
+    }
 
     #[test]
     fn registered_descriptor_match_ignores_marker_and_checksum() {

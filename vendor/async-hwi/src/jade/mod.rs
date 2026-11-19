@@ -429,13 +429,18 @@ fn jade_variant(wrapper: utils::MultisigWrapper) -> &'static str {
 }
 
 /// Whether a `get_registered_multisigs` entry (or the config inside a
-/// `get_registered_multisig` reply) can be `policy`. Fields the firmware
-/// does not report are not held against it; the keys decide.
+/// `get_registered_multisig` reply) can be `policy`.
 fn multisig_summary_matches(summary: &serde_cbor::Value, policy: &utils::MultisigPolicy) -> bool {
+    // Variant, sortedness and threshold must be reported: a reply that
+    // leaves one out cannot show the entry is this policy. The signer count
+    // may be left out; the detail's keys settle it.
     let field_is = |key: &str, expected: &serde_cbor::Value| {
-        cbor_field(summary, key).is_none_or(|value| value == expected)
+        cbor_field(summary, key).is_some_and(|value| value == expected)
     };
     let number_is = |key: &str, expected: u64| {
+        cbor_field(summary, key).is_some_and(|value| cbor_u64(value) == Some(expected))
+    };
+    let count_is = |key: &str, expected: u64| {
         cbor_field(summary, key).is_none_or(|value| cbor_u64(value) == Some(expected))
     };
     field_is(
@@ -443,7 +448,7 @@ fn multisig_summary_matches(summary: &serde_cbor::Value, policy: &utils::Multisi
         &serde_cbor::Value::Text(jade_variant(policy.wrapper).to_string()),
     ) && field_is("sorted", &serde_cbor::Value::Bool(policy.sorted))
         && number_is("threshold", u64::from(policy.threshold))
-        && number_is("num_signers", policy.keys.len() as u64)
+        && count_is("num_signers", policy.keys.len() as u64)
 }
 
 /// Walks a `get_registered_multisig` reply: every signer xpub must be one of
@@ -884,6 +889,56 @@ mod registration_tests {
     }
 
     #[tokio::test]
+    async fn a_descriptor_registered_under_another_name_is_found() {
+        let (template, keys) = utils::extract_keys_and_template::<String>(&sortedmulti()).unwrap();
+        let registered = |keys: &[String]| {
+            map(vec![
+                ("descriptor_name", text("Specter")),
+                ("descriptor", text(&template.replace('\'', "h"))),
+                (
+                    "datavalues",
+                    Value::Map(
+                        keys.iter()
+                            .enumerate()
+                            .map(|(i, key)| (text(&format!("@{i}")), text(&key.replace('\'', "h"))))
+                            .collect(),
+                    ),
+                ),
+            ])
+        };
+        let lookup = |reply: Value| {
+            Jade::new(FakeTransport {
+                replies: vec![
+                    (
+                        ("get_registered_descriptors", None),
+                        map(vec![("Specter", descriptor_info())]),
+                    ),
+                    (("get_registered_descriptor", Some("Specter")), reply),
+                ],
+            })
+        };
+        assert_eq!(
+            lookup(registered(&keys))
+                .find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            Some(WalletRegistration {
+                name: Some("Specter".to_string())
+            })
+        );
+        // The same keys in another order are another descriptor.
+        let mut swapped = keys.clone();
+        swapped.swap(0, 1);
+        assert_eq!(
+            lookup(registered(&swapped))
+                .find_wallet_registration("Import0000", &sortedmulti())
+                .await
+                .unwrap(),
+            None
+        );
+    }
+
+    #[tokio::test]
     async fn an_unreadable_descriptor_under_our_name_is_an_error() {
         let jade = Jade::new(FakeTransport {
             replies: vec![(
@@ -904,7 +959,23 @@ mod registration_tests {
             &summary("wsh(multi(k))", true, 2, 3),
             &p
         ));
-        assert!(multisig_summary_matches(&map(vec![]), &p));
+        // Fields left out cannot vouch for the entry.
+        assert!(!multisig_summary_matches(&map(vec![]), &p));
+        assert!(!multisig_summary_matches(
+            &map(vec![
+                ("variant", text("wsh(multi(k))")),
+                ("sorted", Value::Bool(true)),
+            ]),
+            &p
+        ));
+        assert!(multisig_summary_matches(
+            &map(vec![
+                ("variant", text("wsh(multi(k))")),
+                ("sorted", Value::Bool(true)),
+                ("threshold", Value::Integer(2)),
+            ]),
+            &p
+        ));
         assert!(!multisig_summary_matches(
             &summary("sh(wsh(multi(k)))", true, 2, 3),
             &p
