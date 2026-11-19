@@ -174,9 +174,12 @@ pub enum Message {
     /// An imported wallet's keys stored in this Cube, for the signer picker.
     CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
-    /// A hardware wallet registered an imported Vault's device policy from
-    /// Vault Settings. Nothing is written to the wallet's settings.
-    DeviceRegistered(Fingerprint, Result<(), Error>),
+    /// The result of one imported Vault registration in Vault Settings.
+    DeviceRegistered {
+        attempt: uuid::Uuid,
+        fingerprint: Fingerprint,
+        result: Result<(), Error>,
+    },
     Updated(Result<(), Error>),
     /// The save result of work the current route's own panel started while
     /// the import panel stood in for it (a forwarded signature). Delivered to
