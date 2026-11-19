@@ -3137,6 +3137,130 @@ impl SignModal {
         }
         Task::none()
     }
+
+    fn signing_failed(
+        &mut self,
+        fingerprint: Fingerprint,
+        over_lan: bool,
+        e: Error,
+    ) -> Task<Message> {
+        self.display_modal = true;
+        if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
+            // A Keychain phone over the local network: remember
+            // the failure so its row offers Connect instead, and
+            // word the toast for a phone, not a USB device.
+            if over_lan {
+                let needs_repair = matches!(
+                    &e,
+                    Error::HardwareWallet(hw) if crate::phone_signer::needs_repair(hw)
+                );
+                self.lan_failures.insert(fingerprint, needs_repair);
+                let connect_available = self
+                    .keychain_session(fingerprint)
+                    .is_some_and(|(_, status)| status.is_idle());
+                let err_msg = crate::user_error::report_lan_keychain(&e, connect_available);
+                self.error = Some(e);
+                return Task::done(Message::View(view::Message::ShowError(err_msg)));
+            }
+            let err_msg = crate::user_error::report(&e);
+            self.error = Some(e);
+            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+        }
+        Task::none()
+    }
+
+    fn persist_local_signature(
+        &mut self,
+        daemon: &Arc<dyn Daemon + Sync + Send>,
+        fingerprint: Fingerprint,
+        psbt: Psbt,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        self.error = None;
+        self.signer_notice = None;
+        // Bring the picker back into view after a local sign
+        // (the border-wallet path hides it during the async
+        // reconstruction). The picker now closes only when the
+        // threshold is met — decided by the panel's
+        // `Message::Updated(Ok)` handler — so a sub-threshold
+        // signature should leave it visible to add more.
+        self.display_modal = true;
+        let daemon = daemon.clone();
+        if let Err(e) =
+            merge_signatures_for_chain(uses_unified_signatures(&self.wallet), &mut tx.psbt, &psbt)
+        {
+            // Nothing was merged and nothing is persisted: a
+            // signature the adapter refuses (conflicting or
+            // ambiguous encoding) must not reach the daemon.
+            let err_msg = replay::unsafe_legacy_policy_copy(&e)
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    crate::user_error::report(&Error::Unexpected(format!(
+                        "Couldn't merge the signature from {fingerprint}: {e}"
+                    )))
+                });
+            let e = Error::Unexpected(format!(
+                "Couldn't merge the signature from {fingerprint}: {e}"
+            ));
+            self.error = Some(e);
+            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+        }
+        self.signed.insert(fingerprint);
+        // Persist the *merged* PSBT (not the lone single-signer
+        // result) so the daemon's stored copy always matches the
+        // desktop's in-memory set. Otherwise a later re-read of
+        // the tx from the daemon (list refresh / reopen) can
+        // surface a partially-signed psbt and drop signatures
+        // collected earlier in the same session.
+        let merged = tx.psbt.clone();
+        if self.is_saved {
+            Task::perform(
+                async move { daemon.update_spend_tx(&merged).await.map_err(|e| e.into()) },
+                Message::Updated,
+            )
+        // If the spend transaction was never saved before, then both the psbt and
+        // labels attached to it must be updated.
+        } else {
+            let mut labels = HashMap::<LabelItem, Option<String>>::new();
+            for (item, label) in tx.labels() {
+                if !label.is_empty() {
+                    labels.insert(label_item_from_str(item), Some(label.clone()));
+                }
+            }
+            Task::perform(
+                async move {
+                    daemon.update_spend_tx(&merged).await?;
+                    daemon.update_labels(&labels).await.map_err(|e| e.into())
+                },
+                Message::Updated,
+            )
+        }
+    }
+
+    fn update_keychain_signing(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        message: Message,
+        tx: &mut SpendTx,
+    ) -> Task<Message> {
+        let requests_signature = matches!(
+            message,
+            Message::View(view::Message::Spend(
+                view::SpendTxMessage::SelectKeychainSigner(_)
+                    | view::SpendTxMessage::RequestFromEveryone
+                    | view::SpendTxMessage::RetryKeychainSigner(_),
+            ))
+        );
+        if requests_signature {
+            if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
+                return refused;
+            }
+        }
+        if let Some(k) = self.keychain.as_mut() {
+            return k.update(daemon, message, tx);
+        }
+        Task::none()
+    }
 }
 
 impl Modal for SignModal {
@@ -3202,100 +3326,10 @@ impl Modal for SignModal {
             Message::Signed(fingerprint, res) => {
                 self.signing.remove(&fingerprint);
                 let over_lan = self.lan_signing.remove(&fingerprint);
-                match res {
-                    Err(e) => {
-                        self.display_modal = true;
-                        if !matches!(e, Error::HardwareWallet(async_hwi::Error::UserRefused)) {
-                            // A Keychain phone over the local network: remember
-                            // the failure so its row offers Connect instead, and
-                            // word the toast for a phone, not a USB device.
-                            if over_lan {
-                                let needs_repair = matches!(
-                                    &e,
-                                    Error::HardwareWallet(hw) if crate::phone_signer::needs_repair(hw)
-                                );
-                                self.lan_failures.insert(fingerprint, needs_repair);
-                                let connect_available = self
-                                    .keychain_session(fingerprint)
-                                    .is_some_and(|(_, status)| status.is_idle());
-                                let err_msg =
-                                    crate::user_error::report_lan_keychain(&e, connect_available);
-                                self.error = Some(e);
-                                return Task::done(Message::View(view::Message::ShowError(
-                                    err_msg,
-                                )));
-                            }
-                            let err_msg = crate::user_error::report(&e);
-                            self.error = Some(e);
-                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                        }
-                    }
-                    Ok(psbt) => {
-                        self.error = None;
-                        self.signer_notice = None;
-                        // Bring the picker back into view after a local sign
-                        // (the border-wallet path hides it during the async
-                        // reconstruction). The picker now closes only when the
-                        // threshold is met — decided by the panel's
-                        // `Message::Updated(Ok)` handler — so a sub-threshold
-                        // signature should leave it visible to add more.
-                        self.display_modal = true;
-                        let daemon = daemon.clone();
-                        if let Err(e) = merge_signatures_for_chain(
-                            uses_unified_signatures(&self.wallet),
-                            &mut tx.psbt,
-                            &psbt,
-                        ) {
-                            // Nothing was merged and nothing is persisted: a
-                            // signature the adapter refuses (conflicting or
-                            // ambiguous encoding) must not reach the daemon.
-                            let err_msg = replay::unsafe_legacy_policy_copy(&e)
-                                .map(str::to_owned)
-                                .unwrap_or_else(|| {
-                                    crate::user_error::report(&Error::Unexpected(format!(
-                                        "Couldn't merge the signature from {fingerprint}: {e}"
-                                    )))
-                                });
-                            let e = Error::Unexpected(format!(
-                                "Couldn't merge the signature from {fingerprint}: {e}"
-                            ));
-                            self.error = Some(e);
-                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                        }
-                        self.signed.insert(fingerprint);
-                        // Persist the *merged* PSBT (not the lone single-signer
-                        // result) so the daemon's stored copy always matches the
-                        // desktop's in-memory set. Otherwise a later re-read of
-                        // the tx from the daemon (list refresh / reopen) can
-                        // surface a partially-signed psbt and drop signatures
-                        // collected earlier in the same session.
-                        let merged = tx.psbt.clone();
-                        if self.is_saved {
-                            return Task::perform(
-                                async move {
-                                    daemon.update_spend_tx(&merged).await.map_err(|e| e.into())
-                                },
-                                Message::Updated,
-                            );
-                        // If the spend transaction was never saved before, then both the psbt and
-                        // labels attached to it must be updated.
-                        } else {
-                            let mut labels = HashMap::<LabelItem, Option<String>>::new();
-                            for (item, label) in tx.labels() {
-                                if !label.is_empty() {
-                                    labels.insert(label_item_from_str(item), Some(label.clone()));
-                                }
-                            }
-                            return Task::perform(
-                                async move {
-                                    daemon.update_spend_tx(&merged).await?;
-                                    daemon.update_labels(&labels).await.map_err(|e| e.into())
-                                },
-                                Message::Updated,
-                            );
-                        }
-                    }
-                }
+                return match res {
+                    Err(e) => self.signing_failed(fingerprint, over_lan, e),
+                    Ok(psbt) => self.persist_local_signature(&daemon, fingerprint, psbt, tx),
+                };
             }
             Message::Updated(res) => match res {
                 Ok(()) => match replay::spend_info_for_chain(
@@ -3351,22 +3385,7 @@ impl Modal for SignModal {
                 | view::SpendTxMessage::RetryKeychainSigner(_)
                 | view::SpendTxMessage::CancelKeychainSign,
             )) => {
-                let requests_signature = matches!(
-                    message,
-                    Message::View(view::Message::Spend(
-                        view::SpendTxMessage::SelectKeychainSigner(_)
-                            | view::SpendTxMessage::RequestFromEveryone
-                            | view::SpendTxMessage::RetryKeychainSigner(_),
-                    ))
-                );
-                if requests_signature {
-                    if let Some(refused) = self.refuse_before_dispatch(&tx.psbt) {
-                        return refused;
-                    }
-                }
-                if let Some(k) = self.keychain.as_mut() {
-                    return k.update(daemon, message, tx);
-                }
+                return self.update_keychain_signing(daemon, message, tx);
             }
             _ => {}
         }
