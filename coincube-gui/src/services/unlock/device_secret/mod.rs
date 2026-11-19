@@ -163,6 +163,37 @@ mod backend {
         super::apple::delete(service, cube_id)
     }
 
+    /// Runs one keystore operation while no other thread in this process is
+    /// talking to the keystore.
+    ///
+    /// `keyring` 3.3's Secret Service backend opens a fresh private D-Bus
+    /// connection for every call, negotiates a session, and hangs up.
+    /// gnome-keyring-daemon 50 aborts when enough of those connect and
+    /// disconnect at once. It keeps a per-client record, created from an idle
+    /// callback its message filter schedules and dropped when D-Bus reports
+    /// the caller gone. Under that churn a call can reach `OpenSession` with
+    /// no record, and the daemon dies on `gkd_secret_service_get_pkcs11_session:
+    /// assertion 'client' failed` followed by a `g_variant_new` GLib-ERROR
+    /// (SIGABRT). That takes down the user's whole login keyring, not just
+    /// this app's items. Against gnome-keyring 50.0 it aborted in 2 of 3
+    /// 90-second runs with four concurrent clients and 3 of 3 with sixteen,
+    /// and never with one or two. CI runs these tests under
+    /// `contrib/with_test_keyring.py`, which fails the run if the daemon dies.
+    ///
+    /// Each call is short and none re-enters this lock, so a process-wide
+    /// leaf mutex costs nothing that matters and cannot deadlock against
+    /// [`super::provision_lock`]. A panic while it is held cannot have left
+    /// the keystore half-written by this lock's doing, so a poisoned guard is
+    /// taken over rather than failing every later call.
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn serialised<T>(op: impl FnOnce() -> T) -> T {
+        static KEYSTORE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = KEYSTORE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        op()
+    }
+
     #[cfg(not(target_os = "macos"))]
     fn entry(service: &str, cube_id: &str) -> Result<keyring::Entry, UnlockError> {
         keyring::Entry::new(service, cube_id)
@@ -171,7 +202,7 @@ mod backend {
 
     #[cfg(not(target_os = "macos"))]
     pub fn load(service: &str, cube_id: &str) -> Result<Option<Zeroizing<Vec<u8>>>, UnlockError> {
-        match entry(service, cube_id)?.get_secret() {
+        serialised(|| match entry(service, cube_id)?.get_secret() {
             // Wrapped the instant it exists — before any length check or
             // conversion can return early past it.
             Ok(bytes) => Ok(Some(Zeroizing::new(bytes))),
@@ -179,7 +210,7 @@ mod backend {
             Err(e) => Err(UnlockError::KeystoreUnreachable(super::describe(
                 &e.to_string(),
             ))),
-        }
+        })
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -189,9 +220,11 @@ mod backend {
         // check-then-set window is closed against this application; a foreign
         // writer racing us is out of scope, and the mandatory read-back in
         // `get_or_create` still returns whatever actually landed.
-        entry(service, cube_id)?
-            .set_secret(secret)
-            .map_err(|e| UnlockError::KeystoreUnreachable(super::describe(&e.to_string())))
+        serialised(|| {
+            entry(service, cube_id)?
+                .set_secret(secret)
+                .map_err(|e| UnlockError::KeystoreUnreachable(super::describe(&e.to_string())))
+        })
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -204,12 +237,12 @@ mod backend {
 
     #[cfg(not(target_os = "macos"))]
     pub fn delete(service: &str, cube_id: &str) -> Result<(), UnlockError> {
-        match entry(service, cube_id)?.delete_credential() {
+        serialised(|| match entry(service, cube_id)?.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
             Err(e) => Err(UnlockError::KeystoreUnreachable(super::describe(
                 &e.to_string(),
             ))),
-        }
+        })
     }
 }
 
@@ -551,6 +584,42 @@ mod tests {
             concurrent.len(),
             8 * 32,
             "two threads shared a probe account"
+        );
+    }
+
+    /// Secret Service calls never overlap inside one process: gnome-keyring
+    /// aborts under concurrent connect/disconnect churn (see
+    /// `backend::serialised`).
+    #[cfg(not(target_os = "macos"))]
+    #[test]
+    fn keystore_operations_never_overlap_within_the_process() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        let inside = Arc::new(AtomicUsize::new(0));
+        let widest = Arc::new(AtomicUsize::new(0));
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                let (inside, widest) = (inside.clone(), widest.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..50 {
+                        backend::serialised(|| {
+                            let now = inside.fetch_add(1, Ordering::SeqCst) + 1;
+                            widest.fetch_max(now, Ordering::SeqCst);
+                            std::thread::yield_now();
+                            inside.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    }
+                })
+            })
+            .collect();
+        for t in threads {
+            t.join().expect("keystore thread");
+        }
+        assert_eq!(
+            widest.load(Ordering::SeqCst),
+            1,
+            "two keystore calls overlapped"
         );
     }
 

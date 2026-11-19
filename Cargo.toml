@@ -64,3 +64,17 @@ opt-level = 2
 
 [profile.dev.package.fdeflate]
 opt-level = 2
+
+# Seed files are sealed with Argon2id at the production cost (256 MiB, t=3,
+# p=4) in every coincube-gui test: `KdfParams::TEST` is `#[cfg(test)]` in
+# coincube-core, so it only applies to coincube-core's own unit tests. At
+# opt-level 0, and further slowed by llvm-cov instrumentation, those
+# derivations dominated the GUI suite: 87 unlock-path tests ran for more
+# than 60 s in coverage run 44465792951, whose lib tests took 4388 s.
+# Optimising only the KDF crates keeps the production cost and every
+# workspace code path and line count unchanged.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3

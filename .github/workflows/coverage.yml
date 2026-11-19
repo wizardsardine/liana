@@ -86,6 +86,14 @@ jobs:
       # result found", and `secret-tool store` cannot mint it. Write the
       # empty-password login keyring and its default alias first.
       #
+      # Run under contrib/with_test_keyring.py, as main.yml does. A bare
+      # `--daemonize` daemon that dies mid-suite is replaced by D-Bus
+      # activation without a word: master's coverage run 44465792951 lost
+      # its daemon at 06:44:27, one test failed with "Message recipient
+      # disconnected", and an auto-activated replacement served the rest of
+      # the suite. The supervisor fails such a run as infrastructure (exit
+      # 125) instead, and keeps the daemon's own log.
+      #
       # Keep this in step with the equivalent block in main.yml — they solve
       # one problem in two places, and a fix applied to only one of them will
       # look like a flake in the other.
@@ -94,10 +102,9 @@ jobs:
           mkdir -p ~/.local/share/keyrings
           printf '[keyring]\ndisplay-name=login\nctime=0\nmtime=0\nlock-on-idle=false\nlock-after=false\n' > ~/.local/share/keyrings/login.keyring
           printf 'login' > ~/.local/share/keyrings/default
-          dbus-run-session -- bash -c '
-            echo -n "" | gnome-keyring-daemon --daemonize --unlock --components=secrets >/dev/null
-            ./contrib/coverage.sh
-          '
+          python3 contrib/test_keyring_supervision.py
+          python3 contrib/test_keyring_supervision.py --live-kill
+          dbus-run-session -- python3 contrib/with_test_keyring.py -- ./contrib/coverage.sh
 
       - name: Upload coverage artifacts
         if: always()
@@ -107,6 +114,7 @@ jobs:
           path: |
             target/coverage/lcov.info
             target/coverage/summary.json
+            test-logs/gnome-keyring.log
 
   spark-bridge-coverage:
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.action != 'edited' || github.event.changes.base != null))) }}
