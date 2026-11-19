@@ -128,6 +128,11 @@ pub trait Step {
     fn resume(&mut self) -> Task<Message> {
         Task::none()
     }
+    /// Lets panel-level tests read the fee state of a panel's DefineSpend.
+    #[cfg(test)]
+    fn as_define_spend(&self) -> Option<&DefineSpend> {
+        None
+    }
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, _draft: &TransactionDraft) {}
     fn reload_wallet(&mut self, _wallet: Arc<Wallet>) {}
     fn subscription(&self) -> Subscription<Message> {
@@ -1537,6 +1542,11 @@ impl Step for DefineSpend {
             _ if redraft && self.draft_pending => self.schedule_redraft(),
             _ => Task::none(),
         }
+    }
+
+    #[cfg(test)]
+    fn as_define_spend(&self) -> Option<&DefineSpend> {
+        Some(self)
     }
 
     fn apply(&self, draft: &mut TransactionDraft) {
@@ -3719,6 +3729,85 @@ mod tests {
         // Nothing pending: Back requests nothing.
         state.draft_pending = false;
         assert_eq!(back(&mut state).units(), 0);
+    }
+
+    /// A recovery through the real panel: its DefineSpend fetches Normal once
+    /// Next first shows it (not while the path step is on screen), Back saves
+    /// a fetch still in flight for the next Next (its estimate lands on the
+    /// path step and is lost), and a rate the user typed survives Back and
+    /// Next on the same path.
+    #[tokio::test]
+    async fn the_recovery_panel_starts_on_normal_once_and_keeps_a_typed_rate() {
+        use super::super::CreateSpendPanel;
+        use crate::app::state::State;
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        let mut panel = CreateSpendPanel::new_recovery(
+            wallet(),
+            &[coin(1, 50_000, Some(50))],
+            100,
+            Network::Bitcoin,
+            Amount::from_sat(50_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        );
+        let form = |panel: &CreateSpendPanel| {
+            let form = panel.steps[1]
+                .as_define_spend()
+                .expect("the recovery's DefineSpend");
+            (
+                form.loading_fee_estimate,
+                form.resume_fee_estimate,
+                form.fee_estimate_request,
+                form.feerate.value.clone(),
+            )
+        };
+        let send = |panel: &mut CreateSpendPanel, message: view::Message| {
+            panel.update(Some(daemon.clone()), &cache, Message::View(message))
+        };
+
+        // On the path step, the panel's reload requests nothing of the form.
+        drop(panel.reload(Some(daemon.clone()), Some(wallet())));
+        assert_eq!(panel.current, 0);
+        let (loading, resume, _, _) = form(&panel);
+        assert_eq!(loading, None);
+        assert_eq!(resume, Some(NORMAL_FEE_TARGET));
+
+        // Next shows it: Normal is fetched, once.
+        drop(send(&mut panel, view::Message::Next));
+        assert_eq!(panel.current, 1);
+        let (loading, resume, first, _) = form(&panel);
+        assert_eq!(loading, Some(NORMAL_FEE_TARGET));
+        assert_eq!(resume, None);
+
+        // Back while it is fetching saves the fetch; Next on the same path
+        // requests it anew.
+        drop(send(&mut panel, view::Message::Previous));
+        assert_eq!(panel.current, 0);
+        assert_eq!(form(&panel).1, Some(NORMAL_FEE_TARGET));
+        drop(send(&mut panel, view::Message::Next));
+        let (loading, resume, again, _) = form(&panel);
+        assert_eq!(loading, Some(NORMAL_FEE_TARGET));
+        assert_eq!(resume, None);
+        assert_ne!(again, first);
+
+        // A typed rate survives Back and Next on the same path: nothing is
+        // fetched over it.
+        drop(send(
+            &mut panel,
+            view::Message::CreateSpend(view::CreateSpendMessage::FeerateEdited("12".into())),
+        ));
+        drop(send(&mut panel, view::Message::Previous));
+        drop(send(&mut panel, view::Message::Next));
+        assert_eq!(panel.current, 1);
+        let (loading, resume, request, rate) = form(&panel);
+        assert_eq!(rate, "12");
+        assert_eq!(loading, None);
+        assert_eq!(resume, None);
+        assert_eq!(request, again);
     }
 
     /// The panel wiring around `resume`: a cache refresh reaching the hidden
