@@ -638,7 +638,7 @@ fn connected_view<'a>(
 }
 
 fn overview_lightning_share_row<'a>(
-    total_col: Column<'a, SparkOverviewMessage>,
+    total_col: coincube_ui::widget::Column<'a, SparkOverviewMessage>,
     cube_id: &str,
     lightning_address: &SparkLightningAddress,
     lightning_share: Option<(&'a str, Option<&'a qr_code::Data>)>,
