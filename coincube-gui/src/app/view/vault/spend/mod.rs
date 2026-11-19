@@ -553,9 +553,13 @@ pub fn create_spend_tx<'a>(
         unconfirmed_amount_with_size_and_unit(unconfirmed_balance, H3_SIZE, bitcoin_unit).into()
     };
 
+    // A preset's estimate on its way replaces the rate in the field, so the
+    // draft (and, for a self-transfer or recovery, the rate itself) is stale
+    // until it lands.
     let can_proceed = is_valid
         && blocking_warning.is_none()
         && !duplicate
+        && loading_fee_estimate.is_none()
         && (is_self_send
             || recovery_timelock.is_some()
             || Some(&Amount::from_sat(0)) == amount_left);
@@ -1067,9 +1071,10 @@ fn incomplete_spend_hint(
     drafting: bool,
     loading_fee_estimate: bool,
 ) -> Option<String> {
-    if feerate.value.is_empty() && loading_fee_estimate {
+    if loading_fee_estimate {
         // A preset's estimate is on its way (a new or cleared form starts on
-        // Normal): nothing for the user to set.
+        // Normal, or the user switched presets): nothing for the user to set,
+        // and the rate in the field is about to be replaced.
         Some(FETCHING_FEE_HINT.to_string())
     } else if feerate.value.is_empty() {
         Some("Please set a feerate.".to_string())
@@ -2600,6 +2605,38 @@ mod tests {
                 add_shown: false,
             },
             Case {
+                // Normal → Fast on a complete form: the previous draft
+                // (`amount_left == Some(0)`) is at Normal's rate, so Prepare
+                // waits for Fast's estimate.
+                name: "preset-switch",
+                scenario: Scenario {
+                    loading: Some(1),
+                    selected: Some(6),
+                    ..base.clone()
+                },
+                present: &[FETCHING_FEE_HINT],
+                absent: &["Builds an unsigned transaction", "Please set a feerate."],
+                prepare_enabled: false,
+                add_shown: true,
+            },
+            Case {
+                // A recovery's Prepare never waits on `amount_left`, so the
+                // estimate in flight alone must hold it.
+                name: "preset-switch-recovery",
+                scenario: Scenario {
+                    recovery: true,
+                    first_step: false,
+                    amount_left: None,
+                    loading: Some(1),
+                    selected: Some(6),
+                    ..base.clone()
+                },
+                present: &["Recovery", FETCHING_FEE_HINT],
+                absent: &[],
+                prepare_enabled: false,
+                add_shown: false,
+            },
+            Case {
                 name: "batch",
                 scenario: Scenario {
                     recipients: 2,
@@ -2933,6 +2970,25 @@ mod tests {
             incomplete_spend_hint(&empty, false, &[], false, None, None, None, false, false)
                 .as_deref(),
             Some("Please set a feerate.")
+        );
+        // Switching presets on a filled field: the rate there is about to be
+        // replaced, so the footer waits for it rather than for the draft.
+        let filled = value("5", true);
+        let zero = Amount::ZERO;
+        assert_eq!(
+            incomplete_spend_hint(
+                &filled,
+                false,
+                &[],
+                false,
+                None,
+                Some(&zero),
+                None,
+                true,
+                true
+            )
+            .as_deref(),
+            Some(FETCHING_FEE_HINT)
         );
     }
 
@@ -3938,8 +3994,13 @@ mod tests {
         assert_eq!(probe.has_focus(add), *add_shown, "{context}");
         assert_eq!(probe.has_focus(back), !scenario.first_step, "{context}");
         assert!(probe.has_focus(clear), "{}", context);
+        // The preset whose estimate is loading is not pressable.
         for (_, block_target) in FEERATE_PRESETS {
-            assert!(probe.has_focus(&preset(block_target)), "{}", context);
+            assert_eq!(
+                probe.has_focus(&preset(block_target)),
+                scenario.loading != Some(block_target),
+                "{context}"
+            );
         }
         // Native editing stays native: the fee form, every passed
         // recipient form, and the batch label for 2+ recipients.
