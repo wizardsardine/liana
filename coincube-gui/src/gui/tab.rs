@@ -5228,6 +5228,8 @@ impl Tab {
     }
 
     fn update_inner(&mut self, message: Message) -> Task<Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+
         let message = match self.prepare_tab_update(message) {
             std::ops::ControlFlow::Continue(message) => message,
             std::ops::ControlFlow::Break(task) => return task,
@@ -5250,80 +5252,50 @@ impl Tab {
             _ => None,
         };
 
-        let result = match (&mut self.state, message) {
+        let routed = match (&mut self.state, message) {
             #[cfg(feature = "mcp-proposals")]
             (State::Installer(installer), Message::LockCube)
                 if installer.context.mcp_proposal.is_some() =>
             {
-                match self.close_mcp_installer() {
-                    std::ops::ControlFlow::Continue(task) => task,
-                    std::ops::ControlFlow::Break(task) => return task,
-                }
+                self.close_mcp_installer()
             }
             (
                 State::App(_),
                 message @ (Message::LockCubeToLauncher | Message::LockCubeToDelete),
-            ) => self.lock_app_to_launcher(message),
-            (State::App(_), Message::LockCube) => match self.lock_app() {
-                std::ops::ControlFlow::Continue(task) => task,
-                std::ops::ControlFlow::Break(task) => return task,
-            },
+            ) => Continue(self.lock_app_to_launcher(message)),
+            (State::App(_), Message::LockCube) => self.lock_app(),
             (State::Home(l), Message::Launch(msg)) => match msg {
                 home::Message::Install(datadir, network, init, coincube_client) => {
-                    match self.install_from_home(datadir, network, init, coincube_client) {
-                        std::ops::ControlFlow::Continue(task) => task,
-                        std::ops::ControlFlow::Break(task) => return task,
-                    }
+                    self.install_from_home(datadir, network, init, coincube_client)
                 }
                 home::Message::Run(datadir_path, cfg, chain, cube) => {
-                    match self.request_home_cube_unlock(datadir_path, cfg, chain, cube) {
-                        std::ops::ControlFlow::Continue(task) => task,
-                        std::ops::ControlFlow::Break(task) => return task,
-                    }
+                    self.request_home_cube_unlock(datadir_path, cfg, chain, cube)
                 }
                 home::Message::View(home::ViewMessage::ToggleTheme) => {
-                    Task::done(Message::ToggleTheme)
+                    Continue(Task::done(Message::ToggleTheme))
                 }
-                home::Message::View(home::ViewMessage::OpenAppPreferences) => {
-                    Task::done(Message::OpenAppPreferences(PreferencesSource::Home))
-                }
+                home::Message::View(home::ViewMessage::OpenAppPreferences) => Continue(Task::done(
+                    Message::OpenAppPreferences(PreferencesSource::Home),
+                )),
                 home::Message::View(home::ViewMessage::ChangeDevicePreference(change)) => {
-                    Task::done(Message::HomeDevicePreference(change))
+                    Continue(Task::done(Message::HomeDevicePreference(change)))
                 }
-                home::Message::GlobalSettingsChanged => Task::done(Message::GlobalSettingsChanged),
-                home::Message::ConnectSignedInBubble => Task::done(Message::ConnectSignedIn),
-                _ => l.update(msg).map(Message::Launch),
+                home::Message::GlobalSettingsChanged => {
+                    Continue(Task::done(Message::GlobalSettingsChanged))
+                }
+                home::Message::ConnectSignedInBubble => {
+                    Continue(Task::done(Message::ConnectSignedIn))
+                }
+                _ => Continue(l.update(msg).map(Message::Launch)),
             },
-            (State::Installer(_), Message::Install(msg)) => match self.route_installer_message(msg)
-            {
-                std::ops::ControlFlow::Continue(task) => task,
-                std::ops::ControlFlow::Break(task) => return task,
-            },
-            (State::Loader(_), Message::Load(msg)) => match self.route_loader_message(msg) {
-                std::ops::ControlFlow::Continue(task) => task,
-                std::ops::ControlFlow::Break(task) => return task,
-            },
-            (State::App(_), Message::Run(msg)) => match self.route_app_message(msg) {
-                std::ops::ControlFlow::Continue(task) => task,
-                std::ops::ControlFlow::Break(task) => return task,
-            },
-            (State::PinEntry(_), Message::PinEntry(msg)) => match self.route_pin_entry_message(msg)
-            {
-                std::ops::ControlFlow::Continue(task) => task,
-                std::ops::ControlFlow::Break(task) => return task,
-            },
+            (State::Installer(_), Message::Install(msg)) => self.route_installer_message(msg),
+            (State::Loader(_), Message::Load(msg)) => self.route_loader_message(msg),
+            (State::App(_), Message::Run(msg)) => self.route_app_message(msg),
+            (State::PinEntry(_), Message::PinEntry(msg)) => self.route_pin_entry_message(msg),
             (State::PasskeyUnlock(_), Message::PasskeyUnlock(msg)) => {
-                match self.route_passkey_message(msg) {
-                    std::ops::ControlFlow::Continue(task) => task,
-                    std::ops::ControlFlow::Break(task) => return task,
-                }
+                self.route_passkey_message(msg)
             }
-            (State::DuressActive(_), Message::Duress(msg)) => {
-                match self.route_active_duress_message(msg) {
-                    std::ops::ControlFlow::Continue(task) => task,
-                    std::ops::ControlFlow::Break(task) => return task,
-                }
-            }
+            (State::DuressActive(_), Message::Duress(msg)) => self.route_active_duress_message(msg),
             (
                 _,
                 Message::DuressActivated {
@@ -5341,7 +5313,7 @@ impl Tab {
                     );
                 screen.queue_pending = queue_pending;
                 self.state = State::DuressActive(screen);
-                Task::none()
+                Continue(Task::none())
             }
             // Still in `PasskeyUnlock` — nothing mutates the tab state between
             // the assertion and the wallet load — so the screen is reused in
@@ -5350,15 +5322,16 @@ impl Tab {
             // rather than yanking them back.
             (State::PasskeyUnlock(unlock), Message::PasskeyRelocked) => {
                 unlock.relocked();
-                Task::none()
+                Continue(Task::none())
             }
             (_, msg @ Message::WalletsLoadedAfterUnlock { .. }) => {
-                match self.finish_wallets_after_unlock(msg) {
-                    std::ops::ControlFlow::Continue(task) => task,
-                    std::ops::ControlFlow::Break(task) => return task,
-                }
+                self.finish_wallets_after_unlock(msg)
             }
-            _ => Task::none(),
+            _ => Continue(Task::none()),
+        };
+        let result = match routed {
+            Continue(task) => task,
+            Break(task) => return task,
         };
         self.finish_tab_dispatch(result, nickname_flush)
     }
