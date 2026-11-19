@@ -687,108 +687,127 @@ impl DefineSpend {
         }
         match result {
             Ok(CreateSpendResult::Success { psbt, .. }) => {
-                self.warning = None;
-                self.fee_amount = Some(psbt.fee().expect("Valid fees"));
-                // Update selected coins for auto-selection (non-recovery case).
-                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
-                    let selected_coins: Vec<OutPoint> = psbt
-                        .unsigned_tx
-                        .input
-                        .iter()
-                        .map(|c| c.previous_output)
-                        .collect();
-                    // Mark coins as selected.
-                    for (coin, selected) in &mut self.coins {
-                        *selected = selected_coins.contains(&coin.outpoint);
-                    }
-                }
-                // As coin selection was successful, we can assume there is nothing left to select.
-                self.amount_left_to_select = Some(Amount::from_sat(0));
-                if let Some(i) = recipient_with_max {
-                    // If there's no change output, any excess must be below the dust threshold
-                    // and so the max available for this recipient is 0.
-                    let amount_sat = psbt
-                        .unsigned_tx
-                        .output
-                        .iter()
-                        .find(|o| {
-                            o.script_pubkey == max_address.clone().assume_checked().script_pubkey()
-                        })
-                        .map(|change_output| change_output.value.to_sat())
-                        .unwrap_or(0);
-                    let amount = match self.bitcoin_unit {
-                        BitcoinDisplayUnit::BTC => {
-                            Amount::from_sat(amount_sat).to_btc().to_string()
-                        }
-                        BitcoinDisplayUnit::Sats => amount_sat.to_string(),
-                    };
-                    if let Some(recipient) = self.recipients.get_mut(i) {
-                        recipient.update(
-                            self.network,
-                            self.bitcoin_unit,
-                            view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
-                        );
-                    }
-                }
+                self.apply_successful_redraft(psbt, max_address, recipient_with_max)
             }
             Ok(CreateSpendResult::InsufficientFunds { missing }) => {
-                self.fee_amount = None;
-                // To be sure, we exclude recovery transactions here, although they
-                // can't currently reach this part of code.
-                if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
-                    // The missing amount is based on all candidates for coin selection
-                    // being used, which are all owned coins.
-                    for (coin, selected) in &mut self.coins {
-                        *selected = coin_is_owned(coin);
-                    }
-                }
-                // Whether every available coin is already selected. Read the actual
-                // selection state so this is correct for manual and recovery spends,
-                // where the auto-selection branch above is skipped.
-                let all_selected = self.coins.iter().all(|(_, selected)| *selected);
-                if let Some(i) = recipient_with_max {
-                    // An output has MAX selected, but the available amount is lower than
-                    // the dust limit. Rather than showing a confusing near-zero amount,
-                    // surface an explicit under-dust message and clear the amount field.
-                    self.amount_left_to_select = None;
-                    let total_recipients = self.recipients.len();
-                    // Derive the threshold string from DUST_OUTPUT_SATS so the message
-                    // can never drift out of sync with the constant.
-                    let min_amount = format_btc_string(Amount::from_sat(DUST_OUTPUT_SATS).to_btc());
-                    if let Some(recipient) = self.recipients.get_mut(i) {
-                        recipient.dust_warning = Some(if all_selected {
-                            coincube_ui::localized_format!(
-                                "Minimum amount is {min_amount} BTC. Add funds to your wallet to spend the coin(s).",
-                                "El importe mínimo es {min_amount} BTC. Agrega fondos a tu cartera para gastar las monedas."
-                            )
-                        } else {
-                            coincube_ui::localized_format!(
-                                "Minimum amount is {min_amount} BTC. Select more coins to continue.",
-                                "El importe mínimo es {min_amount} BTC. Selecciona más monedas para continuar."
-                            )
-                        });
-                        recipient.update(
-                            self.network,
-                            self.bitcoin_unit,
-                            view::CreateSpendMessage::RecipientEdited(i, "amount", String::new()),
-                        );
-                        if total_recipients > 1 {
-                            recipient.estimated_max = None;
-                        } else if missing > DUST_OUTPUT_SATS {
-                            // NOTE: Not reachable in theory.
-                        } else {
-                            recipient.estimated_max =
-                                Some(Amount::from_sat(DUST_OUTPUT_SATS - missing));
-                        }
-                    }
-                } else {
-                    self.warning = None;
-                    self.amount_left_to_select = Some(Amount::from_sat(missing));
-                }
+                self.apply_insufficient_redraft(missing, recipient_with_max)
             }
             Err(e) => {
                 self.warning = Some(e);
                 self.fee_amount = None;
+            }
+        }
+    }
+
+    fn apply_successful_redraft(
+        &mut self,
+        psbt: Psbt,
+        max_address: Address<address::NetworkUnchecked>,
+        recipient_with_max: Option<usize>,
+    ) {
+        self.warning = None;
+        self.fee_amount = Some(psbt.fee().expect("Valid fees"));
+        // Update selected coins for auto-selection (non-recovery case).
+        if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
+            let selected_coins: Vec<OutPoint> = psbt
+                .unsigned_tx
+                .input
+                .iter()
+                .map(|c| c.previous_output)
+                .collect();
+            // Mark coins as selected.
+            for (coin, selected) in &mut self.coins {
+                *selected = selected_coins.contains(&coin.outpoint);
+            }
+        }
+        // As coin selection was successful, we can assume there is nothing left to select.
+        self.amount_left_to_select = Some(Amount::from_sat(0));
+        if let Some(i) = recipient_with_max {
+            // If there's no change output, any excess must be below the dust threshold
+            // and so the max available for this recipient is 0.
+            let amount_sat = psbt
+                .unsigned_tx
+                .output
+                .iter()
+                .find(|o| o.script_pubkey == max_address.clone().assume_checked().script_pubkey())
+                .map(|change_output| change_output.value.to_sat())
+                .unwrap_or(0);
+            let amount = match self.bitcoin_unit {
+                BitcoinDisplayUnit::BTC => Amount::from_sat(amount_sat).to_btc().to_string(),
+                BitcoinDisplayUnit::Sats => amount_sat.to_string(),
+            };
+            if let Some(recipient) = self.recipients.get_mut(i) {
+                recipient.update(
+                    self.network,
+                    self.bitcoin_unit,
+                    view::CreateSpendMessage::RecipientEdited(i, "amount", amount),
+                );
+            }
+        }
+    }
+
+    fn apply_insufficient_redraft(&mut self, missing: u64, recipient_with_max: Option<usize>) {
+        self.fee_amount = None;
+        // To be sure, we exclude recovery transactions here, although they
+        // can't currently reach this part of code.
+        if !self.is_user_coin_selection && self.recovery_timelock.is_none() {
+            // The missing amount is based on all candidates for coin selection
+            // being used, which are all owned coins.
+            for (coin, selected) in &mut self.coins {
+                *selected = coin_is_owned(coin);
+            }
+        }
+        // Whether every available coin is already selected. Read the actual
+        // selection state so this is correct for manual and recovery spends,
+        // where the auto-selection branch above is skipped.
+        let all_selected = self.coins.iter().all(|(_, selected)| *selected);
+        if let Some(i) = recipient_with_max {
+            // An output has MAX selected, but the available amount is lower than
+            // the dust limit. Rather than showing a confusing near-zero amount,
+            // surface an explicit under-dust message and clear the amount field.
+            self.amount_left_to_select = None;
+            let total_recipients = self.recipients.len();
+            // Derive the threshold string from DUST_OUTPUT_SATS so the message
+            // can never drift out of sync with the constant.
+            let min_amount = format_btc_string(Amount::from_sat(DUST_OUTPUT_SATS).to_btc());
+            self.apply_under_dust_warning(i, total_recipients, min_amount, all_selected, missing);
+        } else {
+            self.warning = None;
+            self.amount_left_to_select = Some(Amount::from_sat(missing));
+        }
+    }
+
+    fn apply_under_dust_warning(
+        &mut self,
+        i: usize,
+        total_recipients: usize,
+        min_amount: String,
+        all_selected: bool,
+        missing: u64,
+    ) {
+        if let Some(recipient) = self.recipients.get_mut(i) {
+            recipient.dust_warning = Some(if all_selected {
+                coincube_ui::localized_format!(
+                    "Minimum amount is {min_amount} BTC. Add funds to your wallet to spend the coin(s).",
+                    "El importe mínimo es {min_amount} BTC. Agrega fondos a tu cartera para gastar las monedas."
+                )
+            } else {
+                coincube_ui::localized_format!(
+                    "Minimum amount is {min_amount} BTC. Select more coins to continue.",
+                    "El importe mínimo es {min_amount} BTC. Selecciona más monedas para continuar."
+                )
+            });
+            recipient.update(
+                self.network,
+                self.bitcoin_unit,
+                view::CreateSpendMessage::RecipientEdited(i, "amount", String::new()),
+            );
+            if total_recipients > 1 {
+                recipient.estimated_max = None;
+            } else if missing > DUST_OUTPUT_SATS {
+                // NOTE: Not reachable in theory.
+            } else {
+                recipient.estimated_max = Some(Amount::from_sat(DUST_OUTPUT_SATS - missing));
             }
         }
     }
