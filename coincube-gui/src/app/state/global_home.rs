@@ -3841,24 +3841,29 @@ impl GlobalHome {
                     WalletKind::Vault => "Amount exceeds Vault balance",
                 });
             } else {
-                let effective_min = effective_transfer_min_sat(direction);
-                let effective_max = effective_transfer_max_sat(direction);
-                if let Some(min_sat) = effective_min {
-                    if entered_sat < min_sat {
-                        valid = false;
-                        warning = Some("Amount below minimum limits");
-                    } else if let Some(max_sat) = effective_max {
-                        if entered_sat > max_sat {
-                            valid = false;
-                            warning = Some("Amount above maximum limits");
-                        }
-                    }
-                }
+                warning = Self::transfer_amount_limit_warning(direction, entered_sat);
+                valid = warning.is_none();
             }
         }
 
         self.entered_amount.valid = valid;
         self.entered_amount.warning = warning;
+    }
+
+    fn transfer_amount_limit_warning(
+        direction: TransferDirection,
+        entered_sat: u64,
+    ) -> Option<&'static str> {
+        let effective_min = effective_transfer_min_sat(direction);
+        let effective_max = effective_transfer_max_sat(direction);
+        let min_sat = effective_min?;
+        if entered_sat < min_sat {
+            Some("Amount below minimum limits")
+        } else if effective_max.is_some_and(|max_sat| entered_sat > max_sat) {
+            Some("Amount above maximum limits")
+        } else {
+            None
+        }
     }
 
     /// The auto-claimed deposit has landed for `amount_sat`: mark the
