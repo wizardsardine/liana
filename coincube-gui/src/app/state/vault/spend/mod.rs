@@ -330,6 +330,19 @@ impl State for CreateSpendPanel {
             self.return_to_previous_step();
         }
 
+        // A step shown again (e.g. a recovery's DefineSpend after Back then
+        // Next) requests what was in flight when it was left.
+        let resume_task = if matches!(
+            message,
+            Message::View(view::Message::Next | view::Message::Previous)
+        ) {
+            self.steps
+                .get_mut(self.current)
+                .map_or_else(Task::none, |step| step.resume())
+        } else {
+            Task::none()
+        };
+
         if let Message::CoinsTipHeight(Ok(coins), Ok(tip)) = &message {
             // Save the coins and tip for use in the `load()` method.
             self.coins = coins.clone();
@@ -354,7 +367,11 @@ impl State for CreateSpendPanel {
             };
 
         if let Some(step) = self.steps.get_mut(self.current) {
-            return Task::batch([feerate_task, step.update(daemon, cache, message)]);
+            return Task::batch([
+                resume_task,
+                feerate_task,
+                step.update(daemon, cache, message),
+            ]);
         }
 
         Task::none()
@@ -437,6 +454,11 @@ impl State for CreateSpendPanel {
         // this panel loads, so amounts/fees compute immediately. Recovery
         // starts on the path-selection step, which wouldn't consume it, so it
         // fires the same default from `update` on entering DefineSpend instead.
+        // `reload` runs only for the panel on screen: the step shown again
+        // requests what was in flight when the panel was left.
+        if let Some(step) = self.steps.get_mut(self.current) {
+            tasks.push(step.resume());
+        }
         if !self.initial_feerate_requested && !self.draft.is_recovery() {
             self.initial_feerate_requested = true;
             tasks.push(Task::done(Message::View(view::Message::CreateSpend(
