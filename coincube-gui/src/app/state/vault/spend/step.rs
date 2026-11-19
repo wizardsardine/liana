@@ -3088,6 +3088,195 @@ mod tests {
         assert!(!state.draft_pending);
     }
 
+    /// Drive one debounced redraft through `update` the way the runtime does:
+    /// fire the debounce tick, run the dispatched draft against `daemon`, and
+    /// return its `RedraftResult` for the caller to feed back.
+    async fn land_redraft(
+        state: &mut DefineSpend,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+    ) -> Message {
+        use iced_runtime::futures::futures::StreamExt;
+        let seq = state.redraft_seq;
+        let task = state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::RedraftDebounce(seq),
+        );
+        let mut results: Vec<Message> = iced_runtime::task::into_stream(task)
+            .expect("a dispatched draft")
+            .filter_map(|action| async move {
+                match action {
+                    iced_runtime::Action::Output(message) => Some(message),
+                    _ => None,
+                }
+            })
+            .collect()
+            .await;
+        assert_eq!(results.len(), 1, "one draft result");
+        results.pop().unwrap()
+    }
+
+    fn redraft_message_clone(message: &Message) -> Message {
+        match message {
+            Message::RedraftResult {
+                seq,
+                max_address,
+                recipient_with_max,
+                destinations_is_empty,
+                result: Ok(result),
+            } => Message::RedraftResult {
+                seq: *seq,
+                max_address: max_address.clone(),
+                recipient_with_max: *recipient_with_max,
+                destinations_is_empty: *destinations_is_empty,
+                result: Ok(result.clone()),
+            },
+            other => panic!("expected a successful draft, got {:?}", other),
+        }
+    }
+
+    /// A draft spending exactly `inputs` (outpoint, value) with one 1,000 sat
+    /// payment.
+    fn draft_spending(inputs: &[(OutPoint, u64)]) -> serde_json::Value {
+        use coincube_core::miniscript::bitcoin::{psbt::Input, TxIn, TxOut};
+        let mut psbt = prepared_outputs(&[1_000]);
+        psbt.unsigned_tx.input = inputs
+            .iter()
+            .map(|(outpoint, _)| TxIn {
+                previous_output: *outpoint,
+                ..Default::default()
+            })
+            .collect();
+        psbt.inputs = inputs
+            .iter()
+            .map(|(_, sats)| Input {
+                witness_utxo: Some(TxOut {
+                    value: Amount::from_sat(*sats),
+                    script_pubkey: address().script_pubkey(),
+                }),
+                ..Default::default()
+            })
+            .collect();
+        serde_json::to_value(CreateSpendResult::Success {
+            psbt,
+            warnings: vec![],
+        })
+        .unwrap()
+    }
+
+    /// Automatic, end to end: after the user picked coins, choosing Automatic
+    /// redrafts with an empty outpoint list (the daemon's automatic coin
+    /// selection), and the coins that draft spends replace the user's ticks.
+    #[tokio::test]
+    async fn automatic_redrafts_with_automatic_coin_selection() {
+        use serde_json::json;
+        let mut state = branta_form();
+        state.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = state.wallet.preview_change_address();
+        // The user's pick: both coins, by hand.
+        let idle: Arc<dyn Daemon + Sync + Send> = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        drop(state.update(
+            idle.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::SelectCoin(1),
+            )),
+        ));
+        assert!(state.is_user_coin_selection);
+        assert!(state.coins.iter().all(|(_, selected)| *selected));
+
+        drop(state.update(
+            idle,
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::AutomaticCoins,
+            )),
+        ));
+        assert!(state.drafting());
+        // Automatic selection: no outpoints passed, the daemon chooses. It
+        // picks only the second coin.
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        let result = land_redraft(&mut state, daemon.clone()).await;
+        drop(state.update(daemon, &Cache::default(), result));
+
+        assert!(!state.drafting());
+        assert!(!state.coin_list_shown());
+        assert_eq!(
+            state
+                .coins
+                .iter()
+                .map(|(coin, selected)| (coin.outpoint, *selected))
+                .collect::<Vec<_>>(),
+            vec![(outpoint(1), false), (outpoint(2), true)],
+            "the automatic draft's coins replace the user's"
+        );
+        assert_eq!(state.amount_left_to_select, Some(Amount::ZERO));
+        assert!(state.is_valid);
+    }
+
+    /// A draft that was running when the user pressed Clear must not land on
+    /// the cleared form, even once the cleared form has drafted again.
+    #[tokio::test]
+    async fn a_draft_from_before_clear_is_ignored() {
+        use serde_json::json;
+        let mut state = branta_form();
+        state.coins.push((coin(2, 80_000, Some(90)), false));
+        let destinations = json!({ MAINNET_ADDR: 1_000 });
+        let change = state.wallet.preview_change_address();
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(crate::daemon::client::Coincubed::new(
+                crate::utils::mock::Daemon::new(vec![(
+                    Some(json!({"method": "createspend", "params": [destinations, [], 2, change]})),
+                    Ok(draft_spending(&[(outpoint(2), 80_000)])),
+                )])
+                .run(),
+            ));
+        drop(state.schedule_redraft());
+        let stale = land_redraft(&mut state, daemon.clone()).await;
+
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            Message::View(view::Message::CreateSpend(view::CreateSpendMessage::Clear)),
+        ));
+        let selection = |state: &DefineSpend| -> Vec<bool> {
+            state.coins.iter().map(|(_, selected)| *selected).collect()
+        };
+        let cleared_coins = selection(&state);
+        // The cleared form schedules a draft of its own. Before Clear kept the
+        // generation counting, this first post-Clear draft reused the old
+        // draft's seq, so the old result landed on the cleared form.
+        drop(state.schedule_redraft());
+        drop(state.update(
+            daemon.clone(),
+            &Cache::default(),
+            redraft_message_clone(&stale),
+        ));
+        assert_eq!(state.fee_amount, None, "no fee from the old draft");
+        assert_eq!(state.amount_left_to_select, None);
+        assert_eq!(
+            selection(&state),
+            cleared_coins,
+            "the old draft's coins are not applied"
+        );
+        // Nor does its debounce tick redraft the cleared form.
+        let Message::RedraftResult { seq, .. } = &stale else {
+            unreachable!()
+        };
+        let task = state.update(daemon, &Cache::default(), Message::RedraftDebounce(*seq));
+        assert_eq!(task.units(), 0, "a pre-Clear debounce tick does nothing");
+    }
+
     /// Automatic hands the choice back: Prepare waits for the automatic
     /// draft instead of building from the coins the user had ticked.
     #[tokio::test]
