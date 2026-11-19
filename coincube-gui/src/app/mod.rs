@@ -5413,27 +5413,7 @@ impl App {
     fn subscribe_to_vault_sync(&self, subscriptions: &mut Vec<Subscription<Message>>) {
         // Only create tick subscription if we have a vault (daemon exists)
         if self.daemon.is_some() {
-            subscriptions.push(
-                time::every(Duration::from_secs(
-                    match sync_status(
-                        self.daemon_backend(),
-                        self.cache.blockheight(),
-                        self.cache.sync_progress(),
-                        self.cache.last_poll_timestamp(),
-                        self.cache.last_poll_at_startup,
-                        self.cache.history_sync(),
-                    ) {
-                        SyncStatus::BlockchainSync(_) => 5, // Only applies to local backends
-                        SyncStatus::WalletFullScan { .. } | SyncStatus::LatestWalletSync => 3,
-                        // Polls are being retried; refresh often enough to notice recovery.
-                        SyncStatus::SyncFailing { .. } => 5,
-                        // For the rescan feature, we refresh often enough to give
-                        // user an up-to-date view of the rescan progress.
-                        SyncStatus::Synced => 10,
-                    },
-                ))
-                .map(|_| Message::Tick),
-            );
+            subscriptions.push(time::every(self.daemon_poll_interval()).map(|_| Message::Tick));
         }
 
         // Poll pending or active local Bitcoind progress on a fixed interval,
@@ -5703,65 +5683,8 @@ impl App {
         }
     }
 
-    pub fn on_tick(&mut self) -> Task<Message> {
-        let local_feature_task = if self.cache.chain().is_blake2b()
-            && !self.requires_connect()
-            && self.local_feature_check.is_none()
-            && self
-                .local_feature_checked_at
-                .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
-        {
-            self.fork_feature_check()
-        } else {
-            Task::none()
-        };
-        let price_task = self.btcb2_price_task();
-        // Skip tick processing if no vault is configured
-        if self.daemon.is_none() {
-            tracing::debug!("Skipping tick - no vault configured");
-            return Task::batch([price_task, local_feature_task]);
-        }
-        // Skip while a backend switch is in flight: `self.daemon` still points at
-        // the daemon the off-thread switch is stopping, so polling it here would
-        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
-        // the new daemon resumes normally.
-        if self.daemon_switch_in_progress {
-            return Task::batch([price_task, local_feature_task]);
-        }
-
-        let tick = std::time::Instant::now();
-        let mut tasks = if let Some(daemon) = &self.daemon {
-            if let Some(panel) = self.panels.current_mut() {
-                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
-            } else {
-                vec![]
-            }
-        } else {
-            vec![]
-        };
-
-        tasks.push(price_task);
-        tasks.push(local_feature_task);
-
-        // While an imported Vault's history scan runs, its import panel owns
-        // the snapshot (scan progress, discovery coverage, the Cube
-        // attachment). Once the scan is complete it polls like any Vault; the
-        // panel's own slower refresh still watches for a new scan.
-        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
-            let client = self.authenticated_coincube_client();
-            let epoch = self.panels.connect.account.session_generation();
-            if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
-                tasks.push(panel.update_view(
-                    state::imported_bitcoin::ImportMessage::Refresh,
-                    client,
-                    epoch,
-                ));
-            }
-            return Task::batch(tasks);
-        }
-
-        // Check if we need to update the daemon cache.
-        let duration = Duration::from_secs(
+    fn daemon_poll_interval(&self) -> Duration {
+        Duration::from_secs(
             match sync_status(
                 self.daemon_backend(),
                 self.cache.blockheight(),
@@ -5778,8 +5701,11 @@ impl App {
                 // up-to-date view of the rescan progress.
                 SyncStatus::Synced => 10,
             },
-        );
-        if self.cache.daemon_cache.last_tick + duration <= tick {
+        )
+    }
+
+    fn schedule_daemon_poll(&mut self, tick: std::time::Instant, tasks: &mut Vec<Task<Message>>) {
+        if self.cache.daemon_cache.last_tick + self.daemon_poll_interval() <= tick {
             // We have to update here the last_tick to prevent that during a burst of events
             // there is a race condition with the Task and too much tasks are triggered.
             self.cache.daemon_cache.last_tick = tick;
@@ -5838,6 +5764,66 @@ impl App {
                 }
             }
         }
+    }
+
+    pub fn on_tick(&mut self) -> Task<Message> {
+        let local_feature_task = if self.cache.chain().is_blake2b()
+            && !self.requires_connect()
+            && self.local_feature_check.is_none()
+            && self
+                .local_feature_checked_at
+                .is_none_or(|at| at.elapsed() >= Duration::from_secs(60))
+        {
+            self.fork_feature_check()
+        } else {
+            Task::none()
+        };
+        let price_task = self.btcb2_price_task();
+        // Skip tick processing if no vault is configured
+        if self.daemon.is_none() {
+            tracing::debug!("Skipping tick - no vault configured");
+            return Task::batch([price_task, local_feature_task]);
+        }
+        // Skip while a backend switch is in flight: `self.daemon` still points at
+        // the daemon the off-thread switch is stopping, so polling it here would
+        // hit a stopped poller/RPC. The next tick after `DaemonRestarted` swaps in
+        // the new daemon resumes normally.
+        if self.daemon_switch_in_progress {
+            return Task::batch([price_task, local_feature_task]);
+        }
+
+        let tick = std::time::Instant::now();
+        let mut tasks = if let Some(daemon) = &self.daemon {
+            if let Some(panel) = self.panels.current_mut() {
+                vec![panel.update(Some(daemon.clone()), &self.cache, Message::Tick)]
+            } else {
+                vec![]
+            }
+        } else {
+            vec![]
+        };
+
+        tasks.push(price_task);
+        tasks.push(local_feature_task);
+
+        // While an imported Vault's history scan runs, its import panel owns
+        // the snapshot (scan progress, discovery coverage, the Cube
+        // attachment). Once the scan is complete it polls like any Vault; the
+        // panel's own slower refresh still watches for a new scan.
+        if self.cache.has_imported_bitcoin && !self.imported_vault_ready() {
+            let client = self.authenticated_coincube_client();
+            let epoch = self.panels.connect.account.session_generation();
+            if let Some(panel) = self.panels.imported_bitcoin.as_mut() {
+                tasks.push(panel.update_view(
+                    state::imported_bitcoin::ImportMessage::Refresh,
+                    client,
+                    epoch,
+                ));
+            }
+            return Task::batch(tasks);
+        }
+
+        self.schedule_daemon_poll(tick, &mut tasks);
 
         Task::batch(tasks)
     }
