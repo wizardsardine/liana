@@ -1743,6 +1743,67 @@ impl Tab {
         task
     }
 
+    fn preprocess_update(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
+
+        match message {
+            Message::LocalDuress(proof) => Break(self.activate_verified_seed_export_duress(proof)),
+            Message::Run(app::Message::View(app::view::Message::DuressActivateLocal(proof))) => {
+                Break(self.activate_verified_seed_export_duress(proof))
+            }
+            Message::OpeningTick(now) => {
+                self.sync_opening(now);
+                Break(Task::none())
+            }
+            Message::CancelOpening => Break(self.cancel_opening()),
+            Message::OpenWithoutSpark => {
+                if let Some(opening) = self.opening.as_mut() {
+                    opening.without_spark = true;
+                }
+                self.sync_opening(Instant::now());
+                Break(Task::none())
+            }
+            message @ Message::WalletsLoadedAfterUnlock { .. } if self.opening_cancelled => {
+                // A load the user cancelled finished anyway: drop it and
+                // stop anything it started, as for a closed loader.
+                discard_closed_loader_result(message);
+                Break(Task::none())
+            }
+            Message::UnlockMotionTick(now) => {
+                if self.unlock_motion.is_some_and(|started| {
+                    home::launcher_presenter::unlock_turn_progress(started, now) >= 1.0
+                }) {
+                    self.unlock_motion = None;
+                }
+                Break(Task::none())
+            }
+            Message::AppAsync(generation, message) => {
+                if !self.accepts_app_generation(generation) {
+                    discard_closed_loader_result(*message);
+                    return Break(Task::none());
+                }
+                Continue(*message)
+            }
+            Message::ForkAsync(generation, message) => {
+                if generation != self.fork_session_generation {
+                    discard_closed_loader_result(*message);
+                    return Break(Task::none());
+                }
+                Continue(*message)
+            }
+            Message::ForkTaskFinished(generation, id) => {
+                if generation == self.fork_session_generation {
+                    self.fork_tasks.remove(&id);
+                }
+                Break(Task::none())
+            }
+            message => Continue(message),
+        }
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         if let (State::Home(home), Message::Launch(launch)) = (&self.state, &message) {
             if !home.accepts_launcher_message(launch) {
@@ -1764,58 +1825,9 @@ impl Tab {
                 ));
             }
         }
-        let message = match message {
-            Message::LocalDuress(proof) => return self.activate_verified_seed_export_duress(proof),
-            Message::Run(app::Message::View(app::view::Message::DuressActivateLocal(proof))) => {
-                return self.activate_verified_seed_export_duress(proof);
-            }
-            Message::OpeningTick(now) => {
-                self.sync_opening(now);
-                return Task::none();
-            }
-            Message::CancelOpening => return self.cancel_opening(),
-            Message::OpenWithoutSpark => {
-                if let Some(opening) = self.opening.as_mut() {
-                    opening.without_spark = true;
-                }
-                self.sync_opening(Instant::now());
-                return Task::none();
-            }
-            message @ Message::WalletsLoadedAfterUnlock { .. } if self.opening_cancelled => {
-                // A load the user cancelled finished anyway: drop it and
-                // stop anything it started, as for a closed loader.
-                discard_closed_loader_result(message);
-                return Task::none();
-            }
-            Message::UnlockMotionTick(now) => {
-                if self.unlock_motion.is_some_and(|started| {
-                    home::launcher_presenter::unlock_turn_progress(started, now) >= 1.0
-                }) {
-                    self.unlock_motion = None;
-                }
-                return Task::none();
-            }
-            Message::AppAsync(generation, message) => {
-                if !self.accepts_app_generation(generation) {
-                    discard_closed_loader_result(*message);
-                    return Task::none();
-                }
-                *message
-            }
-            Message::ForkAsync(generation, message) => {
-                if generation != self.fork_session_generation {
-                    discard_closed_loader_result(*message);
-                    return Task::none();
-                }
-                *message
-            }
-            Message::ForkTaskFinished(generation, id) => {
-                if generation == self.fork_session_generation {
-                    self.fork_tasks.remove(&id);
-                }
-                return Task::none();
-            }
-            message => message,
+        let message = match self.preprocess_update(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
         };
         if matches!(
             message,
