@@ -200,7 +200,9 @@ jobs:
       # Windows
       # --------------------------------------------------
 
-      - name: Install Windows dependencies
+      # This run builds the commit its workflow comes from, so the action
+      # is always in the checkout.
+      - name: Install protoc (Windows)
         if: matrix.platform == 'windows'
         uses: ./.github/actions/install-protoc-windows
 
