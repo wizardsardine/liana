@@ -2311,8 +2311,6 @@ pub(crate) fn persist_cube_master_seed(
     }
 }
 
-/// Persist a seed-only (Vault-less) restore and ensure its GUI config exists.
-/// Retries use the same exact-file credential and mnemonic check as fresh Cubes.
 fn persist_no_descriptor_install(ctx: &Context) -> Result<(), Error> {
     // We must persist the recovered signer so the Cube signer and
     // Spark can load it from the datadir on next startup.
@@ -2349,6 +2347,8 @@ fn persist_no_descriptor_install(ctx: &Context) -> Result<(), Error> {
     )
 }
 
+/// Persist a seed-only (Vault-less) restore and ensure its GUI config exists.
+/// Retries use the same exact-file credential and mnemonic check as fresh Cubes.
 fn persist_seed_only_install(
     recovered: &Signer,
     coincube_directory: &CoincubeDirectory,
