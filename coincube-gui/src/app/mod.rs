@@ -1629,6 +1629,54 @@ pub(crate) fn describe_rollback(
     msg
 }
 
+fn arm_duress_marker(
+    root: &std::path::Path,
+    cube: &settings::CubeSettings,
+    duress_pin: &str,
+) -> Result<ArmedMarker, String> {
+    let secret = crate::services::unlock::device_secret::load_optional(&cube.id).map_err(|e| {
+        format!(
+            "Couldn't reach your system keychain to arm duress on Cube '{}': {e}",
+            cube.name
+        )
+    })?;
+    // Reuse the name already recorded for this Cube when re-enrolling,
+    // so a second enrolment replaces the marker in place instead of
+    // leaving the first one orphaned and unfindable. Otherwise mint a
+    // fresh unpredictable name stamped with this Cube's *seed file's*
+    // timestamp, so the two files agree (X7).
+    let reused_slot = cube.duress_slot_file.is_some();
+    let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
+        crate::services::unlock::marker::new_file_name(
+            crate::services::unlock::marker::seed_timestamp(
+                root,
+                cube.network,
+                cube.master_signer_fingerprint,
+                cube.created_at,
+            ),
+        )
+    });
+    // The marker must use the *same* wire version and key material as
+    // this Cube's seed file, or the pair stops being indistinguishable.
+    crate::services::unlock::marker::write(
+        root,
+        cube.network,
+        &cube.id,
+        &file_name,
+        duress_pin,
+        secret.as_ref(),
+    )
+    .map_err(|e| format!("Couldn't arm the duress PIN on Cube '{}' ({e}).", cube.name))?;
+    Ok(ArmedMarker {
+        root: root.to_path_buf(),
+        cube_id: cube.id.clone(),
+        cube_name: cube.name.clone(),
+        network: cube.network,
+        file_name,
+        reused_slot,
+    })
+}
+
 pub(crate) async fn persist_duress_enrollment(
     datadir: CoincubeDirectory,
     duress_pin: zeroize::Zeroizing<String>,
@@ -1703,60 +1751,16 @@ pub(crate) async fn persist_duress_enrollment(
     let mut armed_cubes: Vec<ArmedMarker> = Vec::new();
     let mut arm_failure: Option<String> = None;
 
-    'arming: for (i, network_dir) in network_dirs.iter().enumerate() {
-        for cube in &prior_settings[i].cubes {
-            let secret = match crate::services::unlock::device_secret::load_optional(&cube.id) {
-                Ok(s) => s,
-                Err(e) => {
-                    arm_failure = Some(format!(
-                        "Couldn't reach your system keychain to arm duress on Cube '{}': {e}",
-                        cube.name
-                    ));
+    'arming: for settings in &prior_settings {
+        for cube in &settings.cubes {
+            match arm_duress_marker(&root, cube, &duress_pin) {
+                Ok(marker) => armed_cubes.push(marker),
+                Err(err) => {
+                    arm_failure = Some(err);
                     break 'arming;
                 }
-            };
-            // Reuse the name already recorded for this Cube when re-enrolling,
-            // so a second enrolment replaces the marker in place instead of
-            // leaving the first one orphaned and unfindable. Otherwise mint a
-            // fresh unpredictable name stamped with this Cube's *seed file's*
-            // timestamp, so the two files agree (X7).
-            let reused_slot = cube.duress_slot_file.is_some();
-            let file_name = cube.duress_slot_file.clone().unwrap_or_else(|| {
-                crate::services::unlock::marker::new_file_name(
-                    crate::services::unlock::marker::seed_timestamp(
-                        &root,
-                        cube.network,
-                        cube.master_signer_fingerprint,
-                        cube.created_at,
-                    ),
-                )
-            });
-            // The marker must use the *same* wire version and key material as
-            // this Cube's seed file, or the pair stops being indistinguishable.
-            if let Err(e) = crate::services::unlock::marker::write(
-                &root,
-                cube.network,
-                &cube.id,
-                &file_name,
-                &duress_pin,
-                secret.as_ref(),
-            ) {
-                arm_failure = Some(format!(
-                    "Couldn't arm the duress PIN on Cube '{}' ({e}).",
-                    cube.name
-                ));
-                break 'arming;
             }
-            armed_cubes.push(ArmedMarker {
-                root: root.clone(),
-                cube_id: cube.id.clone(),
-                cube_name: cube.name.clone(),
-                network: cube.network,
-                file_name,
-                reused_slot,
-            });
         }
-        let _ = network_dir;
     }
 
     if let Some(msg) = arm_failure {
