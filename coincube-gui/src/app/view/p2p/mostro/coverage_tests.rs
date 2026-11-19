@@ -111,6 +111,52 @@ fn chat_and_acknowledgements_do_not_replace_trade_status() {
 }
 
 #[test]
+fn saved_wire_status_restores_buyer_invoice_view_without_a_relay_order() {
+    let mut saved = session();
+    saved
+        .messages
+        .push(message(10, "waiting-buyer-invoice", None));
+    let restored = trade_from_session(&saved);
+    assert_eq!(restored.status, TradeStatus::WaitingBuyerInvoice);
+    assert_eq!(
+        restored.last_dm_action.as_deref(),
+        Some("WaitingBuyerInvoice")
+    );
+    assert!(restored.countdown_start_ts.is_none());
+    assert_eq!(saved.messages[0].action, "waiting-buyer-invoice");
+}
+
+#[test]
+fn chat_dispatch_rejects_a_changed_recipient_from_reloaded_trade() {
+    let mut saved = session();
+    let original = Keys::generate().public_key();
+    let changed = Keys::generate().public_key();
+    let original_hex = original.to_hex();
+    let changed_hex = changed.to_hex();
+    saved.counterparty_trade_pubkey = Some(changed_hex.clone());
+    saved.admin_trade_pubkey = Some(original_hex.clone());
+    let reloaded: TradeSession =
+        serde_json::from_str(&serde_json::to_string(&saved).unwrap()).unwrap();
+
+    assert_eq!(
+        chat_recipient(&reloaded, ChatTarget::Peer, Some(&original_hex)).unwrap_err(),
+        CHAT_RECIPIENT_CHANGED
+    );
+    assert_eq!(
+        chat_recipient(&reloaded, ChatTarget::Admin, Some(&changed_hex)).unwrap_err(),
+        CHAT_RECIPIENT_CHANGED
+    );
+    assert_eq!(
+        chat_recipient(&reloaded, ChatTarget::Peer, Some(&changed_hex)).unwrap(),
+        (changed, "chat")
+    );
+    assert_eq!(
+        chat_recipient(&reloaded, ChatTarget::Admin, Some(&original_hex)).unwrap(),
+        (original, "dispute chat")
+    );
+}
+
+#[test]
 fn hold_invoice_uses_latest_valid_payment_payload_only() {
     let mut s = session();
     for action in ["PayInvoice", "WaitingSellerToPay", "BuyerTookOrder"] {

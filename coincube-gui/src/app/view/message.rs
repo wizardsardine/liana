@@ -3095,6 +3095,7 @@ pub enum P2PMessage {
     CloseChat,
     ChatInputEdited(String),
     SendChatMessage,
+    RetryChatMessage(uuid::Uuid),
     ChatMessageSent(Result<(), String>),
     ToggleChatTradeInfo,
     ToggleChatUserInfo,
@@ -3103,6 +3104,7 @@ pub enum P2PMessage {
     CloseDisputeChat,
     DisputeChatInputEdited(String),
     SendDisputeChatMessage,
+    RetryDisputeChatMessage(uuid::Uuid),
     DisputeChatMessageSent(Result<(), String>),
     // Chat list
     ChatListTabMessages,
