@@ -2092,15 +2092,25 @@ impl Tab {
         .map(|(install, command)| (Box::new(install), command))
     }
 
-    fn update_inner(&mut self, message: Message) -> Task<Message> {
-        use crate::app::settings::global::GlobalSettings;
+    fn allow_tab_launch_exit(&mut self, launch: &home::Message) -> bool {
+        if let Err(error) = self.validate_home_exit(launch) {
+            if let State::Home(home) = &mut self.state {
+                home.set_error(error);
+            }
+            return false;
+        }
+        true
+    }
+
+    fn prepare_tab_update(
+        &mut self,
+        message: Message,
+    ) -> std::ops::ControlFlow<Task<Message>, Message> {
+        use std::ops::ControlFlow::{Break, Continue};
         let message = match message {
             Message::Launch(floor @ home::Message::RunFromFloor(..)) => {
-                if let Err(error) = self.validate_home_exit(&floor) {
-                    if let State::Home(home) = &mut self.state {
-                        home.set_error(error);
-                    }
-                    return Task::none();
+                if !self.allow_tab_launch_exit(&floor) {
+                    return Break(Task::none());
                 }
                 let home::Message::RunFromFloor(root, config, chain, cube, _) = floor else {
                     unreachable!();
@@ -2118,7 +2128,7 @@ impl Tab {
             }
             Message::ForkInstallCompleted(generation, msg) => {
                 if generation != self.fork_session_generation {
-                    return Task::none();
+                    return Break(Task::none());
                 }
                 self.fork_save_task.take();
                 Message::Install(msg)
@@ -2133,14 +2143,46 @@ impl Tab {
                     | home::Message::RunToRecovery(..)
                     | home::Message::Install(..)
             ) {
-                if let Err(error) = self.validate_home_exit(launch) {
-                    if let State::Home(home) = &mut self.state {
-                        home.set_error(error);
-                    }
-                    return Task::none();
+                if !self.allow_tab_launch_exit(launch) {
+                    return Break(Task::none());
                 }
             }
         }
+        Continue(message)
+    }
+
+    fn finish_tab_dispatch(
+        &mut self,
+        result: Task<Message>,
+        nickname_flush: Option<app::SparkNicknameWrite>,
+    ) -> Task<Message> {
+        self.sync_theme_mode();
+        // Only if the App is gone: a refused Set up Vault keeps it, and its
+        // field still saves as usual.
+        let nickname_flush = nickname_flush
+            .filter(|_| !matches!(self.state, State::App(_)))
+            .map(|write| {
+                Task::perform(write.run(), |result| {
+                    if let Err(error) = result {
+                        log::error!("Couldn't save the Spark nickname: {}", error);
+                    }
+                })
+                .discard()
+            })
+            .unwrap_or_else(Task::none);
+        // After the transition, not before: this is the point where the arm
+        // above has already decided which state the tab is in, so a warning
+        // parked on the way to `Loader` is released by whichever later update
+        // finally reaches `App`.
+        Task::batch([result, self.flush_migration_warning(), nickname_flush])
+    }
+
+    fn update_inner(&mut self, message: Message) -> Task<Message> {
+        use crate::app::settings::global::GlobalSettings;
+        let message = match self.prepare_tab_update(message) {
+            std::ops::ControlFlow::Continue(message) => message,
+            std::ops::ControlFlow::Break(task) => return task,
+        };
 
         // A Spark nickname this App still owes is written when the tab
         // replaces the App (Lock Cube, Set up Vault), as leaving its tab
@@ -4907,25 +4949,7 @@ impl Tab {
             }
             _ => Task::none(),
         };
-        self.sync_theme_mode();
-        // Only if the App is gone: a refused Set up Vault keeps it, and its
-        // field still saves as usual.
-        let nickname_flush = nickname_flush
-            .filter(|_| !matches!(self.state, State::App(_)))
-            .map(|write| {
-                Task::perform(write.run(), |result| {
-                    if let Err(error) = result {
-                        log::error!("Couldn't save the Spark nickname: {}", error);
-                    }
-                })
-                .discard()
-            })
-            .unwrap_or_else(Task::none);
-        // After the transition, not before: this is the point where the arm
-        // above has already decided which state the tab is in, so a warning
-        // parked on the way to `Loader` is released by whichever later update
-        // finally reaches `App`.
-        Task::batch([result, self.flush_migration_warning(), nickname_flush])
+        self.finish_tab_dispatch(result, nickname_flush)
     }
 
     pub fn subscription(&self, foreground: bool) -> Subscription<Message> {
