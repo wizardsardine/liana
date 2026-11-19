@@ -1260,54 +1260,9 @@ impl State for GlobalHome {
                         if self.current_view.step == 1
                             && self.transfer_page != TransferPage::Wallets =>
                     {
-                        let other = self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube());
-                        self.transfer_page = match self.transfer_page {
-                            TransferPage::OtherCube => {
-                                self.reset_other_cube();
-                                TransferPage::Wallets
-                            }
-                            TransferPage::Unlock => {
-                                self.lock_other_cube();
-                                TransferPage::OtherCube
-                            }
-                            TransferPage::Amount if other => TransferPage::Unlock,
-                            _ => TransferPage::Wallets,
-                        };
-                        Task::none()
+                        self.previous_transfer_substep()
                     }
-                    HomeMessage::PreviousStep => {
-                        if self.is_sending
-                            && self
-                                .transfer_direction
-                                .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            return Task::none();
-                        }
-                        // Any prepared/signed artifact from the confirm screen
-                        // is bound to the amount + destination that were in
-                        // effect when it was built. Stepping back allows the
-                        // user to edit those, so invalidate here — otherwise a
-                        // returning user would land on the confirm screen with
-                        // a stale "Confirm & Broadcast" button and broadcast
-                        // the previous PSBT against a changed amount.
-                        self.invalidate_transfer_destination();
-                        // Mirror `BackToHome`'s reset: if we left the confirm
-                        // screen with a stuck `is_sending` (e.g. an error path
-                        // that didn't clear it), leaving it set would disable
-                        // all confirm buttons on re-entry. The Previous button
-                        // is also view-level gated on `!is_sending` so a
-                        // successful in-flight broadcast can't race this
-                        // handler into advancing the step machine.
-                        self.is_sending = false;
-                        self.current_view.previous();
-                        // Back on Amount, Max shows the whole balance again.
-                        if let Some(source) = self.transfer_max.filter(|_| self.sends_max()) {
-                            self.set_entered_amount(self.max_transfer_amount(source, cache));
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::PreviousStep => self.previous_transfer_step(cache),
                     HomeMessage::SparkPrepareSendReady {
                         generation,
                         direction,
@@ -1676,20 +1631,7 @@ impl State for GlobalHome {
                         self.vault_transfer_preview_task(cache, &daemon)
                     }
                     HomeMessage::OpenWalletPicker(side) => {
-                        if self.wallet_picker == Some(side) {
-                            self.wallet_picker = None;
-                            return Task::none();
-                        }
-                        self.wallet_picker = Some(side);
-                        // The To menu lists other local Cubes the source can
-                        // reach; read the catalog (names only, every Cube
-                        // locked) as it opens.
-                        if side == PickerSide::To && self.current_view.step == 1 {
-                            if let Some(source) = self.other_cube_source(cache) {
-                                self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                            }
-                        }
-                        Task::none()
+                        self.open_transfer_wallet_picker(cache, side)
                     }
                     HomeMessage::CloseWalletPicker => {
                         self.wallet_picker = None;
@@ -1697,247 +1639,19 @@ impl State for GlobalHome {
                     }
                     selection @ (HomeMessage::SelectWalletInPicker(kind)
                     | HomeMessage::SelectTransferWallet(_, kind)) => {
-                        if kind == WalletKind::Spark && self.spark_backend.is_none() {
-                            return Task::none();
-                        }
-                        if !self.vault_available(cache)
-                            && (kind == WalletKind::Vault
-                                || self.transfer_from == Some(WalletKind::Vault)
-                                || self.transfer_to == Some(WalletKind::Vault))
-                        {
-                            return Task::none();
-                        }
-                        // Apply either the legacy popup or inline-row choice.
-                        // The To list excludes the current source. A From
-                        // choice matching To swaps the existing pair.
-                        let side = match selection {
-                            HomeMessage::SelectTransferWallet(side, _) => Some(side),
-                            _ => self.wallet_picker,
-                        };
-                        if let Some(side) = side {
-                            if side == PickerSide::To && self.transfer_from == Some(kind) {
-                                return Task::none();
-                            }
-                            if side == PickerSide::From && self.transfer_from == Some(kind) {
-                                self.wallet_picker = None;
-                                return Task::none();
-                            }
-                            let old_pair = (self.transfer_from, self.transfer_to);
-                            let was_other = self
-                                .transfer_direction
-                                .is_some_and(|direction| direction.is_other_cube());
-                            match side {
-                                // A new source keeps a same-Cube pair: the
-                                // old source becomes the destination when it
-                                // was the destination, or when another Cube
-                                // was (that Cube was bound to the old source).
-                                PickerSide::From => {
-                                    if self.transfer_to == Some(kind) || self.transfer_to.is_none()
-                                    {
-                                        self.transfer_to = self.transfer_from;
-                                    }
-                                    self.transfer_from = Some(kind);
-                                }
-                                PickerSide::To => self.transfer_to = Some(kind),
-                            }
-                            self.transfer_direction =
-                                self.transfer_from.and_then(|from| match self.transfer_to {
-                                    Some(to) => TransferDirection::try_from_pair(from, to),
-                                    None => TransferDirection::to_other_cube(from, cache.chain()),
-                                });
-                            if old_pair != (self.transfer_from, self.transfer_to) {
-                                self.invalidate_transfer_destination();
-                            }
-                            // Leaving another Cube locks it again; a same-Cube
-                            // pair takes its amount on the same card.
-                            if self
-                                .transfer_direction
-                                .is_some_and(|direction| !direction.is_other_cube())
-                            {
-                                if was_other {
-                                    self.reset_other_cube();
-                                }
-                                self.transfer_page = TransferPage::Amount;
-                            }
-                            self.wallet_picker = None;
-                            // Re-validate the entered amount against the new
-                            // source wallet's balance and the new direction's
-                            // min/max limits. Without this, switching from
-                            // (e.g.) Spark to Vault as the source could leave
-                            // a now-too-large amount marked valid.
-                            self.validate_entered_amount(cache);
-                        }
-                        Task::none()
+                        self.select_transfer_wallet(cache, selection, kind)
                     }
-                    HomeMessage::SelectAnotherCube => {
-                        if self.current_view.step != 1
-                            || self.transfer_page != TransferPage::Wallets
-                        {
-                            return Task::none();
-                        }
-                        let Some(direction) = self
-                            .transfer_from
-                            .and_then(|from| TransferDirection::to_other_cube(from, cache.chain()))
-                        else {
-                            return Task::none();
-                        };
-                        if self.transfer_source_wallet(direction, cache).is_none() {
-                            return Task::none();
-                        }
-                        if !self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            self.transfer_to = None;
-                            self.transfer_direction = Some(direction);
-                            self.invalidate_transfer_destination();
-                            self.validate_entered_amount(cache);
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::ContinueFromWallets => {
-                        if self.current_view.step != 1
-                            || self.transfer_page != TransferPage::Wallets
-                        {
-                            return Task::none();
-                        }
-                        let Some(direction) = self.transfer_direction else {
-                            return Task::none();
-                        };
-                        if direction.is_other_cube() {
-                            let Some(source) = self.transfer_source(cache) else {
-                                return Task::none();
-                            };
-                            self.reset_other_cube();
-                            self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                            let selected = self
-                                .other_cubes
-                                .iter()
-                                .find(|choice| choice.refusal.is_none())
-                                .map(|choice| choice.cube_id.clone());
-                            self.transfer_page = TransferPage::OtherCube;
-                            if let Some(id) = selected {
-                                self.select_other_cube(id, cache);
-                            }
-                        } else {
-                            self.transfer_page = TransferPage::Amount;
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::SelectAnotherCube => self.select_another_transfer_cube(cache),
+                    HomeMessage::ContinueFromWallets => self.continue_from_transfer_wallets(cache),
                     HomeMessage::SelectOtherCube(cube_id) => {
-                        if self.transfer_page == TransferPage::OtherCube {
-                            self.select_other_cube(cube_id, cache);
-                        }
-                        Task::none()
+                        self.choose_other_transfer_cube(cache, cube_id)
                     }
                     HomeMessage::SelectOtherCubeWallet(kind) => {
-                        if self.transfer_page == TransferPage::OtherCube
-                            && self.other_cubes.iter().any(|choice| {
-                                Some(choice.cube_id.as_str()) == self.other_cube_selected.as_deref()
-                                    && choice.can_receive(kind)
-                            })
-                        {
-                            self.select_other_wallet(kind, cache);
-                        }
-                        Task::none()
+                        self.choose_other_transfer_wallet(cache, kind)
                     }
-                    HomeMessage::ContinueWithCube => {
-                        if self.transfer_page != TransferPage::OtherCube {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_source(cache) else {
-                            return Task::none();
-                        };
-                        let Some(kind) =
-                            self.transfer_direction.map(|direction| direction.to_kind())
-                        else {
-                            return Task::none();
-                        };
-                        let Some((cube_id, wallet_id)) = self
-                            .other_cube_selected
-                            .as_ref()
-                            .and_then(|id| {
-                                self.other_cubes.iter().find(|choice| {
-                                    &choice.cube_id == id && choice.can_receive(kind)
-                                })
-                            })
-                            .map(|choice| {
-                                let wallet = if kind == WalletKind::Vault {
-                                    choice.vault_wallet_id.clone()
-                                } else {
-                                    None
-                                };
-                                (choice.cube_id.clone(), wallet)
-                            })
-                        else {
-                            return Task::none();
-                        };
-                        self.lock_other_cube();
-                        match ScopedDestination::new(
-                            cache.datadir_path.clone(),
-                            source,
-                            &cube_id,
-                            wallet_id,
-                        ) {
-                            Ok(scope) => {
-                                self.other_scope = Some(scope);
-                                self.transfer_page = TransferPage::Unlock;
-                                return iced::widget::operation::focus(
-                                    crate::pin_input::first_digit_id(),
-                                );
-                            }
-                            Err(refusal) => self.other_error = Some(refusal.reason()),
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::ContinueWithCube => self.continue_to_other_cube_unlock(cache),
                     HomeMessage::PickOtherCubeWallet(cube_id, kind) => {
-                        self.wallet_picker = None;
-                        if self.current_view.step != 1 {
-                            return Task::none();
-                        }
-                        let Some(direction) = self.transfer_from.and_then(|from| {
-                            TransferDirection::to_other_wallet(from, kind, cache.chain())
-                        }) else {
-                            return Task::none();
-                        };
-                        // The same Cube and wallet again: keep its unlock.
-                        if self.other_cube_selected.as_deref() == Some(cube_id.as_str())
-                            && self.transfer_direction == Some(direction)
-                            && self.other_scope.is_some()
-                        {
-                            return Task::none();
-                        }
-                        let Some(wallet) = self.transfer_source_wallet(direction, cache) else {
-                            return Task::none();
-                        };
-                        let source = Source {
-                            cube_id: self.cube_id.clone(),
-                            chain: cache.chain(),
-                            wallet,
-                            app: cache.app_generation,
-                        };
-                        self.reset_other_cube();
-                        self.transfer_to = None;
-                        self.transfer_direction = Some(direction);
-                        self.invalidate_transfer_destination();
-                        self.validate_entered_amount(cache);
-                        self.other_cubes = other_cubes(&cache.datadir_path, &source);
-                        if !self
-                            .other_cubes
-                            .iter()
-                            .any(|choice| choice.cube_id == cube_id && choice.can_receive(kind))
-                        {
-                            self.transfer_page = TransferPage::Wallets;
-                            return Task::none();
-                        }
-                        self.transfer_page = TransferPage::OtherCube;
-                        self.other_cube_selected = Some(cube_id);
-                        self.select_other_wallet(kind, cache);
-                        self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::ContinueWithCube)),
-                        )
+                        self.pick_other_cube_wallet(&daemon, cache, cube_id, kind)
                     }
                     HomeMessage::OtherCubePin(message) => {
                         if self.transfer_page != TransferPage::Unlock
@@ -2147,21 +1861,7 @@ impl State for GlobalHome {
                         }
                         Task::none()
                     }
-                    HomeMessage::LeaveTransfer => {
-                        let origin = self.transfer_origin;
-                        let reset = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                        );
-                        match origin {
-                            Some(wallet) => Task::batch([
-                                reset,
-                                crate::app::state::redirect(transfer_origin_menu(wallet).clone()),
-                            ]),
-                            None => reset,
-                        }
-                    }
+                    HomeMessage::LeaveTransfer => self.leave_transfer(&daemon, cache),
                     // A wallet page's Transfer is routed by the App, which
                     // switches to the Overview first (`start_transfer_from`).
                     HomeMessage::TransferFromWallet(_) => Task::none(),
@@ -2178,51 +1878,9 @@ impl State for GlobalHome {
                             )))),
                         ])
                     }
-                    HomeMessage::RestartTransfer => {
-                        // Opened from a wallet page, the new transfer starts
-                        // from that wallet again and still returns there.
-                        if let Some(origin) = self.transfer_origin {
-                            return self.start_transfer_from(daemon.clone(), cache, origin);
-                        }
-                        let reset = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::BackToHome)),
-                        );
-                        let open = self.update(
-                            daemon.clone(),
-                            cache,
-                            Message::View(view::Message::Home(HomeMessage::NextStep)),
-                        );
-                        Task::batch([reset, open])
-                    }
-                    HomeMessage::AmountEdited(amount) => {
-                        if self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                            && (self.current_view.step != 1
-                                || self.transfer_page != TransferPage::Amount)
-                        {
-                            return Task::none();
-                        }
-                        self.entered_amount.value = amount;
-                        self.transfer_max = None;
-                        self.validate_entered_amount(cache);
-                        Task::none()
-                    }
-                    HomeMessage::TransferMax => {
-                        if self.current_view.step != 1 || self.transfer_page != TransferPage::Amount
-                        {
-                            return Task::none();
-                        }
-                        let Some(source) = self.transfer_direction.map(|d| d.from_kind()) else {
-                            return Task::none();
-                        };
-                        self.set_entered_amount(self.max_transfer_amount(source, cache));
-                        self.transfer_max = Some(source);
-                        self.validate_entered_amount(cache);
-                        Task::none()
-                    }
+                    HomeMessage::RestartTransfer => self.restart_transfer(&daemon, cache),
+                    HomeMessage::AmountEdited(amount) => self.edit_transfer_amount(cache, amount),
+                    HomeMessage::TransferMax => self.use_transfer_max(cache),
                     HomeMessage::SignVaultTransferTx => {
                         if !self.vault_available(cache) {
                             return Task::none();
@@ -2764,50 +2422,8 @@ impl State for GlobalHome {
                         self.complete_spark_auto_claim(amount_sat)
                     }
 
-                    HomeMessage::TransferSuccessful => {
-                        self.current_view.next();
-                        self.is_sending = false;
-                        // A Vault-to-Vault transfer goes to another Cube; it
-                        // locks again now that the transaction is broadcast.
-                        if self
-                            .transfer_direction
-                            .is_some_and(|direction| direction.is_other_cube())
-                        {
-                            self.finish_other_cube();
-                        }
-                        Task::none()
-                    }
-                    HomeMessage::BackToHome => {
-                        self.current_view.reset();
-                        self.transfer_origin = None;
-                        self.transfer_page = TransferPage::Wallets;
-                        self.reset_other_cube();
-                        self.transfer_direction = None;
-                        self.transfer_from = None;
-                        self.transfer_to = None;
-                        self.wallet_picker = None;
-                        self.entered_amount = form::Value::default();
-                        self.transfer_max = None;
-                        self.invalidate_transfer_destination();
-                        self.is_sending = false;
-                        self.transfer_spend_tx = None;
-                        self.transfer_signed = false;
-                        self.spark_send_handle = None;
-                        self.spark_send_fee_sat = None;
-                        self.spend_tx_fees = None;
-                        self.transfer_feerate = default_transfer_feerate();
-                        self.transfer_feerate_loading = None;
-                        if self
-                            .pending_spark_incoming
-                            .map(|pending| pending.stage == TransferStage::Completed)
-                            .unwrap_or(false)
-                        {
-                            self.pending_spark_incoming = None;
-                            self.pending_spark_deposit_seen = false;
-                            self.pending_spark_incoming_is_swap = false;
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::TransferSuccessful => self.on_transfer_successful(),
+                    HomeMessage::BackToHome => self.back_to_home(),
                     HomeMessage::TransferDestinationReady {
                         generation,
                         direction,
@@ -3176,6 +2792,447 @@ impl State for GlobalHome {
 }
 
 impl GlobalHome {
+    fn previous_transfer_substep(&mut self) -> Task<Message> {
+        let other = self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube());
+        self.transfer_page = match self.transfer_page {
+            TransferPage::OtherCube => {
+                self.reset_other_cube();
+                TransferPage::Wallets
+            }
+            TransferPage::Unlock => {
+                self.lock_other_cube();
+                TransferPage::OtherCube
+            }
+            TransferPage::Amount if other => TransferPage::Unlock,
+            _ => TransferPage::Wallets,
+        };
+        Task::none()
+    }
+
+    fn previous_transfer_step(&mut self, cache: &Cache) -> Task<Message> {
+        if self.is_sending
+            && self
+                .transfer_direction
+                .is_some_and(|direction| direction.is_other_cube())
+        {
+            return Task::none();
+        }
+        // Any prepared/signed artifact from the confirm screen
+        // is bound to the amount + destination that were in
+        // effect when it was built. Stepping back allows the
+        // user to edit those, so invalidate here — otherwise a
+        // returning user would land on the confirm screen with
+        // a stale "Confirm & Broadcast" button and broadcast
+        // the previous PSBT against a changed amount.
+        self.invalidate_transfer_destination();
+        // Mirror `BackToHome`'s reset: if we left the confirm
+        // screen with a stuck `is_sending` (e.g. an error path
+        // that didn't clear it), leaving it set would disable
+        // all confirm buttons on re-entry. The Previous button
+        // is also view-level gated on `!is_sending` so a
+        // successful in-flight broadcast can't race this
+        // handler into advancing the step machine.
+        self.is_sending = false;
+        self.current_view.previous();
+        // Back on Amount, Max shows the whole balance again.
+        if let Some(source) = self.transfer_max.filter(|_| self.sends_max()) {
+            self.set_entered_amount(self.max_transfer_amount(source, cache));
+        }
+        Task::none()
+    }
+
+    fn open_transfer_wallet_picker(&mut self, cache: &Cache, side: PickerSide) -> Task<Message> {
+        if self.wallet_picker == Some(side) {
+            self.wallet_picker = None;
+            return Task::none();
+        }
+        self.wallet_picker = Some(side);
+        // The To menu lists other local Cubes the source can
+        // reach; read the catalog (names only, every Cube
+        // locked) as it opens.
+        if side == PickerSide::To && self.current_view.step == 1 {
+            if let Some(source) = self.other_cube_source(cache) {
+                self.other_cubes = other_cubes(&cache.datadir_path, &source);
+            }
+        }
+        Task::none()
+    }
+
+    fn select_transfer_wallet(
+        &mut self,
+        cache: &Cache,
+        selection: HomeMessage,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        if kind == WalletKind::Spark && self.spark_backend.is_none() {
+            return Task::none();
+        }
+        if !self.vault_available(cache)
+            && (kind == WalletKind::Vault
+                || self.transfer_from == Some(WalletKind::Vault)
+                || self.transfer_to == Some(WalletKind::Vault))
+        {
+            return Task::none();
+        }
+        // Apply either the legacy popup or inline-row choice.
+        // The To list excludes the current source. A From
+        // choice matching To swaps the existing pair.
+        let side = match selection {
+            HomeMessage::SelectTransferWallet(side, _) => Some(side),
+            _ => self.wallet_picker,
+        };
+        if let Some(side) = side {
+            return self.apply_transfer_wallet_selection(cache, side, kind);
+        }
+        Task::none()
+    }
+
+    fn apply_transfer_wallet_selection(
+        &mut self,
+        cache: &Cache,
+        side: PickerSide,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        if side == PickerSide::To && self.transfer_from == Some(kind) {
+            return Task::none();
+        }
+        if side == PickerSide::From && self.transfer_from == Some(kind) {
+            self.wallet_picker = None;
+            return Task::none();
+        }
+        let old_pair = (self.transfer_from, self.transfer_to);
+        let was_other = self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube());
+        match side {
+            // A new source keeps a same-Cube pair: the
+            // old source becomes the destination when it
+            // was the destination, or when another Cube
+            // was (that Cube was bound to the old source).
+            PickerSide::From => {
+                if self.transfer_to == Some(kind) || self.transfer_to.is_none() {
+                    self.transfer_to = self.transfer_from;
+                }
+                self.transfer_from = Some(kind);
+            }
+            PickerSide::To => self.transfer_to = Some(kind),
+        }
+        self.transfer_direction = self.transfer_from.and_then(|from| match self.transfer_to {
+            Some(to) => TransferDirection::try_from_pair(from, to),
+            None => TransferDirection::to_other_cube(from, cache.chain()),
+        });
+        if old_pair != (self.transfer_from, self.transfer_to) {
+            self.invalidate_transfer_destination();
+        }
+        // Leaving another Cube locks it again; a same-Cube
+        // pair takes its amount on the same card.
+        if self
+            .transfer_direction
+            .is_some_and(|direction| !direction.is_other_cube())
+        {
+            if was_other {
+                self.reset_other_cube();
+            }
+            self.transfer_page = TransferPage::Amount;
+        }
+        self.wallet_picker = None;
+        // Re-validate the entered amount against the new
+        // source wallet's balance and the new direction's
+        // min/max limits. Without this, switching from
+        // (e.g.) Spark to Vault as the source could leave
+        // a now-too-large amount marked valid.
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn select_another_transfer_cube(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Wallets {
+            return Task::none();
+        }
+        let Some(direction) = self
+            .transfer_from
+            .and_then(|from| TransferDirection::to_other_cube(from, cache.chain()))
+        else {
+            return Task::none();
+        };
+        if self.transfer_source_wallet(direction, cache).is_none() {
+            return Task::none();
+        }
+        if !self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+        {
+            self.transfer_to = None;
+            self.transfer_direction = Some(direction);
+            self.invalidate_transfer_destination();
+            self.validate_entered_amount(cache);
+        }
+        Task::none()
+    }
+
+    fn continue_from_transfer_wallets(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Wallets {
+            return Task::none();
+        }
+        let Some(direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        if direction.is_other_cube() {
+            let Some(source) = self.transfer_source(cache) else {
+                return Task::none();
+            };
+            self.reset_other_cube();
+            self.other_cubes = other_cubes(&cache.datadir_path, &source);
+            let selected = self
+                .other_cubes
+                .iter()
+                .find(|choice| choice.refusal.is_none())
+                .map(|choice| choice.cube_id.clone());
+            self.transfer_page = TransferPage::OtherCube;
+            if let Some(id) = selected {
+                self.select_other_cube(id, cache);
+            }
+        } else {
+            self.transfer_page = TransferPage::Amount;
+        }
+        Task::none()
+    }
+
+    fn choose_other_transfer_cube(&mut self, cache: &Cache, cube_id: String) -> Task<Message> {
+        if self.transfer_page == TransferPage::OtherCube {
+            self.select_other_cube(cube_id, cache);
+        }
+        Task::none()
+    }
+
+    fn choose_other_transfer_wallet(&mut self, cache: &Cache, kind: WalletKind) -> Task<Message> {
+        if self.transfer_page == TransferPage::OtherCube
+            && self.other_cubes.iter().any(|choice| {
+                Some(choice.cube_id.as_str()) == self.other_cube_selected.as_deref()
+                    && choice.can_receive(kind)
+            })
+        {
+            self.select_other_wallet(kind, cache);
+        }
+        Task::none()
+    }
+
+    fn continue_to_other_cube_unlock(&mut self, cache: &Cache) -> Task<Message> {
+        if self.transfer_page != TransferPage::OtherCube {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_source(cache) else {
+            return Task::none();
+        };
+        let Some(kind) = self.transfer_direction.map(|direction| direction.to_kind()) else {
+            return Task::none();
+        };
+        let Some((cube_id, wallet_id)) = self
+            .other_cube_selected
+            .as_ref()
+            .and_then(|id| {
+                self.other_cubes
+                    .iter()
+                    .find(|choice| &choice.cube_id == id && choice.can_receive(kind))
+            })
+            .map(|choice| {
+                let wallet = if kind == WalletKind::Vault {
+                    choice.vault_wallet_id.clone()
+                } else {
+                    None
+                };
+                (choice.cube_id.clone(), wallet)
+            })
+        else {
+            return Task::none();
+        };
+        self.lock_other_cube();
+        match ScopedDestination::new(cache.datadir_path.clone(), source, &cube_id, wallet_id) {
+            Ok(scope) => {
+                self.other_scope = Some(scope);
+                self.transfer_page = TransferPage::Unlock;
+                return iced::widget::operation::focus(crate::pin_input::first_digit_id());
+            }
+            Err(refusal) => self.other_error = Some(refusal.reason()),
+        }
+        Task::none()
+    }
+
+    fn pick_other_cube_wallet(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+        cube_id: String,
+        kind: WalletKind,
+    ) -> Task<Message> {
+        self.wallet_picker = None;
+        if self.current_view.step != 1 {
+            return Task::none();
+        }
+        let Some(direction) = self
+            .transfer_from
+            .and_then(|from| TransferDirection::to_other_wallet(from, kind, cache.chain()))
+        else {
+            return Task::none();
+        };
+        // The same Cube and wallet again: keep its unlock.
+        if self.other_cube_selected.as_deref() == Some(cube_id.as_str())
+            && self.transfer_direction == Some(direction)
+            && self.other_scope.is_some()
+        {
+            return Task::none();
+        }
+        let Some(wallet) = self.transfer_source_wallet(direction, cache) else {
+            return Task::none();
+        };
+        let source = Source {
+            cube_id: self.cube_id.clone(),
+            chain: cache.chain(),
+            wallet,
+            app: cache.app_generation,
+        };
+        self.reset_other_cube();
+        self.transfer_to = None;
+        self.transfer_direction = Some(direction);
+        self.invalidate_transfer_destination();
+        self.validate_entered_amount(cache);
+        self.other_cubes = other_cubes(&cache.datadir_path, &source);
+        if !self
+            .other_cubes
+            .iter()
+            .any(|choice| choice.cube_id == cube_id && choice.can_receive(kind))
+        {
+            self.transfer_page = TransferPage::Wallets;
+            return Task::none();
+        }
+        self.transfer_page = TransferPage::OtherCube;
+        self.other_cube_selected = Some(cube_id);
+        self.select_other_wallet(kind, cache);
+        self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::ContinueWithCube)),
+        )
+    }
+
+    fn leave_transfer(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        let origin = self.transfer_origin;
+        let reset = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::BackToHome)),
+        );
+        match origin {
+            Some(wallet) => Task::batch([
+                reset,
+                crate::app::state::redirect(transfer_origin_menu(wallet).clone()),
+            ]),
+            None => reset,
+        }
+    }
+
+    fn restart_transfer(
+        &mut self,
+        daemon: &Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        // Opened from a wallet page, the new transfer starts
+        // from that wallet again and still returns there.
+        if let Some(origin) = self.transfer_origin {
+            return self.start_transfer_from(daemon.clone(), cache, origin);
+        }
+        let reset = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::BackToHome)),
+        );
+        let open = self.update(
+            daemon.clone(),
+            cache,
+            Message::View(view::Message::Home(HomeMessage::NextStep)),
+        );
+        Task::batch([reset, open])
+    }
+
+    fn edit_transfer_amount(&mut self, cache: &Cache, amount: String) -> Task<Message> {
+        if self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+            && (self.current_view.step != 1 || self.transfer_page != TransferPage::Amount)
+        {
+            return Task::none();
+        }
+        self.entered_amount.value = amount;
+        self.transfer_max = None;
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn use_transfer_max(&mut self, cache: &Cache) -> Task<Message> {
+        if self.current_view.step != 1 || self.transfer_page != TransferPage::Amount {
+            return Task::none();
+        }
+        let Some(source) = self.transfer_direction.map(|d| d.from_kind()) else {
+            return Task::none();
+        };
+        self.set_entered_amount(self.max_transfer_amount(source, cache));
+        self.transfer_max = Some(source);
+        self.validate_entered_amount(cache);
+        Task::none()
+    }
+
+    fn on_transfer_successful(&mut self) -> Task<Message> {
+        self.current_view.next();
+        self.is_sending = false;
+        // A Vault-to-Vault transfer goes to another Cube; it
+        // locks again now that the transaction is broadcast.
+        if self
+            .transfer_direction
+            .is_some_and(|direction| direction.is_other_cube())
+        {
+            self.finish_other_cube();
+        }
+        Task::none()
+    }
+
+    fn back_to_home(&mut self) -> Task<Message> {
+        self.current_view.reset();
+        self.transfer_origin = None;
+        self.transfer_page = TransferPage::Wallets;
+        self.reset_other_cube();
+        self.transfer_direction = None;
+        self.transfer_from = None;
+        self.transfer_to = None;
+        self.wallet_picker = None;
+        self.entered_amount = form::Value::default();
+        self.transfer_max = None;
+        self.invalidate_transfer_destination();
+        self.is_sending = false;
+        self.transfer_spend_tx = None;
+        self.transfer_signed = false;
+        self.spark_send_handle = None;
+        self.spark_send_fee_sat = None;
+        self.spend_tx_fees = None;
+        self.transfer_feerate = default_transfer_feerate();
+        self.transfer_feerate_loading = None;
+        if self
+            .pending_spark_incoming
+            .map(|pending| pending.stage == TransferStage::Completed)
+            .unwrap_or(false)
+        {
+            self.pending_spark_incoming = None;
+            self.pending_spark_deposit_seen = false;
+            self.pending_spark_incoming_is_swap = false;
+        }
+        Task::none()
+    }
+
     fn on_spark_balance_updated(
         &mut self,
         cache: &Cache,
