@@ -6217,55 +6217,71 @@ impl App {
             );
         }
         if ready {
-            tasks.push(Task::done(Message::CacheUpdated));
-            // Until the scan completes the runtime sends no
-            // `UpdateDaemonCache`: the Overview's Vault rows follow it here
-            // when its history comes in or the runtime changes. After that
-            // the normal poll refreshes them.
-            if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
-                && (first_load
-                    || !was_ready
-                    || runtime_changed
-                    || overview_activity_vault_changed(&before, &self.cache.daemon_cache))
-            {
-                tasks.push(self.panels.activity.refresh_wallet(
-                    view::activity::WalletFilter::Vault,
-                    Some(daemon.clone()),
-                    Some(wallet.clone()),
-                ));
-            }
-            // While the scan ran, Vault Settings › Node was the import
-            // panel's, so the Node section was never installed. Install it as
-            // the route passes back, once: a normal poll must not reset an
-            // edit in progress.
-            if !was_ready
-                && matches!(
-                    self.panels.current,
-                    Menu::Vault(menu::VaultSubMenu::Settings(Some(
-                        menu::SettingsOption::Node
-                    )))
-                )
-            {
-                if let Some(settings) = self.panels.vault_settings.as_mut() {
-                    tasks.push(settings.update(
-                        Some(daemon.clone()),
-                        &self.cache,
-                        Message::View(view::Message::Settings(
-                            view::SettingsMessage::EditBitcoindSettings,
-                        )),
-                    ));
-                }
-            }
-            if first_load || !was_ready || runtime_changed {
-                if let Some(overview) = self.panels.vault_overview.as_mut() {
-                    tasks.push(overview.reload(Some(daemon.clone()), Some(wallet.clone())));
-                }
-                if let Some(transactions) = self.panels.transactions.as_mut() {
-                    tasks.push(transactions.reload(Some(daemon), Some(wallet)));
-                }
-            }
+            self.refresh_imported_runtime_panels(
+                &mut tasks,
+                &before,
+                daemon,
+                wallet,
+                was_ready,
+                first_load || !was_ready || runtime_changed,
+            );
         }
         Task::batch(tasks)
+    }
+
+    fn refresh_imported_runtime_panels(
+        &mut self,
+        tasks: &mut Vec<Task<Message>>,
+        before: &DaemonCache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        wallet: Arc<Wallet>,
+        was_ready: bool,
+        changed: bool,
+    ) {
+        tasks.push(Task::done(Message::CacheUpdated));
+        // Until the scan completes the runtime sends no
+        // `UpdateDaemonCache`: the Overview's Vault rows follow it here
+        // when its history comes in or the runtime changes. After that
+        // the normal poll refreshes them.
+        if matches!(self.panels.current, Menu::Cube(menu::CubeSubMenu::Overview))
+            && (changed || overview_activity_vault_changed(before, &self.cache.daemon_cache))
+        {
+            tasks.push(self.panels.activity.refresh_wallet(
+                view::activity::WalletFilter::Vault,
+                Some(daemon.clone()),
+                Some(wallet.clone()),
+            ));
+        }
+        // While the scan ran, Vault Settings › Node was the import
+        // panel's, so the Node section was never installed. Install it as
+        // the route passes back, once: a normal poll must not reset an
+        // edit in progress.
+        if !was_ready
+            && matches!(
+                self.panels.current,
+                Menu::Vault(menu::VaultSubMenu::Settings(Some(
+                    menu::SettingsOption::Node
+                )))
+            )
+        {
+            if let Some(settings) = self.panels.vault_settings.as_mut() {
+                tasks.push(settings.update(
+                    Some(daemon.clone()),
+                    &self.cache,
+                    Message::View(view::Message::Settings(
+                        view::SettingsMessage::EditBitcoindSettings,
+                    )),
+                ));
+            }
+        }
+        if changed {
+            if let Some(overview) = self.panels.vault_overview.as_mut() {
+                tasks.push(overview.reload(Some(daemon.clone()), Some(wallet.clone())));
+            }
+            if let Some(transactions) = self.panels.transactions.as_mut() {
+                tasks.push(transactions.reload(Some(daemon), Some(wallet)));
+            }
+        }
     }
 
     fn update_dispatch(&mut self, message: Message) -> Task<Message> {
