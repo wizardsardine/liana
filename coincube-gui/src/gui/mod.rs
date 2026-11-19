@@ -2708,6 +2708,60 @@ impl GUI {
         Continue(message)
     }
 
+    fn accepted_tab_auth_revision(&self, pane_id: pane_grid::Pane, tab_id: usize) -> Option<u64> {
+        self.panes
+            .get(pane_id)?
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .and_then(|tab| match &tab.state {
+                tab::State::App(app) => Some(app.connect_sheet_account().accepted_auth_revision()),
+                tab::State::Home(home) => Some(home.connect_account.accepted_auth_revision()),
+                _ => None,
+            })
+    }
+
+    fn broadcast_accepted_auth_change(
+        &mut self,
+        auth_tasks: &mut Vec<Task<Message>>,
+        change: tab::AuthChange,
+        origin_pane: pane_grid::Pane,
+        origin_tab: usize,
+        accepted_before: Option<u64>,
+        completed_login: Option<&crate::services::coincube::LoginResponse>,
+    ) {
+        let accepted = match &change {
+            tab::AuthChange::SignIn { .. } => accepted_before.is_some_and(|before| {
+                self.accepted_tab_auth_revision(origin_pane, origin_tab)
+                    .is_some_and(|after| after != before)
+            }),
+            tab::AuthChange::LogOut => true,
+        };
+        if accepted && matches!(change, tab::AuthChange::SignIn { .. }) {
+            // A sign-in anywhere ends the signed-out notice everywhere.
+            self.relay_connect_signed_out_by(None);
+        }
+        if accepted {
+            for (&pane_id, pane) in self.panes.iter_mut() {
+                for tab in &mut pane.tabs {
+                    if completed_login.is_some_and(|login| {
+                        matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
+                    }) {
+                        continue;
+                    }
+                    let tab_id = tab.id;
+                    let originated = pane_id == origin_pane && tab_id == origin_tab;
+                    auth_tasks.push(
+                        tab.invalidate_fork_session(change.clone(), originated)
+                            .map(move |msg| {
+                                Message::Pane(pane_id, pane::Message::tab(tab_id, msg))
+                            }),
+                    );
+                }
+            }
+        }
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         self.reconcile_overlay_origins();
         let message = match self.intercept_verified_unlock_duress(message) {
@@ -2794,18 +2848,9 @@ impl GUI {
             }
             _ => None,
         };
-        let accepted_before = auth_change.as_ref().and_then(|(_, pane_id, tab_id)| {
-            self.panes
-                .get(*pane_id)
-                .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                .and_then(|tab| match &tab.state {
-                    tab::State::App(app) => {
-                        Some(app.connect_sheet_account().accepted_auth_revision())
-                    }
-                    tab::State::Home(home) => Some(home.connect_account.accepted_auth_revision()),
-                    _ => None,
-                })
-        });
+        let accepted_before = auth_change
+            .as_ref()
+            .and_then(|(_, pane_id, tab_id)| self.accepted_tab_auth_revision(*pane_id, *tab_id));
         let mut auth_tasks = Vec::new();
         // The old fork App is gone. Apply its auth operation to the replacement
         // Home so logout clears saved login state instead of being discarded.
@@ -2875,46 +2920,14 @@ impl GUI {
         let routed = self.update_message(message);
         self.reconcile_connect_sheet_duress();
         if let Some((change, origin_pane, origin_tab)) = auth_change {
-            let accepted = match &change {
-                tab::AuthChange::SignIn { .. } => accepted_before.is_some_and(|before| {
-                    self.panes
-                        .get(origin_pane)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == origin_tab))
-                        .and_then(|tab| match &tab.state {
-                            tab::State::App(app) => {
-                                Some(app.connect_sheet_account().accepted_auth_revision())
-                            }
-                            tab::State::Home(home) => {
-                                Some(home.connect_account.accepted_auth_revision())
-                            }
-                            _ => None,
-                        })
-                        .is_some_and(|after| after != before)
-                }),
-                tab::AuthChange::LogOut => true,
-            };
-            if accepted && matches!(change, tab::AuthChange::SignIn { .. }) {
-                // A sign-in anywhere ends the signed-out notice everywhere.
-                self.relay_connect_signed_out_by(None);
-            }
-            if accepted {
-                for (&pane_id, pane) in self.panes.iter_mut() {
-                    for tab in &mut pane.tabs {
-                        if completed_login.as_ref().is_some_and(|login| {
-                            matches!(&tab.state, tab::State::App(app) if app.matches_admitted_connect_session(login))
-                        }) {
-                            continue;
-                        }
-                        let tab_id = tab.id;
-                        let originated = pane_id == origin_pane && tab_id == origin_tab;
-                        auth_tasks.push(
-                            tab.invalidate_fork_session(change.clone(), originated).map(
-                                move |msg| Message::Pane(pane_id, pane::Message::tab(tab_id, msg)),
-                            ),
-                        );
-                    }
-                }
-            }
+            self.broadcast_accepted_auth_change(
+                &mut auth_tasks,
+                change,
+                origin_pane,
+                origin_tab,
+                accepted_before,
+                completed_login.as_ref(),
+            );
         }
         if let Some((pane_id, tab_id)) = unlock_duress_target {
             self.seal_verified_seed_export_duress_surface(pane_id, tab_id);
