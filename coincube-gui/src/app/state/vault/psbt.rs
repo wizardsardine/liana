@@ -958,7 +958,27 @@ impl PsbtState {
         // And whatever just happened, a Broadcast dialog open on a spend that
         // is no longer ready comes down with the reason.
         let dialog = self.close_broadcast_dialog_if_not_ready(cache);
-        let focus = if opened_picker {
+        let focus = self.restore_signer_focus(
+            cache,
+            opened_picker,
+            direct_signer,
+            dismissed,
+            was_picker,
+            was_unavailable,
+        );
+        Task::batch([task, requalify, picker, recheck, dialog, focus])
+    }
+
+    fn restore_signer_focus(
+        &mut self,
+        cache: &Cache,
+        opened_picker: bool,
+        direct_signer: bool,
+        dismissed: bool,
+        was_picker: bool,
+        was_unavailable: bool,
+    ) -> Task<Message> {
+        if opened_picker {
             match &self.modal {
                 Some(PsbtModal::Sign(sign)) if sign.display_modal => restore_psbt_focus(
                     view::vault::psbt::action_id(sign.action_scope, "picker.close"),
@@ -986,8 +1006,7 @@ impl PsbtState {
             restore_psbt_focus(self.overview_focus_id(cache))
         } else {
             Task::none()
-        };
-        Task::batch([task, requalify, picker, recheck, dialog, focus])
+        }
     }
 
     fn update_inner(
