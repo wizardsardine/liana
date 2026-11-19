@@ -3115,241 +3115,235 @@ impl ImportedBitcoinPanel {
             )
             .push(self.delete_cube_button())
             .push(iced::widget::Space::new().width(iced::Length::Fill));
-        if self.review.is_none() {
-            content = content.push(p1_regular(localized_copy("Use your existing Bitcoin wallet in this Cube. The descriptor describes the wallet; you add its keys on the next step.")).style(theme::text::secondary));
-            let beginning = if self.scan_from_beginning {
-                button::primary(None, localized_copy("From the beginning"))
-            } else {
-                button::secondary(None, localized_copy("From the beginning"))
-            };
-            let dated = if self.scan_from_beginning {
-                button::secondary(None, localized_copy("From a creation date"))
-            } else {
-                button::primary(None, localized_copy("From a creation date"))
-            };
-            content = content
-                .push(wallet_source_form::view(&self.source, &SourceFormCopy::import()).map(|m| {
-                    view::Message::ImportedBitcoin(ImportMessage::Source(m))
-                }))
-                .push(iced::widget::Space::new().height(8))
-                .push(p1_bold(localized_copy("Where should the history scan start?")))
-                .push(Row::new().spacing(10)
-                    .push(beginning
-                        .width(iced::Length::Fill)
-                        .on_press(view::Message::ImportedBitcoin(ImportMessage::ScanFromBeginning(true))))
-                    .push(dated
-                        .width(iced::Length::Fill)
-                        .on_press(view::Message::ImportedBitcoin(ImportMessage::ScanFromBeginning(false)))))
-                .push_maybe((!self.scan_from_beginning).then(|| {
-                    Row::new()
-                        .spacing(10)
-                        .align_y(iced::Alignment::Center)
-                        .push(text_input(localized_copy("YYYY-MM-DD"), &self.birthday)
-                            .on_input(|s| view::Message::ImportedBitcoin(ImportMessage::BirthdayEdited(s)))
-                            .padding(10))
-                        .push(date_picker::calendar_button(
-                            self.birthday_calendar_open,
-                            chrono::NaiveDate::parse_from_str(self.birthday.trim(), "%Y-%m-%d")
-                                .unwrap_or_else(|_| chrono::Utc::now().date_naive()),
-                            ImportMessage::BirthdayCalendarOpen,
-                            ImportMessage::BirthdayCalendarCancel,
-                            ImportMessage::BirthdaySelected,
-                        ).map(view::Message::ImportedBitcoin))
-                }))
-                .push(caption(if self.scan_from_beginning {
-                    localized_copy("Starts at Bitcoin's first block. Choose this if you do not know when the wallet was created; it may take longer.")
-                } else {
-                    localized_copy("Choose the original wallet's creation date or an earlier date so older transactions are included.")
-                }).style(theme::text::secondary))
-                .push(iced::widget::Space::new().height(8))
-                .push(p1_bold(localized_copy("Addresses to search per branch")))
-                .push(text_input("200", &self.lookahead)
-                    .on_input(|s| view::Message::ImportedBitcoin(ImportMessage::LookaheadEdited(s)))
-                    .padding(10))
-                .push(caption(localized_copy("Start with 200 receive and 200 change addresses. You can search further after the scan finishes.")).style(theme::text::secondary))
-                .push(iced::widget::Space::new().height(8))
-                .push(p1_bold(localized_copy("Bitcoin server")));
-            let mut providers = Column::new().spacing(8);
-            let mut provider_row = Row::new().spacing(8);
-            for provider in [
-                Provider::Connect,
-                Provider::Public,
-                Provider::Esplora,
-                Provider::Electrum,
-            ] {
-                let button = if self.provider == provider {
-                    button::primary(None, localized_copy(provider.label()))
-                } else {
-                    button::secondary(None, localized_copy(provider.label()))
-                };
-                provider_row = provider_row.push(button.width(iced::Length::Fill).on_press(
-                    view::Message::ImportedBitcoin(ImportMessage::ProviderSelected(provider)),
-                ));
-                if matches!(provider, Provider::Public | Provider::Electrum) {
-                    providers = providers.push(provider_row);
-                    provider_row = Row::new().spacing(8);
-                }
-            }
-            content = content.push(providers);
-            if matches!(self.provider, Provider::Esplora | Provider::Electrum) {
-                content = content.push(
-                    text_input(localized_copy("Server URL"), &self.endpoint)
-                        .on_input(|s| {
-                            view::Message::ImportedBitcoin(ImportMessage::EndpointEdited(s))
-                        })
-                        .padding(10),
-                );
-            }
-            footer = footer.push(
-                button::primary(None, localized_copy("Review wallet"))
-                    .width(iced::Length::Shrink)
-                    .on_press(view::Message::ImportedBitcoin(ImportMessage::Review)),
-            );
-        } else if let Some(wallet) = &self.review {
-            let retry = matches!(&self.import.stage, BitcoinImportStage::Installing { .. });
-            let (script, threshold, fingerprints) = wallet_summary(&wallet.descriptor);
-            let sample_address = sample_receive_address(&wallet.descriptor)
-                .unwrap_or_else(|_| localized_copy("Unable to derive a sample address").into());
-            content = content
-                .push(h3(localized_copy("Review Bitcoin wallet")))
-                .push(p1_bold(localized_copy("Wallet details")))
-                .push(p1_regular(format!("{} · {script} · {threshold}", crate::chain::canonical_network_name(wallet.descriptor.chain()))))
-                .push(p1_regular(coincube_ui::localized_format!("Signer fingerprints: {}", "Huellas de los firmantes: {}", if fingerprints.is_empty() { localized_copy("Not provided") } else { &fingerprints })))
-                .push_maybe(self.keys.as_ref().filter(|keys| !keys.slots.is_empty()).map(|keys| p1_regular(keys.summary())))
-                .push(p1_bold(localized_copy("First receive address")))
-                .push(p1_regular(sample_address.clone()).wrapping(iced::widget::text::Wrapping::WordOrGlyph))
-                .push(button::secondary_compact(None, localized_copy("Copy address"))
-                    .on_press(view::Message::CopyWithToast(sample_address, "Address copied".into())))
-                .push(caption(localized_copy("Compare this address with your original wallet before importing.")).style(theme::text::secondary))
-                .push(p1_regular(coincube_ui::localized_format!("History starts: {}", "El historial empieza: {}",
-                    if wallet.birthday == 0 { localized_copy("Beginning").to_string() } else {
-                        chrono::DateTime::from_timestamp(i64::from(wallet.birthday), 0)
-                            .map(|date| date.format("%Y-%m-%d").to_string())
-                            .unwrap_or_else(|| localized_copy("Invalid date").into())
-                    })))
-                .push(p1_regular(coincube_ui::localized_format!("Address search: {} receive and {} change addresses", "Búsqueda de direcciones: {} de recepción y {} de cambio", wallet.initial_lookahead, wallet.initial_lookahead)))
-                .push(caption(localized_copy("Your balance and transactions will appear after the scan finishes. Then update the Cube Recovery Kit to include this wallet.")).style(theme::text::secondary))
-                .push(button::secondary_compact(None, if self.show_details { localized_copy("Hide descriptor details") } else { localized_copy("Show descriptor details") })
-                    .on_press(view::Message::ImportedBitcoin(ImportMessage::ToggleDetails)));
-            if self.show_details {
-                content = content
-                    .push(caption(coincube_ui::localized_format!(
-                        "Wallet identity: {}",
-                        "Identidad de la cartera: {}",
-                        wallet.wallet_id.descriptor_checksum
-                    )))
-                    .push(
-                        caption(coincube_ui::localized_format!(
-                            "Receive: {}",
-                            "Recepción: {}",
-                            wallet.descriptor.receive_descriptor()
-                        ))
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                        .style(theme::text::secondary),
-                    )
-                    .push(
-                        caption(coincube_ui::localized_format!(
-                            "Change: {}",
-                            "Cambio: {}",
-                            wallet.descriptor.change_descriptor()
-                        ))
-                        .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-                        .style(theme::text::secondary),
-                    );
-            }
-            content = content
-                .push(p1_bold(localized_copy("Bitcoin server")))
-                .push(p1_regular(localized_copy(self.provider.label())));
-            if retry {
-                content = content.push(caption(localized_copy("The wallet identity is locked to this Cube. Choose the Bitcoin server to finish an interrupted import.")));
-                let mut providers = Column::new().spacing(8);
-                let mut provider_row = Row::new().spacing(8);
-                for provider in [
-                    Provider::Connect,
-                    Provider::Public,
-                    Provider::Esplora,
-                    Provider::Electrum,
-                ] {
-                    let option = if self.provider == provider {
-                        button::primary(None, localized_copy(provider.label()))
-                    } else {
-                        button::secondary(None, localized_copy(provider.label()))
-                    };
-                    provider_row =
-                        provider_row.push(option.width(iced::Length::Fill).on_press_maybe(
-                            (!self.busy).then_some(view::Message::ImportedBitcoin(
-                                ImportMessage::ProviderSelected(provider),
-                            )),
-                        ));
-                    if matches!(provider, Provider::Public | Provider::Electrum) {
-                        providers = providers.push(provider_row);
-                        provider_row = Row::new().spacing(8);
-                    }
-                }
-                content = content.push(providers);
-                if matches!(self.provider, Provider::Esplora | Provider::Electrum) {
-                    content = content.push(
-                        text_input(localized_copy("Server URL"), &self.endpoint)
-                            .on_input(|value| {
-                                view::Message::ImportedBitcoin(ImportMessage::EndpointEdited(value))
-                            })
-                            .padding(10),
-                    );
-                }
-            }
-            if matches!(self.provider, Provider::Esplora | Provider::Electrum) {
-                content = content.push(caption(public_server_label(&self.endpoint)));
-            }
-            if self.provider == Provider::Public {
-                content = content.push(caption(localized_copy("Public server: mempool.space, with blockstream.info fallback. This reveals wallet addresses to those providers.")));
-            }
-            if self.provider == Provider::Connect {
-                content = content.push(caption(localized_copy("Connect server: COINCUBE's authenticated Bitcoin proxy, with public fallback servers.")));
-            }
-            footer = footer.push(
-                Row::new()
-                    .spacing(10)
-                    .push(
-                        button::secondary(
-                            None,
-                            if self.keys.is_some() {
-                                localized_copy("Back to keys")
-                            } else {
-                                localized_copy("Edit wallet")
-                            },
-                        )
-                        .width(iced::Length::Shrink)
-                        .on_press_maybe(if self.keys.is_some() {
-                            (!self.busy).then_some(view::Message::ImportedBitcoin(
-                                ImportMessage::BackToKeys,
-                            ))
-                        } else {
-                            (!retry).then_some(view::Message::ImportedBitcoin(ImportMessage::Edit))
-                        }),
-                    )
-                    .push(
-                        button::primary(
-                            None,
-                            if self.busy {
-                                localized_copy("Importing…")
-                            } else if retry {
-                                localized_copy("Retry import")
-                            } else {
-                                localized_copy("Import and scan wallet")
-                            },
-                        )
-                        .width(iced::Length::Shrink)
-                        .on_press_maybe(
-                            (!self.busy)
-                                .then_some(view::Message::ImportedBitcoin(ImportMessage::Confirm)),
-                        ),
-                    ),
-            );
-        }
+        (content, footer) = if let Some(wallet) = self.review.as_ref() {
+            self.render_setup_review(wallet, content, footer)
+        } else {
+            self.render_setup_form(content, footer)
+        };
         if let Some(error) = &self.error {
             content = content.push(p1_regular(shown_notice(error)).style(theme::text::error));
         }
         (content.into(), footer.into())
+    }
+
+    fn render_setup_form<'a>(
+        &'a self,
+        mut content: Column<'a, view::Message>,
+        mut footer: Row<'a, view::Message>,
+    ) -> (Column<'a, view::Message>, Row<'a, view::Message>) {
+        content = content.push(p1_regular(localized_copy("Use your existing Bitcoin wallet in this Cube. The descriptor describes the wallet; you add its keys on the next step.")).style(theme::text::secondary));
+        let beginning = if self.scan_from_beginning {
+            button::primary(None, localized_copy("From the beginning"))
+        } else {
+            button::secondary(None, localized_copy("From the beginning"))
+        };
+        let dated = if self.scan_from_beginning {
+            button::secondary(None, localized_copy("From a creation date"))
+        } else {
+            button::primary(None, localized_copy("From a creation date"))
+        };
+        content = content
+            .push(wallet_source_form::view(&self.source, &SourceFormCopy::import()).map(|m| {
+                view::Message::ImportedBitcoin(ImportMessage::Source(m))
+            }))
+            .push(iced::widget::Space::new().height(8))
+            .push(p1_bold(localized_copy("Where should the history scan start?")))
+            .push(Row::new().spacing(10)
+                .push(beginning
+                    .width(iced::Length::Fill)
+                    .on_press(view::Message::ImportedBitcoin(ImportMessage::ScanFromBeginning(true))))
+                .push(dated
+                    .width(iced::Length::Fill)
+                    .on_press(view::Message::ImportedBitcoin(ImportMessage::ScanFromBeginning(false)))))
+            .push_maybe((!self.scan_from_beginning).then(|| {
+                Row::new()
+                    .spacing(10)
+                    .align_y(iced::Alignment::Center)
+                    .push(text_input(localized_copy("YYYY-MM-DD"), &self.birthday)
+                        .on_input(|s| view::Message::ImportedBitcoin(ImportMessage::BirthdayEdited(s)))
+                        .padding(10))
+                    .push(date_picker::calendar_button(
+                        self.birthday_calendar_open,
+                        chrono::NaiveDate::parse_from_str(self.birthday.trim(), "%Y-%m-%d")
+                            .unwrap_or_else(|_| chrono::Utc::now().date_naive()),
+                        ImportMessage::BirthdayCalendarOpen,
+                        ImportMessage::BirthdayCalendarCancel,
+                        ImportMessage::BirthdaySelected,
+                    ).map(view::Message::ImportedBitcoin))
+            }))
+            .push(caption(if self.scan_from_beginning {
+                localized_copy("Starts at Bitcoin's first block. Choose this if you do not know when the wallet was created; it may take longer.")
+            } else {
+                localized_copy("Choose the original wallet's creation date or an earlier date so older transactions are included.")
+            }).style(theme::text::secondary))
+            .push(iced::widget::Space::new().height(8))
+            .push(p1_bold(localized_copy("Addresses to search per branch")))
+            .push(text_input("200", &self.lookahead)
+                .on_input(|s| view::Message::ImportedBitcoin(ImportMessage::LookaheadEdited(s)))
+                .padding(10))
+            .push(caption(localized_copy("Start with 200 receive and 200 change addresses. You can search further after the scan finishes.")).style(theme::text::secondary))
+            .push(iced::widget::Space::new().height(8))
+            .push(p1_bold(localized_copy("Bitcoin server")));
+        content = self.push_setup_provider_options(content, true);
+        footer = footer.push(
+            button::primary(None, localized_copy("Review wallet"))
+                .width(iced::Length::Shrink)
+                .on_press(view::Message::ImportedBitcoin(ImportMessage::Review)),
+        );
+        (content, footer)
+    }
+
+    fn render_setup_review<'a>(
+        &'a self,
+        wallet: &ImportedWalletAttachment,
+        mut content: Column<'a, view::Message>,
+        mut footer: Row<'a, view::Message>,
+    ) -> (Column<'a, view::Message>, Row<'a, view::Message>) {
+        let retry = matches!(&self.import.stage, BitcoinImportStage::Installing { .. });
+        let (script, threshold, fingerprints) = wallet_summary(&wallet.descriptor);
+        let sample_address = sample_receive_address(&wallet.descriptor)
+            .unwrap_or_else(|_| localized_copy("Unable to derive a sample address").into());
+        content = content
+            .push(h3(localized_copy("Review Bitcoin wallet")))
+            .push(p1_bold(localized_copy("Wallet details")))
+            .push(p1_regular(format!("{} · {script} · {threshold}", crate::chain::canonical_network_name(wallet.descriptor.chain()))))
+            .push(p1_regular(coincube_ui::localized_format!("Signer fingerprints: {}", "Huellas de los firmantes: {}", if fingerprints.is_empty() { localized_copy("Not provided") } else { &fingerprints })))
+            .push_maybe(self.keys.as_ref().filter(|keys| !keys.slots.is_empty()).map(|keys| p1_regular(keys.summary())))
+            .push(p1_bold(localized_copy("First receive address")))
+            .push(p1_regular(sample_address.clone()).wrapping(iced::widget::text::Wrapping::WordOrGlyph))
+            .push(button::secondary_compact(None, localized_copy("Copy address"))
+                .on_press(view::Message::CopyWithToast(sample_address, "Address copied".into())))
+            .push(caption(localized_copy("Compare this address with your original wallet before importing.")).style(theme::text::secondary))
+            .push(p1_regular(coincube_ui::localized_format!("History starts: {}", "El historial empieza: {}",
+                if wallet.birthday == 0 { localized_copy("Beginning").to_string() } else {
+                    chrono::DateTime::from_timestamp(i64::from(wallet.birthday), 0)
+                        .map(|date| date.format("%Y-%m-%d").to_string())
+                        .unwrap_or_else(|| localized_copy("Invalid date").into())
+                })))
+            .push(p1_regular(coincube_ui::localized_format!("Address search: {} receive and {} change addresses", "Búsqueda de direcciones: {} de recepción y {} de cambio", wallet.initial_lookahead, wallet.initial_lookahead)))
+            .push(caption(localized_copy("Your balance and transactions will appear after the scan finishes. Then update the Cube Recovery Kit to include this wallet.")).style(theme::text::secondary))
+            .push(button::secondary_compact(None, if self.show_details { localized_copy("Hide descriptor details") } else { localized_copy("Show descriptor details") })
+                .on_press(view::Message::ImportedBitcoin(ImportMessage::ToggleDetails)));
+        if self.show_details {
+            content = content
+                .push(caption(coincube_ui::localized_format!(
+                    "Wallet identity: {}",
+                    "Identidad de la cartera: {}",
+                    wallet.wallet_id.descriptor_checksum
+                )))
+                .push(
+                    caption(coincube_ui::localized_format!(
+                        "Receive: {}",
+                        "Recepción: {}",
+                        wallet.descriptor.receive_descriptor()
+                    ))
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                    .style(theme::text::secondary),
+                )
+                .push(
+                    caption(coincube_ui::localized_format!(
+                        "Change: {}",
+                        "Cambio: {}",
+                        wallet.descriptor.change_descriptor()
+                    ))
+                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                    .style(theme::text::secondary),
+                );
+        }
+        content = content
+            .push(p1_bold(localized_copy("Bitcoin server")))
+            .push(p1_regular(localized_copy(self.provider.label())));
+        if retry {
+            content = content.push(caption(localized_copy("The wallet identity is locked to this Cube. Choose the Bitcoin server to finish an interrupted import.")));
+            content = self.push_setup_provider_options(content, !self.busy);
+        }
+        if matches!(self.provider, Provider::Esplora | Provider::Electrum) {
+            content = content.push(caption(public_server_label(&self.endpoint)));
+        }
+        if self.provider == Provider::Public {
+            content = content.push(caption(localized_copy("Public server: mempool.space, with blockstream.info fallback. This reveals wallet addresses to those providers.")));
+        }
+        if self.provider == Provider::Connect {
+            content = content.push(caption(localized_copy("Connect server: COINCUBE's authenticated Bitcoin proxy, with public fallback servers.")));
+        }
+        footer = footer.push(
+            Row::new()
+                .spacing(10)
+                .push(
+                    button::secondary(
+                        None,
+                        if self.keys.is_some() {
+                            localized_copy("Back to keys")
+                        } else {
+                            localized_copy("Edit wallet")
+                        },
+                    )
+                    .width(iced::Length::Shrink)
+                    .on_press_maybe(if self.keys.is_some() {
+                        (!self.busy)
+                            .then_some(view::Message::ImportedBitcoin(ImportMessage::BackToKeys))
+                    } else {
+                        (!retry).then_some(view::Message::ImportedBitcoin(ImportMessage::Edit))
+                    }),
+                )
+                .push(
+                    button::primary(
+                        None,
+                        if self.busy {
+                            localized_copy("Importing…")
+                        } else if retry {
+                            localized_copy("Retry import")
+                        } else {
+                            localized_copy("Import and scan wallet")
+                        },
+                    )
+                    .width(iced::Length::Shrink)
+                    .on_press_maybe(
+                        (!self.busy)
+                            .then_some(view::Message::ImportedBitcoin(ImportMessage::Confirm)),
+                    ),
+                ),
+        );
+        (content, footer)
+    }
+
+    fn push_setup_provider_options<'a>(
+        &'a self,
+        mut content: Column<'a, view::Message>,
+        enabled: bool,
+    ) -> Column<'a, view::Message> {
+        let mut providers = Column::new().spacing(8);
+        let mut provider_row = Row::new().spacing(8);
+        for provider in [
+            Provider::Connect,
+            Provider::Public,
+            Provider::Esplora,
+            Provider::Electrum,
+        ] {
+            let button = if self.provider == provider {
+                button::primary(None, localized_copy(provider.label()))
+            } else {
+                button::secondary(None, localized_copy(provider.label()))
+            };
+            provider_row = provider_row.push(button.width(iced::Length::Fill).on_press_maybe(
+                enabled.then_some(view::Message::ImportedBitcoin(
+                    ImportMessage::ProviderSelected(provider),
+                )),
+            ));
+            if matches!(provider, Provider::Public | Provider::Electrum) {
+                providers = providers.push(provider_row);
+                provider_row = Row::new().spacing(8);
+            }
+        }
+        content = content.push(providers);
+        if matches!(self.provider, Provider::Esplora | Provider::Electrum) {
+            content = content.push(
+                text_input(localized_copy("Server URL"), &self.endpoint)
+                    .on_input(|s| view::Message::ImportedBitcoin(ImportMessage::EndpointEdited(s)))
+                    .padding(10),
+            );
+        }
+        content
     }
 
     /// The Vault page while the history scan runs. Once it finishes, the
