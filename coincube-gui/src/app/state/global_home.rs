@@ -1185,177 +1185,7 @@ impl State for GlobalHome {
                     HomeMessage::RestartTransfer => self.restart_transfer(&daemon, cache),
                     HomeMessage::AmountEdited(amount) => self.edit_transfer_amount(cache, amount),
                     HomeMessage::TransferMax => self.use_transfer_max(cache),
-                    HomeMessage::SignVaultTransferTx => {
-                        if !self.vault_available(cache) {
-                            return Task::none();
-                        }
-                        if !self.destination_is_ready() {
-                            return Task::none();
-                        }
-                        let generation = self.transfer_request_generation;
-                        if let Some(transfer_direction) = self.transfer_direction {
-                            // Shared signer path for every Vault-sourced
-                            // direction — `receive_address_info` is the only
-                            // thing that differs between them.
-                            if matches!(
-                                transfer_direction,
-                                TransferDirection::VaultToSpark
-                                    | TransferDirection::VaultToOtherSpark
-                                    | TransferDirection::VaultToOtherCube
-                            ) {
-                                // Another Cube must still be unlocked for this
-                                // transfer (leaving the page locks it), whichever
-                                // of its wallets receives.
-                                if transfer_direction.is_other_cube() {
-                                    if let Err(refusal) = self.check_other_review_address(cache) {
-                                        return self.restart_other_cube_unlock(refusal);
-                                    }
-                                }
-                                if let Some(address_info) = self.receive_address_info.clone() {
-                                    if let Some(daemon) = daemon {
-                                        let denomination = if matches!(
-                                            self.transfer_unit,
-                                            crate::app::settings::unit::BitcoinDisplayUnit::BTC
-                                        ) {
-                                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                                        } else {
-                                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                                        };
-                                        if let Ok(amount) = Amount::from_str_in(
-                                            &self.entered_amount.value,
-                                            denomination,
-                                        ) {
-                                            let amount_sat = amount.to_sat();
-                                            let destination = address_info.address.to_string();
-                                            let mut destinations = std::collections::HashMap::new();
-                                            destinations.insert(
-                                                address_info.address.as_unchecked().clone(),
-                                                amount_sat,
-                                            );
-
-                                            // Max sweeps every owned coin to the
-                                            // destination, as the preview priced it.
-                                            let sweep = self
-                                                .sends_max()
-                                                .then(|| vault_sweep_coins(cache).0);
-                                            let script = address_info.address.script_pubkey();
-                                            let daemon_clone = daemon.clone();
-                                            let wallet = self.wallet.clone();
-                                            let cache_clone =
-                                                (cache.datadir_path.clone(), cache.network);
-                                            // User-picked feerate from the confirm-screen feerate
-                                            // input (§Design section 9). Parsing is already gated
-                                            // on `transfer_feerate.valid`, so a `parse` failure
-                                            // here indicates a bypass — short-circuit instead of
-                                            // silently falling back to an estimator.
-                                            let feerate_vb = match self
-                                                .transfer_feerate
-                                                .value
-                                                .trim()
-                                                .parse::<u64>()
-                                            {
-                                                Ok(v) if v > 0 => v,
-                                                _ => {
-                                                    return Task::done(Message::View(
-                                                        view::Message::Home(HomeMessage::Error(
-                                                            TransferError::InvalidFeerate,
-                                                        )),
-                                                    ));
-                                                }
-                                            };
-                                            self.is_sending = true;
-                                            self.transfer_feerate_loading = None;
-                                            self.next_psbt_request_id =
-                                                self.next_psbt_request_id.wrapping_add(1);
-                                            let request_id = self.next_psbt_request_id;
-                                            self.active_psbt_request = Some(request_id);
-                                            self.transfer_spend_tx = None;
-                                            self.transfer_psbt_ready_for = None;
-                                            self.transfer_signed = false;
-                                            return Task::perform(
-                                                async move {
-                                                    let built = match &sweep {
-                                                        Some(coins) => {
-                                                            daemon_clone
-                                                                .create_spend_tx(
-                                                                    coins,
-                                                                    &HashMap::new(),
-                                                                    feerate_vb,
-                                                                    destinations
-                                                                        .keys()
-                                                                        .next()
-                                                                        .cloned(),
-                                                                )
-                                                                .await
-                                                        }
-                                                        None => {
-                                                            daemon_clone
-                                                                .create_spend_tx(
-                                                                    &[],
-                                                                    &destinations,
-                                                                    feerate_vb,
-                                                                    None,
-                                                                )
-                                                                .await
-                                                        }
-                                                    };
-                                                    let psbt = match built {
-                                                        Ok(CreateSpendResult::Success {
-                                                            psbt,
-                                                            ..
-                                                        }) => psbt,
-                                                        Ok(
-                                                            CreateSpendResult::InsufficientFunds {
-                                                                missing,
-                                                            },
-                                                        ) => {
-                                                            return Err(format!("Insufficient funds: {} sats missing", missing));
-                                                        }
-                                                        Err(e) => {
-                                                            return Err(format!(
-                                                                "Failed to create transaction: {}",
-                                                                e
-                                                            ));
-                                                        }
-                                                    };
-
-                                                    if sweep.is_some()
-                                                        && paid_to(&psbt, &script).to_sat()
-                                                            != amount_sat
-                                                    {
-                                                        return Err(coincube_ui::locale::copy("The Vault balance changed. Go back and choose Max again.").to_string());
-                                                    }
-
-                                                    daemon_clone
-                                                        .update_spend_tx(&psbt)
-                                                        .await
-                                                        .map_err(|e| {
-                                                            format!("Failed to save PSBT: {}", e)
-                                                        })?;
-
-                                                    Ok((psbt, wallet, cache_clone))
-                                                },
-                                                move |result| {
-                                                    Message::View(view::Message::Home(
-                                                        HomeMessage::TransferPsbtReady {
-                                                            request_id,
-                                                            generation,
-                                                            direction: transfer_direction,
-                                                            destination,
-                                                            amount_sat,
-                                                            feerate_vb,
-                                                            result,
-                                                        },
-                                                    ))
-                                                },
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Task::none()
-                    }
+                    HomeMessage::SignVaultTransferTx => self.sign_vault_transfer_tx(daemon, cache),
                     HomeMessage::ConfirmTransfer => {
                         if !self.destination_is_ready() {
                             return Task::none();
@@ -1536,157 +1366,19 @@ impl State for GlobalHome {
                         amount_sat,
                         feerate_vb,
                         result,
-                    } => {
-                        if self.active_psbt_request != Some(request_id) {
-                            return Task::none();
-                        }
-                        // This result owns the busy state. Release it even if
-                        // the fee or amount changed while the PSBT was built;
-                        // otherwise a rejected result strands Back and Sign.
-                        self.active_psbt_request = None;
-                        self.is_sending = false;
-                        let denomination = if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC)
-                        {
-                            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
-                        } else {
-                            coincube_core::miniscript::bitcoin::Denomination::Satoshi
-                        };
-                        if !self.vault_available(cache)
-                            || !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                            || self
-                                .receive_address_info
-                                .as_ref()
-                                .map(|info| info.address.to_string())
-                                != Some(destination)
-                            || Amount::from_str_in(&self.entered_amount.value, denomination)
-                                .ok()
-                                .map(|amount| amount.to_sat())
-                                != Some(amount_sat)
-                            || self.transfer_feerate.value.trim().parse::<u64>().ok()
-                                != Some(feerate_vb)
-                        {
-                            return Task::none();
-                        }
-                        // Leaving the page while this PSBT was built locked the
-                        // other Cube: open no signer; its unlock starts over.
-                        if direction.is_other_cube() {
-                            if let Err(refusal) = self.check_other_review_address(cache) {
-                                return self.restart_other_cube_unlock(refusal);
-                            }
-                        }
-                        match result {
-                            Ok((psbt, wallet, (datadir_path, network))) => {
-                                if let Some(wallet) = wallet {
-                                    use coincube_core::wallet_descriptor::SpendAnalysis;
-                                    let descriptor = &wallet.main_descriptor;
-                                    let sigs = match descriptor.spend_info(&psbt) {
-                                        Ok(info) => info,
-                                        Err(e) => {
-                                            let err_msg =
-                                                format!("Failed to get signature info: {}", e);
-                                            return Task::done(Message::View(
-                                                view::Message::ShowError(err_msg),
-                                            ));
-                                        }
-                                    };
-
-                                    let spend_amount =
-                                        psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
-
-                                    // Use primary path if no inputs are using a relative locktime
-                                    let use_primary_path = !psbt
-                                        .unsigned_tx
-                                        .input
-                                        .iter()
-                                        .map(|txin| txin.sequence)
-                                        .any(|seq| seq.is_relative_lock_time());
-                                    let max_vbytes = descriptor
-                                        .spend_max_vbytes(&psbt.unsigned_tx, use_primary_path);
-                                    let fees = psbt.fee().expect("Fees should be present");
-                                    self.spend_tx_fees = Some(fees);
-
-                                    // Create minimal SpendTx
-                                    let spend_tx = SpendTx {
-                                        network,
-                                        psbt: psbt.clone(),
-                                        coins: std::collections::HashMap::new(), // Empty for transfer
-                                        labels: HashMap::new(),
-                                        sigs,
-                                        change_indexes: vec![],
-                                        spend_amount,
-                                        fee_amount: None,
-                                        max_vbytes,
-                                        status: crate::daemon::model::SpendStatus::Pending,
-                                        updated_at: Some(
-                                            std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap()
-                                                .as_secs()
-                                                as u32,
-                                        ),
-                                        kind: crate::daemon::model::TransactionKind::SendToSelf,
-                                    };
-
-                                    self.transfer_spend_tx = Some(spend_tx);
-                                    self.transfer_psbt_ready_for =
-                                        Some((request_id, generation, direction));
-
-                                    // Create the SignModal. This send-to-self
-                                    // transfer signs locally only — no nested
-                                    // Keychain flow.
-                                    let sign_modal = SignModal::new(
-                                        std::collections::HashSet::new(),
-                                        wallet,
-                                        datadir_path,
-                                        network,
-                                        true,
-                                        None,
-                                        None,
-                                        false,
-                                    );
-
-                                    self.modal = Modal::Sign(Box::new(sign_modal));
-                                } else {
-                                    return Task::done(Message::View(view::Message::ShowError(
-                                        "Wallet not available".to_string(),
-                                    )));
-                                }
-                            }
-                            Err(e) => {
-                                return Task::done(Message::View(view::Message::ShowError(
-                                    crate::user_error::UserError::logged(
-                                        "Couldn't prepare that transfer for signing",
-                                        "Try again. If it keeps failing, contact support and quote the reference below.",
-                                        crate::user_error::CC_SPEND,
-                                        true,
-                                        e,
-                                    )
-                                    .toast(),
-                                )));
-                            }
-                        }
-                        Task::none()
-                    }
+                    } => self.on_transfer_psbt_ready(
+                        cache,
+                        (request_id, generation, direction),
+                        destination,
+                        amount_sat,
+                        feerate_vb,
+                        result,
+                    ),
                     HomeMessage::TransferSigningComplete {
                         request_id,
                         generation,
                         direction,
-                    } => {
-                        if !self.destination_response_is_current(generation, direction)
-                            || !self.destination_is_ready()
-                            || self.transfer_psbt_ready_for
-                                != Some((request_id, generation, direction))
-                            || self.transfer_spend_tx.is_none()
-                            || !matches!(self.modal, Modal::Sign(_))
-                        {
-                            return Task::none();
-                        }
-                        self.transfer_signed = true;
-                        self.modal = Modal::None;
-                        self.is_sending = false;
-                        Task::none()
-                    }
+                    } => self.on_transfer_signing_complete(request_id, generation, direction),
                     HomeMessage::TransferPsbtPreviewReady {
                         generation,
                         direction,
@@ -1774,7 +1466,325 @@ impl State for GlobalHome {
     }
 }
 
+type VaultTransferPsbtResult = Result<
+    (
+        Psbt,
+        Option<Arc<Wallet>>,
+        (
+            CoincubeDirectory,
+            coincube_core::miniscript::bitcoin::Network,
+        ),
+    ),
+    String,
+>;
+
 impl GlobalHome {
+    fn sign_vault_transfer_tx(
+        &mut self,
+        daemon: Option<Arc<dyn Daemon + Sync + Send>>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        if !self.vault_available(cache) {
+            return Task::none();
+        }
+        if !self.destination_is_ready() {
+            return Task::none();
+        }
+        let generation = self.transfer_request_generation;
+        let Some(transfer_direction) = self.transfer_direction else {
+            return Task::none();
+        };
+        // Shared signer path for every Vault-sourced
+        // direction — `receive_address_info` is the only
+        // thing that differs between them.
+        if !matches!(
+            transfer_direction,
+            TransferDirection::VaultToSpark
+                | TransferDirection::VaultToOtherSpark
+                | TransferDirection::VaultToOtherCube
+        ) {
+            return Task::none();
+        }
+        // Another Cube must still be unlocked for this
+        // transfer (leaving the page locks it), whichever
+        // of its wallets receives.
+        if transfer_direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        let Some(address_info) = self.receive_address_info.clone() else {
+            return Task::none();
+        };
+        let Some(daemon) = daemon else {
+            return Task::none();
+        };
+        self.prepare_vault_signing_psbt(cache, daemon, generation, transfer_direction, address_info)
+    }
+
+    fn prepare_vault_signing_psbt(
+        &mut self,
+        cache: &Cache,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        generation: u64,
+        transfer_direction: TransferDirection,
+        address_info: ReceiveAddressInfo,
+    ) -> Task<Message> {
+        let denomination = if matches!(
+            self.transfer_unit,
+            crate::app::settings::unit::BitcoinDisplayUnit::BTC
+        ) {
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+        } else {
+            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+        };
+        let Ok(amount) = Amount::from_str_in(&self.entered_amount.value, denomination) else {
+            return Task::none();
+        };
+        let amount_sat = amount.to_sat();
+        let destination = address_info.address.to_string();
+        let mut destinations = std::collections::HashMap::new();
+        destinations.insert(address_info.address.as_unchecked().clone(), amount_sat);
+
+        // Max sweeps every owned coin to the
+        // destination, as the preview priced it.
+        let sweep = self.sends_max().then(|| vault_sweep_coins(cache).0);
+        let script = address_info.address.script_pubkey();
+        let daemon_clone = daemon.clone();
+        let wallet = self.wallet.clone();
+        let cache_clone = (cache.datadir_path.clone(), cache.network);
+        // User-picked feerate from the confirm-screen feerate
+        // input (§Design section 9). Parsing is already gated
+        // on `transfer_feerate.valid`, so a `parse` failure
+        // here indicates a bypass — short-circuit instead of
+        // silently falling back to an estimator.
+        let feerate_vb = match self.transfer_feerate.value.trim().parse::<u64>() {
+            Ok(v) if v > 0 => v,
+            _ => {
+                return Task::done(Message::View(view::Message::Home(HomeMessage::Error(
+                    TransferError::InvalidFeerate,
+                ))));
+            }
+        };
+        self.is_sending = true;
+        self.transfer_feerate_loading = None;
+        self.next_psbt_request_id = self.next_psbt_request_id.wrapping_add(1);
+        let request_id = self.next_psbt_request_id;
+        self.active_psbt_request = Some(request_id);
+        self.transfer_spend_tx = None;
+        self.transfer_psbt_ready_for = None;
+        self.transfer_signed = false;
+        Task::perform(
+            async move {
+                let built = match &sweep {
+                    Some(coins) => {
+                        daemon_clone
+                            .create_spend_tx(
+                                coins,
+                                &HashMap::new(),
+                                feerate_vb,
+                                destinations.keys().next().cloned(),
+                            )
+                            .await
+                    }
+                    None => {
+                        daemon_clone
+                            .create_spend_tx(&[], &destinations, feerate_vb, None)
+                            .await
+                    }
+                };
+                let psbt = match built {
+                    Ok(CreateSpendResult::Success { psbt, .. }) => psbt,
+                    Ok(CreateSpendResult::InsufficientFunds { missing }) => {
+                        return Err(format!("Insufficient funds: {} sats missing", missing));
+                    }
+                    Err(e) => {
+                        return Err(format!("Failed to create transaction: {}", e));
+                    }
+                };
+
+                if sweep.is_some() && paid_to(&psbt, &script).to_sat() != amount_sat {
+                    return Err(coincube_ui::locale::copy(
+                        "The Vault balance changed. Go back and choose Max again.",
+                    )
+                    .to_string());
+                }
+
+                daemon_clone
+                    .update_spend_tx(&psbt)
+                    .await
+                    .map_err(|e| format!("Failed to save PSBT: {}", e))?;
+
+                Ok((psbt, wallet, cache_clone))
+            },
+            move |result| {
+                Message::View(view::Message::Home(HomeMessage::TransferPsbtReady {
+                    request_id,
+                    generation,
+                    direction: transfer_direction,
+                    destination,
+                    amount_sat,
+                    feerate_vb,
+                    result,
+                }))
+            },
+        )
+    }
+
+    fn on_transfer_psbt_ready(
+        &mut self,
+        cache: &Cache,
+        request: (u64, u64, TransferDirection),
+        destination: String,
+        amount_sat: u64,
+        feerate_vb: u64,
+        result: VaultTransferPsbtResult,
+    ) -> Task<Message> {
+        let (request_id, generation, direction) = request;
+        if self.active_psbt_request != Some(request_id) {
+            return Task::none();
+        }
+        // This result owns the busy state. Release it even if
+        // the fee or amount changed while the PSBT was built;
+        // otherwise a rejected result strands Back and Sign.
+        self.active_psbt_request = None;
+        self.is_sending = false;
+        let denomination = if matches!(self.transfer_unit, BitcoinDisplayUnit::BTC) {
+            coincube_core::miniscript::bitcoin::Denomination::Bitcoin
+        } else {
+            coincube_core::miniscript::bitcoin::Denomination::Satoshi
+        };
+        if !self.vault_available(cache)
+            || !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+            || self
+                .receive_address_info
+                .as_ref()
+                .map(|info| info.address.to_string())
+                != Some(destination)
+            || Amount::from_str_in(&self.entered_amount.value, denomination)
+                .ok()
+                .map(|amount| amount.to_sat())
+                != Some(amount_sat)
+            || self.transfer_feerate.value.trim().parse::<u64>().ok() != Some(feerate_vb)
+        {
+            return Task::none();
+        }
+        // Leaving the page while this PSBT was built locked the
+        // other Cube: open no signer; its unlock starts over.
+        if direction.is_other_cube() {
+            if let Err(refusal) = self.check_other_review_address(cache) {
+                return self.restart_other_cube_unlock(refusal);
+            }
+        }
+        match result {
+            Ok((psbt, wallet, (datadir_path, network))) => {
+                if let Some(wallet) = wallet {
+                    use coincube_core::wallet_descriptor::SpendAnalysis;
+                    let descriptor = &wallet.main_descriptor;
+                    let sigs = match descriptor.spend_info(&psbt) {
+                        Ok(info) => info,
+                        Err(e) => {
+                            let err_msg = format!("Failed to get signature info: {}", e);
+                            return Task::done(Message::View(view::Message::ShowError(err_msg)));
+                        }
+                    };
+
+                    let spend_amount = psbt.unsigned_tx.output.iter().map(|out| out.value).sum();
+
+                    // Use primary path if no inputs are using a relative locktime
+                    let use_primary_path = !psbt
+                        .unsigned_tx
+                        .input
+                        .iter()
+                        .map(|txin| txin.sequence)
+                        .any(|seq| seq.is_relative_lock_time());
+                    let max_vbytes =
+                        descriptor.spend_max_vbytes(&psbt.unsigned_tx, use_primary_path);
+                    let fees = psbt.fee().expect("Fees should be present");
+                    self.spend_tx_fees = Some(fees);
+
+                    // Create minimal SpendTx
+                    let spend_tx = SpendTx {
+                        network,
+                        psbt: psbt.clone(),
+                        coins: std::collections::HashMap::new(), // Empty for transfer
+                        labels: HashMap::new(),
+                        sigs,
+                        change_indexes: vec![],
+                        spend_amount,
+                        fee_amount: None,
+                        max_vbytes,
+                        status: crate::daemon::model::SpendStatus::Pending,
+                        updated_at: Some(
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap()
+                                .as_secs() as u32,
+                        ),
+                        kind: crate::daemon::model::TransactionKind::SendToSelf,
+                    };
+
+                    self.transfer_spend_tx = Some(spend_tx);
+                    self.transfer_psbt_ready_for = Some((request_id, generation, direction));
+
+                    // Create the SignModal. This send-to-self
+                    // transfer signs locally only — no nested
+                    // Keychain flow.
+                    let sign_modal = SignModal::new(
+                        std::collections::HashSet::new(),
+                        wallet,
+                        datadir_path,
+                        network,
+                        true,
+                        None,
+                        None,
+                        false,
+                    );
+
+                    self.modal = Modal::Sign(Box::new(sign_modal));
+                } else {
+                    return Task::done(Message::View(view::Message::ShowError(
+                        "Wallet not available".to_string(),
+                    )));
+                }
+            }
+            Err(e) => {
+                return Task::done(Message::View(view::Message::ShowError(
+                    crate::user_error::UserError::logged(
+                        "Couldn't prepare that transfer for signing",
+                        "Try again. If it keeps failing, contact support and quote the reference below.",
+                        crate::user_error::CC_SPEND,
+                        true,
+                        e,
+                    )
+                    .toast(),
+                )));
+            }
+        }
+        Task::none()
+    }
+
+    fn on_transfer_signing_complete(
+        &mut self,
+        request_id: u64,
+        generation: u64,
+        direction: TransferDirection,
+    ) -> Task<Message> {
+        if !self.destination_response_is_current(generation, direction)
+            || !self.destination_is_ready()
+            || self.transfer_psbt_ready_for != Some((request_id, generation, direction))
+            || self.transfer_spend_tx.is_none()
+            || !matches!(self.modal, Modal::Sign(_))
+        {
+            return Task::none();
+        }
+        self.transfer_signed = true;
+        self.modal = Modal::None;
+        self.is_sending = false;
+        Task::none()
+    }
+
     fn fetch_transfer_feerate_preset(&mut self, preset: FeeratePreset) -> Task<Message> {
         if self.is_sending {
             return Task::none();
