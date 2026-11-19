@@ -438,8 +438,8 @@ impl State for CreateSpendPanel {
         ];
         // Default the feerate to "Normal" (~1h, 6-block target) the first time
         // this panel loads, so amounts/fees compute immediately. Recovery
-        // starts on the path-selection step, which wouldn't consume it: its
-        // DefineSpend requests the same default itself once it is shown.
+        // starts on the path-selection step. DefineSpend requests Normal when
+        // the recovery form first becomes visible.
         // `reload` runs only for the panel on screen: the step shown again
         // requests what was in flight when the panel was left.
         if let Some(step) = self.steps.get_mut(self.current) {

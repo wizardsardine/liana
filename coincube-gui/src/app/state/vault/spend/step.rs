@@ -1542,10 +1542,8 @@ impl Step for DefineSpend {
     fn resume(&mut self) -> Task<Message> {
         let redraft = std::mem::take(&mut self.resume_redraft);
         match self.resume_fee_estimate.take() {
-            // A fetch dropped by `interrupt`, or the Normal default a new
-            // recovery form starts on (`starting_on_normal_feerate`). A new
-            // request: an earlier estimate, if it still lands here, is stale.
-            // This estimate landing drafts again.
+            // Resume an interrupted estimate or start the recovery default
+            // now that the form is visible. Earlier replies are stale.
             Some(block_target) => self.fetch_fee_estimate(block_target),
             _ if redraft && self.draft_pending => self.schedule_redraft(),
             _ => Task::none(),
@@ -3711,6 +3709,91 @@ mod tests {
         assert!(!state.resume_redraft);
         assert!(state.draft_pending);
         assert_ne!(state.redraft_seq, seq);
+    }
+
+    /// Back from the review step: a draft that started while preparing
+    /// delivered its result to the review step, where it was dropped, so
+    /// the form drafts again instead of holding Prepare on "Calculating…".
+    #[tokio::test]
+    async fn back_from_review_redrafts_a_draft_dropped_during_preparation() {
+        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(vec![]).run(),
+        ));
+        let mut state = branta_form();
+        let back = |state: &mut DefineSpend| {
+            state.update(
+                daemon.clone(),
+                &Cache::default(),
+                Message::View(view::Message::Previous),
+            )
+        };
+        state.amount_left_to_select = Some(Amount::ZERO);
+        drop(state.schedule_redraft());
+        assert!(state.drafting());
+        let seq = state.redraft_seq;
+        assert!(back(&mut state).units() > 0);
+        assert_ne!(state.redraft_seq, seq, "a fresh draft, not the dropped one");
+        assert!(state.drafting());
+
+        // Nothing pending: Back requests nothing.
+        state.draft_pending = false;
+        assert_eq!(back(&mut state).units(), 0);
+    }
+
+    /// The panel wiring around `resume`: a cache refresh reaching the hidden
+    /// panel requests nothing, and `reload` (run only for the panel on
+    /// screen) requests the preset's estimate again, once.
+    #[tokio::test]
+    async fn the_panel_resumes_a_dropped_fetch_only_once_shown_again() {
+        use crate::app::state::State;
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        let mut panel = super::super::CreateSpendPanel::new(
+            wallet(),
+            &[coin(1, 50_000, Some(90))],
+            100,
+            Network::Bitcoin,
+            Amount::from_sat(50_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        );
+        // The first reload also asks for Normal; later ones do not.
+        drop(panel.reload(Some(daemon.clone()), Some(wallet())));
+        let baseline = panel.reload(Some(daemon.clone()), Some(wallet())).units();
+
+        drop(panel.update(
+            Some(daemon.clone()),
+            &cache,
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FetchFeeEstimate(1),
+            )),
+        ));
+        // Fast is fetching when the user leaves Send.
+        panel.interrupt();
+        assert_eq!(
+            panel
+                .update(
+                    Some(daemon.clone()),
+                    &cache,
+                    Message::UpdatePanelCache(false)
+                )
+                .units(),
+            0,
+            "nothing is requested while hidden"
+        );
+        assert_eq!(
+            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
+            baseline + 1,
+            "shown again: Fast is fetched anew"
+        );
+        assert_eq!(
+            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
+            baseline,
+            "and only once"
+        );
     }
 
     /// A recovery's DefineSpend starts on Normal once shown, keeps the rate
