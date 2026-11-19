@@ -1161,6 +1161,7 @@ pub async fn load_application(
         lightning_address_setup: crate::app::cache::LightningAddressSetup::Idle,
         balance_privacy: None,
         btc_usd_price: None,
+        btc_usd_requested_at: None,
         show_direction_badges: true,
         lightning_address: None,
         avatar_handle: None,
