@@ -175,14 +175,18 @@ mod backend {
     /// no record, and the daemon dies on `gkd_secret_service_get_pkcs11_session:
     /// assertion 'client' failed` followed by a `g_variant_new` GLib-ERROR
     /// (SIGABRT). That takes down the user's whole login keyring, not just
-    /// this app's items. Against gnome-keyring 50.0 it aborted in 2 of 3
+    /// this app's items. This lock covers the device-secret calls, which are
+    /// the only keystore calls the test suite makes; the Buy/Sell and Connect
+    /// session entries still call `keyring` directly. Against gnome-keyring 50.0 it aborted in 2 of 3
     /// 90-second runs with four concurrent clients and 3 of 3 with sixteen,
     /// and never with one or two. CI runs these tests under
     /// `contrib/with_test_keyring.py`, which fails the run if the daemon dies.
     ///
-    /// Each call is short and none re-enters this lock, so a process-wide
-    /// leaf mutex costs nothing that matters and cannot deadlock against
-    /// [`super::provision_lock`]. A panic while it is held cannot have left
+    /// No call re-enters this lock, so a process-wide leaf mutex cannot
+    /// deadlock against [`super::provision_lock`]. Calls are normally a few
+    /// milliseconds; if the Secret Service shows an unlock prompt, other
+    /// device-secret calls wait for the user's answer, which they would need
+    /// anyway. A panic while it is held cannot have left
     /// the keystore half-written by this lock's doing, so a poisoned guard is
     /// taken over rather than failing every later call.
     #[cfg(not(target_os = "macos"))]

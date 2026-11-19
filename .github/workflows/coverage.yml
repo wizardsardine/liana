@@ -97,7 +97,14 @@ jobs:
           path: |
             target/coverage/lcov.info
             target/coverage/summary.json
-            test-logs/gnome-keyring.log
+
+      - name: Preserve Secret Service fixture diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: keyring-fixture-coverage
+          path: test-logs/gnome-keyring.log
+          if-no-files-found: ignore
 
   spark-bridge-coverage:
     if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.action != 'edited' || github.event.changes.base != null))) }}
