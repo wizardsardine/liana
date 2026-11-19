@@ -555,11 +555,14 @@ pub fn create_spend_tx<'a>(
 
     // A preset's estimate on its way replaces the rate in the field, so the
     // draft (and, for a self-transfer or recovery, the rate itself) is stale
-    // until it lands.
+    // until it lands; then Prepare waits for the draft at the new rate. A
+    // self-transfer or recovery never waits on `amount_left`, so the pending
+    // draft must hold it directly.
     let can_proceed = is_valid
         && blocking_warning.is_none()
         && !duplicate
         && loading_fee_estimate.is_none()
+        && !drafting
         && (is_self_send
             || recovery_timelock.is_some()
             || Some(&Amount::from_sat(0)) == amount_left);
@@ -2632,6 +2635,36 @@ mod tests {
                     ..base.clone()
                 },
                 present: &["Recovery", FETCHING_FEE_HINT],
+                absent: &[],
+                prepare_enabled: false,
+                add_shown: false,
+            },
+            Case {
+                // The estimate has landed and its draft is running: a
+                // recovery waits for it too.
+                name: "drafting-recovery",
+                scenario: Scenario {
+                    recovery: true,
+                    first_step: false,
+                    amount_left: None,
+                    drafting: true,
+                    ..base.clone()
+                },
+                present: &["Recovery", CALCULATING_HINT],
+                absent: &[],
+                prepare_enabled: false,
+                add_shown: false,
+            },
+            Case {
+                // A self-transfer likewise.
+                name: "drafting-self-transfer",
+                scenario: Scenario {
+                    recipients: 0,
+                    amount_left: None,
+                    drafting: true,
+                    ..base.clone()
+                },
+                present: &["Self-transfer", CALCULATING_HINT],
                 absent: &[],
                 prepare_enabled: false,
                 add_shown: false,
