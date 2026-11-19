@@ -2465,6 +2465,48 @@ impl GUI {
         Continue(route_guarded_tab_result(pane_id, tab_id, *message))
     }
 
+    // Every hosted fork PIN starts with a completed, scoped account
+    // candidate. A cold Home can borrow one unambiguous verified sibling;
+    // an account still being checked cannot bypass its gate that way.
+    fn fork_pin_candidate(
+        &self,
+        message: &Message,
+    ) -> Option<(pane_grid::Pane, usize, ForkUnlockCandidate)> {
+        match message {
+            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match inner.as_ref() {
+                tab::Message::Launch(
+                    home::Message::Run(root, _, chain, _)
+                    | home::Message::RunFromFloor(root, _, chain, _, _)
+                    | home::Message::RunToRecovery(root, _, chain, _),
+                ) if chain.is_blake2b() => {
+                    self.panes
+                        .get(*pane_id)
+                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
+                        .and_then(|tab| match &tab.state {
+                            tab::State::Home(home) => {
+                                let candidate = if home.connect_account.is_authenticated() {
+                                    self.verified_unlock_origin(*pane_id, *tab_id)
+                                } else if home.connect_account.authenticated_client().is_none() {
+                                    self.unique_unlock_candidate(
+                                        root,
+                                        &home.connect_account.client.base_url,
+                                    )
+                                } else {
+                                    // A retained token while this Home's account
+                                    // gate is checking or closed is not admission.
+                                    None
+                                };
+                                candidate.map(|candidate| (*pane_id, *tab_id, candidate))
+                            }
+                            _ => None,
+                        })
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn update_in_language(&mut self, message: Message) -> Task<Message> {
         if self
             .preferences_sheet
@@ -2528,42 +2570,7 @@ impl GUI {
             std::ops::ControlFlow::Continue(message) => message,
             std::ops::ControlFlow::Break(task) => return task,
         };
-        // Every hosted fork PIN starts with a completed, scoped account
-        // candidate. A cold Home can borrow one unambiguous verified sibling;
-        // an account still being checked cannot bypass its gate that way.
-        let opening_pin = match &message {
-            Message::Pane(pane_id, pane::Message::Tab(tab_id, inner)) => match inner.as_ref() {
-                tab::Message::Launch(
-                    home::Message::Run(root, _, chain, _)
-                    | home::Message::RunFromFloor(root, _, chain, _, _)
-                    | home::Message::RunToRecovery(root, _, chain, _),
-                ) if chain.is_blake2b() => {
-                    self.panes
-                        .get(*pane_id)
-                        .and_then(|pane| pane.tabs.iter().find(|tab| tab.id == *tab_id))
-                        .and_then(|tab| match &tab.state {
-                            tab::State::Home(home) => {
-                                let candidate = if home.connect_account.is_authenticated() {
-                                    self.verified_unlock_origin(*pane_id, *tab_id)
-                                } else if home.connect_account.authenticated_client().is_none() {
-                                    self.unique_unlock_candidate(
-                                        root,
-                                        &home.connect_account.client.base_url,
-                                    )
-                                } else {
-                                    // A retained token while this Home's account
-                                    // gate is checking or closed is not admission.
-                                    None
-                                };
-                                candidate.map(|candidate| (*pane_id, *tab_id, candidate))
-                            }
-                            _ => None,
-                        })
-                }
-                _ => None,
-            },
-            _ => None,
-        };
+        let opening_pin = self.fork_pin_candidate(&message);
         // Shared-client restore reaches readiness without SetSession. Capture
         // its exact current origin before Pane converts this to an originless intent.
         let ready_unlock = match &message {
