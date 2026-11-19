@@ -9823,14 +9823,6 @@ pub enum DaemonRestart {
     Panicked(Error),
 }
 
-/// Stop `old_daemon`, start a new one for `cfg`, then persist `daemon.toml`.
-///
-/// This is the blocking half of a backend switch, factored out of the App so it
-/// can run on a `spawn_blocking` task rather than the UI thread (see
-/// [`App::spawn_daemon_switch`]). `daemon.stop()` can block until a poller
-/// finishes a slow scan, and `EmbeddedDaemon::start` is synchronous, so running
-/// this inline froze the app. On a start failure the previous daemon is brought
-/// back so the app is never left without one.
 fn start_daemon_for_restart(
     config: DaemonConfig,
     connect_client: Option<&crate::services::coincube::CoincubeClient>,
@@ -9890,6 +9882,14 @@ fn verify_daemon_restart_backend(
     Ok(())
 }
 
+/// Stop `old_daemon`, start a new one for `cfg`, then persist `daemon.toml`.
+///
+/// This is the blocking half of a backend switch, factored out of the App so it
+/// can run on a `spawn_blocking` task rather than the UI thread (see
+/// [`App::spawn_daemon_switch`]). `daemon.stop()` can block until a poller
+/// finishes a slow scan, and `EmbeddedDaemon::start` is synchronous, so running
+/// this inline froze the app. On a start failure the previous daemon is brought
+/// back so the app is never left without one.
 fn restart_daemon_blocking_guarded(
     old_daemon: Option<Arc<dyn Daemon + Sync + Send>>,
     cfg: DaemonConfig,
