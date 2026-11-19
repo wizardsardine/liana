@@ -113,6 +113,9 @@ pub enum Message {
     /// PLAN-duress-vault-gate PR 3). The result is logged inside the task and
     /// discarded here — it must never block or affect the UI.
     CubeVaultReported,
+    /// An imported Vault's Bitcoin Blake2b copy (its paired Cube) was
+    /// created, or why not.
+    ImportedCopyCreated(Result<(), String>),
     /// Terminal no-op for the fire-and-forget push of a Spark Stable Balance
     /// decision to the Cube's Connect record
     /// (`ConnectCubePanel::report_spark_stable_balance`). Logged inside the
@@ -165,6 +168,12 @@ pub enum Message {
     /// An imported wallet's keys stored in this Cube, for the signer picker.
     CubeKeys(Result<Vec<crate::services::imported_keys::LocalKeyRecord>, String>),
     WalletUpdated(Result<Arc<Wallet>, Error>),
+    /// The result of one imported Vault registration in Vault Settings.
+    DeviceRegistered {
+        attempt: uuid::Uuid,
+        fingerprint: Fingerprint,
+        result: Result<(), Error>,
+    },
     Updated(Result<(), Error>),
     /// UI-only signal to recompute collected signatures and re-evaluate the
     /// Sign picker's close/broadcast state after an in-memory PSBT merge —

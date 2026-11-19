@@ -1798,9 +1798,11 @@ impl KeychainSignModal {
         };
         match returned_wire_psbt(self.wallet.chain, &bytes) {
             Ok(psbt) => {
-                if let Err(e) =
-                    super::psbt::merge_signatures_pub(self.wallet.chain, signed_psbt, &psbt)
-                {
+                if let Err(e) = super::psbt::merge_signatures_pub(
+                    super::psbt::uses_unified_signatures(&self.wallet),
+                    signed_psbt,
+                    &psbt,
+                ) {
                     // Nothing merged, nothing persisted: the row fails
                     // with the adapter's reason instead of the daemon
                     // refusing later.
@@ -2951,6 +2953,53 @@ pub(crate) mod tests {
             empty_psbt(),
             Some(Arc::new(test_transport_key())),
         )
+    }
+
+    /// An imported wallet makes ordinary signatures on every chain, so its
+    /// Keychain merge must not take the unified adapter, and it never starts
+    /// a Mobile signing session in the first place (no Vault descriptor).
+    #[test]
+    fn imported_wallets_never_start_mobile_signing_or_merge_unified() {
+        use crate::chain::ChainId;
+        use coincube_core::{
+            miniscript::bitcoin::{
+                bip32::{DerivationPath, Xpriv, Xpub},
+                secp256k1, Network,
+            },
+            wallet_descriptor::{ImportedWalletDescriptor, WalletDescriptor},
+        };
+        let secp = secp256k1::Secp256k1::new();
+        let master = Xpriv::new_master(Network::Bitcoin, &[7; 32]).unwrap();
+        let account = master
+            .derive_priv(&secp, &DerivationPath::from_str("m/84'/0'/0'").unwrap())
+            .unwrap();
+        let key = format!(
+            "[{}/84'/0'/0']{}",
+            master.fingerprint(&secp),
+            Xpub::from_priv(&secp, &account)
+        );
+        for chain in [ChainId::Bitcoin, ChainId::BitcoinBlake2b] {
+            let imported = ImportedWalletDescriptor::parse(
+                &format!("wpkh({key}/0/*)"),
+                Some(&format!("wpkh({key}/1/*)")),
+                chain,
+            )
+            .unwrap();
+            let wallet = Wallet::new(WalletDescriptor::Imported(imported)).with_chain(chain);
+            assert!(!crate::app::state::vault::psbt::uses_unified_signatures(
+                &wallet
+            ));
+            let mut m = modal();
+            m.wallet = Arc::new(wallet);
+            m.pending.push(pending(PendingSessionStatus::Idle));
+            let task = m.create_session_for(0);
+            assert!(iced_runtime::task::into_stream(task).is_none());
+            assert_eq!(m.pending[0].status, PendingSessionStatus::Failed);
+            assert_eq!(
+                m.pending[0].error.as_deref(),
+                Some("Imported wallets do not use Mobile signing.")
+            );
+        }
     }
 
     // ── Unresolved-signer copy ──────────────────────────────────────────
@@ -4124,12 +4173,8 @@ pub(crate) mod tests {
             .unwrap();
             assert!(Psbt::deserialize(&wire).is_err());
             let mut expected = f.psbt.clone();
-            crate::app::state::vault::psbt::merge_signatures_pub(
-                ChainId::BitcoinBlake2b,
-                &mut expected,
-                &signed,
-            )
-            .unwrap();
+            crate::app::state::vault::psbt::merge_signatures_pub(true, &mut expected, &signed)
+                .unwrap();
             let mut modal = modal_on(&f, ChainId::BitcoinBlake2b, &f.psbt, &key);
             let mut tx = spend_tx(&f, &f.psbt);
             let daemon: Arc<dyn Daemon + Sync + Send> =
@@ -4185,18 +4230,10 @@ pub(crate) mod tests {
             let mut modal = modal_on(&f, ChainId::BitcoinBlake2b, &f.psbt, &key);
             let mut tx = spend_tx(&f, &f.psbt);
             let mut expected = f.psbt.clone();
-            crate::app::state::vault::psbt::merge_signatures_pub(
-                ChainId::BitcoinBlake2b,
-                &mut expected,
-                &first,
-            )
-            .unwrap();
-            crate::app::state::vault::psbt::merge_signatures_pub(
-                ChainId::BitcoinBlake2b,
-                &mut expected,
-                &second,
-            )
-            .unwrap();
+            crate::app::state::vault::psbt::merge_signatures_pub(true, &mut expected, &first)
+                .unwrap();
+            crate::app::state::vault::psbt::merge_signatures_pub(true, &mut expected, &second)
+                .unwrap();
             // The persisted row is the merged local PSBT, prevouts and all.
             let daemon: Arc<dyn Daemon + Sync + Send> =
                 Arc::new(crate::daemon::client::Coincubed::new(
@@ -4375,14 +4412,14 @@ pub(crate) mod tests {
             let former = {
                 let mut accumulator = first.clone();
                 crate::app::state::vault::psbt::merge_signatures_pub(
-                    ChainId::Bitcoin,
+                    false,
                     &mut accumulator,
                     &second,
                 )
                 .unwrap();
                 let mut destination = local.clone();
                 crate::app::state::vault::psbt::merge_signatures_pub(
-                    ChainId::Bitcoin,
+                    false,
                     &mut destination,
                     &accumulator,
                 )

@@ -18,7 +18,6 @@ use coincube_core::{
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeviceIdentityError {
-    UnsupportedChain,
     AccountNotInWallet,
     Cancelled,
     Device,
@@ -30,7 +29,6 @@ pub enum DeviceIdentityError {
 impl fmt::Display for DeviceIdentityError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
-            Self::UnsupportedChain => "This chain does not support imported device keys.",
             Self::AccountNotInWallet => "The selected account is not in both wallet branches.",
             Self::Cancelled => "The imported device check was cancelled.",
             Self::Device => "The connected device could not export this account.",
@@ -75,9 +73,6 @@ fn check_wallet(
     wallet: &ImportedWalletDescriptor,
     selected: &ImportedAccount,
 ) -> Result<sha256::Hash, DeviceIdentityError> {
-    if wallet.chain().is_blake2b() {
-        return Err(DeviceIdentityError::UnsupportedChain);
-    }
     if !account_in_both_branches(wallet, selected) {
         return Err(DeviceIdentityError::AccountNotInWallet);
     }

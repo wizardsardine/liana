@@ -394,14 +394,19 @@ fn account_authority_rejects_wrong_passphrase_account_policy_and_chain() {
         ChainId::BitcoinBlake2bTestnet4,
     )
     .unwrap();
+    // A Bitcoin Blake2b import stores its words like any other chain
+    // (Robert, 2026-11-17), but the key is scoped to that chain's wallet:
+    // it cannot sign for the Bitcoin import of the same descriptors.
+    let fork_key = verify_imported_account(
+        &fork,
+        &path,
+        Zeroizing::new(phrase.clone()),
+        Zeroizing::new(String::new()),
+    )
+    .expect("a Bitcoin Blake2b import accepts its recovery words");
     assert!(matches!(
-        verify_imported_account(
-            &fork,
-            &path,
-            Zeroizing::new(phrase.clone()),
-            Zeroizing::new(String::new()),
-        ),
-        Err(ImportedSignError::UnsupportedChain)
+        sign_imported_psbt(&wallet, &original, &original, &fork_key),
+        Err(ImportedSignError::WrongWallet)
     ));
     assert!(original.inputs[0].partial_sigs.is_empty());
 }

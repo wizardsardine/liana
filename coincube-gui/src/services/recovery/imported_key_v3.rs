@@ -124,8 +124,7 @@ impl io::Write for BoundedSecretWriter<'_> {
 impl ImportedKeyKitV3 {
     pub fn validate(&self) -> Result<(), String> {
         let chain = self.public.wallet.descriptor.chain();
-        if chain.is_blake2b()
-            || self.public.validate(chain).is_err()
+        if self.public.validate(chain).is_err()
             || self.public.cube.uuid.len() > 128
             || self.operation_id.is_nil()
             || self.public.import_operation_id != Some(self.operation_id)
