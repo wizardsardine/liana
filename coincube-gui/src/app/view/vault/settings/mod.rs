@@ -1908,6 +1908,8 @@ fn local_node_progress_block<'a>(
     local_heights: Option<(u64, u64)>,
     visible_log: Option<&'a str>,
 ) -> coincube_ui::widget::Column<'a, NodeSettingsMessage> {
+    use crate::app::view::settings::page;
+
     let percent = crate::utils::syncing_percent(progress);
     let mut block = Column::new().spacing(6).width(Length::Fill);
     if sync.still_syncing {
