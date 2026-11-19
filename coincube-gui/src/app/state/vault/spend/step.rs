@@ -425,13 +425,15 @@ impl DefineSpend {
                     .clone()
                     .filter(|value| *value != self.feerate.value)
                 {
-                    // The restored rate is drafted once it is applied: until
-                    // then the footer reads as calculating, not as missing
-                    // recipient details.
-                    self.draft_pending = true;
-                    return Task::done(Message::View(view::Message::CreateSpend(
+                    // Applied here rather than sent as a message: a message
+                    // lands on whatever is on screen, and would be lost if
+                    // the user left Send before it was handled. It drafts
+                    // the restored rate as a typed one does.
+                    return self.update_spend_form(
+                        daemon,
+                        cache,
                         CreateSpendMessage::FeerateEdited(value),
-                    )));
+                    );
                 }
                 // The dropped fetch had set the draft aside: the rate in the
                 // field stays, so draft it again.
@@ -457,12 +459,14 @@ impl DefineSpend {
                         // Fall back to the rate already in the field (now
                         // shown, as no preset fills it) and draft it again,
                         // so the form is not left waiting on a draft that
-                        // never comes.
+                        // never comes. The failure is reported by the error
+                        // alone: a `warning` would end `drafting()` and let
+                        // Prepare through before that draft lands (and the
+                        // draft clears it anyway).
                         self.selected_feerate_target = None;
                         let err: Error = SpendCreationError::FeeEstimationFailed.into();
                         let err_msg = crate::user_error::report(&err);
                         let redraft = self.schedule_redraft();
-                        self.warning = Some(err);
                         return Task::batch([
                             Task::done(Message::View(view::Message::ShowError(err_msg))),
                             redraft,
@@ -3486,8 +3490,15 @@ mod tests {
         assert_eq!(state.selected_feerate_target, None);
         assert_eq!(state.feerate.value, "40");
         assert!(state.custom_feerate_shown());
-        assert!(state.warning.is_some());
-        assert!(state.draft_pending);
+        // Reported by the error alone, so the draft still holds Prepare
+        // (a recovery or self-transfer never waits on `amount_left`).
+        assert!(state.warning.is_none());
+        assert!(state.drafting());
+        assert_eq!(
+            send(&mut state, view::CreateSpendMessage::Generate).units(),
+            0
+        );
+        assert!(!state.generating);
 
         // Custom while a preset is fetching, with the field's rate already
         // the custom one: nothing to restore, but the draft set aside by the
@@ -3505,8 +3516,8 @@ mod tests {
         assert!(state.draft_pending);
         assert!(state.drafting());
 
-        // Custom restoring a different typed rate: the restore is drafted
-        // once applied, so the footer reads as calculating meanwhile.
+        // Custom restoring a different typed rate mid-fetch: applied at
+        // once (a returned message could land on another page) and drafted.
         state.custom_feerate_value = Some("12".into());
         state.draft_pending = false;
         drop(send(
@@ -3514,10 +3525,8 @@ mod tests {
             view::CreateSpendMessage::FetchFeeEstimate(6),
         ));
         drop(send(&mut state, view::CreateSpendMessage::CustomFeerate));
-        assert_eq!(
-            state.feerate.value, "40",
-            "applied only once the returned message is"
-        );
+        assert_eq!(state.loading_fee_estimate, None);
+        assert_eq!(state.feerate.value, "12");
         assert!(state.drafting());
     }
 
@@ -3671,6 +3680,62 @@ mod tests {
         assert_eq!(state.resume_fee_estimate, None);
     }
 
+    /// The panel wiring around `resume`: a cache refresh reaching the hidden
+    /// panel requests nothing, and `reload` (run only for the panel on
+    /// screen) requests the preset's estimate again, once.
+    #[tokio::test]
+    async fn the_panel_resumes_a_dropped_fetch_only_once_shown_again() {
+        use crate::app::state::State;
+        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
+            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
+        );
+        let cache = Cache::default();
+        let mut panel = super::super::CreateSpendPanel::new(
+            wallet(),
+            &[coin(1, 50_000, Some(90))],
+            100,
+            Network::Bitcoin,
+            Amount::from_sat(50_000),
+            Amount::ZERO,
+            SyncStatus::Synced,
+            BitcoinDisplayUnit::Sats,
+        );
+        // The first reload also asks for Normal; later ones do not.
+        drop(panel.reload(Some(daemon.clone()), Some(wallet())));
+        let baseline = panel.reload(Some(daemon.clone()), Some(wallet())).units();
+
+        drop(panel.update(
+            Some(daemon.clone()),
+            &cache,
+            Message::View(view::Message::CreateSpend(
+                view::CreateSpendMessage::FetchFeeEstimate(1),
+            )),
+        ));
+        // Fast is fetching when the user leaves Send.
+        panel.interrupt();
+        assert_eq!(
+            panel
+                .update(
+                    Some(daemon.clone()),
+                    &cache,
+                    Message::UpdatePanelCache(false)
+                )
+                .units(),
+            0,
+            "nothing is requested while hidden"
+        );
+        assert_eq!(
+            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
+            baseline + 1,
+            "shown again: Fast is fetched anew"
+        );
+        assert_eq!(
+            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
+            baseline,
+            "and only once"
+        );
+    }
+
     /// Fee segments map to rates: a preset fetches its block target's
     /// estimate and hides the field; Custom shows the field and keeps the rate
     /// typed into it, even after a preset replaced it.
@@ -3714,31 +3779,9 @@ mod tests {
         assert!(!state.custom_feerate_shown());
 
         // Custom: the field shows again with the typed 12, not Normal's 4.
-        let restore = send(&mut state, view::CreateSpendMessage::CustomFeerate);
+        drop(send(&mut state, view::CreateSpendMessage::CustomFeerate));
         assert!(state.custom_feerate_shown());
         assert_eq!(state.selected_feerate_target, None);
-        let restored: Vec<Message> = {
-            use iced_runtime::futures::futures::StreamExt;
-            iced_runtime::task::into_stream(restore)
-                .expect("a restore task")
-                .filter_map(|action| async move {
-                    match action {
-                        iced_runtime::Action::Output(message) => Some(message),
-                        _ => None,
-                    }
-                })
-                .collect()
-                .await
-        };
-        assert!(matches!(
-            restored.as_slice(),
-            [Message::View(view::Message::CreateSpend(
-                view::CreateSpendMessage::FeerateEdited(value)
-            ))] if value == "12"
-        ));
-        for message in restored {
-            drop(state.update(daemon.clone(), &Cache::default(), message));
-        }
         assert_eq!(state.feerate.value, "12");
         assert!(state.custom_feerate_shown(), "still Custom after restoring");
 
