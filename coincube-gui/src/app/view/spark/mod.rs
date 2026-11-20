@@ -91,7 +91,9 @@ pub(crate) fn route_tile_body_with_detail<'a, M: 'a>(
                                 .bold()
                                 .style(theme::text::primary),
                         )
-                        .push(text(place).size(P1_SIZE + 2).style(theme::text::secondary)),
+                        .push(text(place).size(P1_SIZE + 2).style(theme::text::secondary))
+                        .wrap()
+                        .vertical_spacing(0),
                 )
                 .push_maybe(detail.map(|detail| {
                     text(detail)
