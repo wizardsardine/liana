@@ -5517,7 +5517,11 @@ mod tests {
     #[test]
     fn transfer_route_tiles_keep_asset_and_place_together() {
         let fixture = ViewFixture::new();
-        for cube_name in ["Everyday", "Emmanuel's Cube", "Emmanuel's Long-Term Savings Cube"] {
+        for cube_name in [
+            "Everyday",
+            "Emmanuel's Cube",
+            "Emmanuel's Long-Term Savings Cube",
+        ] {
             for direction in [
                 TransferDirection::SparkToVault,
                 TransferDirection::VaultToSpark,
@@ -5547,8 +5551,8 @@ mod tests {
                             asset_text,
                             value
                         );
-                        let one_line = (place.y - asset.y).abs() < 0.5
-                            && place.x >= asset.x + asset.width;
+                        let one_line =
+                            (place.y - asset.y).abs() < 0.5 && place.x >= asset.x + asset.width;
                         let dropped = (place.x - asset.x).abs() < 0.5
                             && place.y >= asset.y + asset.height - 0.5;
                         assert!(
