@@ -144,9 +144,9 @@ def offline_protocol(config, tmp_path, monkeypatch, crash_retirement=False):
     def worker(executable,request,directory,access_token=None):
         action=request['action'];cfg=request['config'];calls.append((cfg['chain'],action))
         case=Path(cfg['case_root']);state_path=case/'state.json'
-        pid={'refresh_auth':12,'admit_create':9,'preflight':10,'bind_auth':11,'create_export':100,'wipe_original':150,'restore':200,'reopen_sign':300,'retire_remote':400}[action]
+        pid={'admit_backends':8,'refresh_auth':12,'admit_create':9,'preflight':10,'bind_auth':11,'create_export':100,'wipe_original':150,'restore':200,'reopen_sign':300,'retire_remote':400}[action]
         record={'pid':pid,'start_id':str(pid),'exited':True,'returncode':0}
-        if action in ('admit_create','refresh_auth','preflight','bind_auth'):return record
+        if action in ('admit_backends','admit_create','refresh_auth','preflight','bind_auth'):return record
         if action=='create_export':
             case.mkdir(mode=0o700);(case/'original').mkdir(mode=0o700)
             psbt,identity=fixture(cfg['chain'])
@@ -181,7 +181,7 @@ def test_offline_orchestration_orders_both_chains_and_retirement_without_gui_cla
         assert list(result['chains'])==list(public.CHAINS)
         assert result['gui'] is result['funded'] is result['broadcast'] is False
         assert all(result['chains'][c]['verified_key_count']==2 for c in public.CHAINS)
-        assert calls==[(c,a) for c in public.CHAINS for a in ('admit_create','preflight','bind_auth','create_export','refresh_auth','wipe_original','refresh_auth','restore','refresh_auth','reopen_sign','refresh_auth','retire_remote')]
+        assert calls==[(public.CHAINS[0],'admit_backends')]+[(c,a) for c in public.CHAINS for a in ('admit_create','preflight','bind_auth','create_export','refresh_auth','wipe_original','refresh_auth','restore','refresh_auth','reopen_sign','refresh_auth','retire_remote')]
         before=list(calls);suite.execute({'tokens':{'access_token':'unit-not-a-credential'}},1)
         assert calls==before  # Same consumer resumes retained proof, not a new run.
     finally:suite.close()
@@ -255,6 +255,25 @@ def test_completed_resume_revalidates_signer_identity_instead_of_returning_cache
     finally:suite.close()
 
 
+def test_both_chain_backend_refusal_precedes_all_fixture_actions(config, tmp_path, monkeypatch):
+    calls = offline_protocol(config, tmp_path, monkeypatch)
+    def refused(executable, request, directory, access_token=None):
+        calls.append((request['config']['chain'], request['action']))
+        assert request['action'] == 'admit_backends'  # No preflight Keychain probe or create/register.
+        raise native.NativeActionBlocked('native_b2_backend_syncing')
+    monkeypatch.setattr(native, 'process', refused)
+    suite = native.NativeRecovery(config, tmp_path/'run', {'consumer':'backend-refusal'})
+    try:
+        with pytest.raises(native.NativeActionBlocked, match='native_b2_backend_syncing'):
+            suite.execute({'tokens':{'access_token':'unit-not-a-credential'}}, 1)
+        assert calls == [(public.CHAINS[0], 'admit_backends')]
+        assert not any(chain in suite.journal.data['artifacts'] for chain in public.CHAINS)
+        assert 'pending_native_action' not in suite.journal.data['artifacts']
+        assert not any(p.is_dir() for p in suite.directory.iterdir())
+    finally:
+        suite.close()
+
+
 def test_capacity_refusal_precedes_every_secret_producing_action(config, tmp_path, monkeypatch):
     calls = offline_protocol(config, tmp_path, monkeypatch)
     original = native.process
@@ -268,7 +287,7 @@ def test_capacity_refusal_precedes_every_secret_producing_action(config, tmp_pat
     try:
         with pytest.raises(native.NativeActionBlocked):
             suite.execute({'tokens': {'access_token': 'unit-not-a-credential'}}, 1)
-        assert calls == [(public.CHAINS[0], 'admit_create')]
+        assert calls == [(public.CHAINS[0], 'admit_backends'), (public.CHAINS[0], 'admit_create')]
         assert 'pending_native_action' not in suite.journal.data['artifacts']
         assert not any(p.is_dir() for p in suite.directory.iterdir())
     finally:
@@ -454,7 +473,7 @@ def test_available_blake2b_creation_needs_no_ordinary_testnet4_cleanup_context(c
             pytest.fail('B2 available capacity must not construct ordinary-T4 cleanup admission')
         monkeypatch.setattr(native,'NativeCleanupContext',forbidden)
         suite.execute(account,1,cleanup_runner=object())
-        assert calls == [(chain,a) for a in ('admit_create','preflight','bind_auth','create_export','refresh_auth','wipe_original','refresh_auth','restore','refresh_auth','reopen_sign','refresh_auth','retire_remote')]
+        assert calls == [(public.CHAINS[0],'admit_backends')]+[(chain,a) for a in ('admit_create','preflight','bind_auth','create_export','refresh_auth','wipe_original','refresh_auth','restore','refresh_auth','reopen_sign','refresh_auth','retire_remote')]
     finally:
         suite.close()
 
