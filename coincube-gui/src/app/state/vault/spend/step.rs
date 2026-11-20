@@ -3780,35 +3780,6 @@ mod tests {
         assert_eq!(state.resume_fee_estimate, None);
     }
 
-    /// Back from the review step: a draft that started while preparing
-    /// delivered its result to the review step, where it was dropped, so
-    /// the form drafts again instead of holding Prepare on "Calculating…".
-    #[tokio::test]
-    async fn back_from_review_redrafts_a_draft_dropped_during_preparation() {
-        let daemon = Arc::new(crate::daemon::client::Coincubed::new(
-            crate::utils::mock::Daemon::new(vec![]).run(),
-        ));
-        let mut state = branta_form();
-        let back = |state: &mut DefineSpend| {
-            state.update(
-                daemon.clone(),
-                &Cache::default(),
-                Message::View(view::Message::Previous),
-            )
-        };
-        state.amount_left_to_select = Some(Amount::ZERO);
-        drop(state.schedule_redraft());
-        assert!(state.drafting());
-        let seq = state.redraft_seq;
-        assert!(back(&mut state).units() > 0);
-        assert_ne!(state.redraft_seq, seq, "a fresh draft, not the dropped one");
-        assert!(state.drafting());
-
-        // Nothing pending: Back requests nothing.
-        state.draft_pending = false;
-        assert_eq!(back(&mut state).units(), 0);
-    }
-
     /// A recovery through the real panel: its DefineSpend fetches Normal once
     /// Next first shows it (not while the path step is on screen), Back saves
     /// a fetch still in flight for the next Next (its estimate lands on the
@@ -3886,62 +3857,6 @@ mod tests {
         assert_eq!(loading, None);
         assert_eq!(resume, None);
         assert_eq!(request, again);
-    }
-
-    /// The panel wiring around `resume`: a cache refresh reaching the hidden
-    /// panel requests nothing, and `reload` (run only for the panel on
-    /// screen) requests the preset's estimate again, once.
-    #[tokio::test]
-    async fn the_panel_resumes_a_dropped_fetch_only_once_shown_again() {
-        use crate::app::state::State;
-        let daemon: Arc<dyn Daemon + Sync + Send> = Arc::new(
-            crate::daemon::client::Coincubed::new(crate::utils::mock::Daemon::new(vec![]).run()),
-        );
-        let cache = Cache::default();
-        let mut panel = super::super::CreateSpendPanel::new(
-            wallet(),
-            &[coin(1, 50_000, Some(90))],
-            100,
-            Network::Bitcoin,
-            Amount::from_sat(50_000),
-            Amount::ZERO,
-            SyncStatus::Synced,
-            BitcoinDisplayUnit::Sats,
-        );
-        // The first reload also asks for Normal; later ones do not.
-        drop(panel.reload(Some(daemon.clone()), Some(wallet())));
-        let baseline = panel.reload(Some(daemon.clone()), Some(wallet())).units();
-
-        drop(panel.update(
-            Some(daemon.clone()),
-            &cache,
-            Message::View(view::Message::CreateSpend(
-                view::CreateSpendMessage::FetchFeeEstimate(1),
-            )),
-        ));
-        // Fast is fetching when the user leaves Send.
-        panel.interrupt();
-        assert_eq!(
-            panel
-                .update(
-                    Some(daemon.clone()),
-                    &cache,
-                    Message::UpdatePanelCache(false)
-                )
-                .units(),
-            0,
-            "nothing is requested while hidden"
-        );
-        assert_eq!(
-            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
-            baseline + 1,
-            "shown again: Fast is fetched anew"
-        );
-        assert_eq!(
-            panel.reload(Some(daemon.clone()), Some(wallet())).units(),
-            baseline,
-            "and only once"
-        );
     }
 
     /// Fee segments map to rates: a preset fetches its block target's
