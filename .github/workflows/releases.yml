@@ -195,9 +195,11 @@ jobs:
       # Windows
       # --------------------------------------------------
 
-      - name: Install Windows dependencies
+      # This run builds the commit its workflow comes from, so the action
+      # is always in the checkout.
+      - name: Install protoc (Windows)
         if: matrix.platform == 'windows'
-        run: choco install protoc --yes --no-progress
+        uses: ./.github/actions/install-protoc-windows
 
       - name: Build Windows MSI
         if: matrix.platform == 'windows'

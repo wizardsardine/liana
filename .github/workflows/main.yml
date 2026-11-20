@@ -253,12 +253,20 @@ jobs:
           Add-MpPreference -ExclusionPath $env:RUNNER_TEMP -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-      # Chocolatey updates the machine PATH, which a new PowerShell process
-      # reloads. Keep installation separate from Cargo so prost-build can find
-      # protoc on runners where it was not already present.
-      - name: Install Windows dependencies
+      # The protoc installer comes from this workflow's own revision, not the
+      # tree under test: a `source_sha` dispatch may check out a commit that
+      # predates the action. Pinned and checksummed; exports PROTOC.
+      - name: Fetch CI actions (Windows)
         if: matrix.os == 'windows-latest'
-        run: choco install protoc --yes --no-progress
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-actions
+          sparse-checkout: .github/actions
+          persist-credentials: false
+      - name: Install protoc (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: ./.ci-actions/.github/actions/install-protoc-windows
       - name: Test on Rust ${{ matrix.toolchain }} (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -394,8 +402,16 @@ jobs:
           Add-MpPreference -ExclusionPath $env:RUNNER_TEMP -ErrorAction SilentlyContinue
           Add-MpPreference -ExclusionPath $env:GITHUB_WORKSPACE -ErrorAction SilentlyContinue
           Set-MpPreference -DisableRealtimeMonitoring $true -ErrorAction SilentlyContinue
-      - name: Install Windows dependencies
-        run: choco install protoc --yes --no-progress
+      # From this workflow's revision, as in `unit_tests`.
+      - name: Fetch CI actions
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: .ci-actions
+          sparse-checkout: .github/actions
+          persist-credentials: false
+      - name: Install protoc
+        uses: ./.ci-actions/.github/actions/install-protoc-windows
       - name: Windows MCP adapter and STDIO boundaries
         shell: pwsh
         run: |
