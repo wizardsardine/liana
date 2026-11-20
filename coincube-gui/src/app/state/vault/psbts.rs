@@ -102,7 +102,9 @@ impl PsbtsPanel {
                         spend_tx.psbt.unsigned_tx.compute_txid()
                             == tx.tx.psbt.unsigned_tx.compute_txid()
                     }) {
-                        let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
+                        let mut tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
+                        // The rebuilt detail keeps naming where its Back goes.
+                        tx.back_to_activity = self.opened_from_activity;
                         let cmd = tx.load(daemon);
                         self.selected_tx = Some(tx);
                         return cmd;
@@ -403,6 +405,31 @@ pub(crate) mod tests {
             !panel.selected_tx.as_ref().unwrap().back_to_activity,
             "a list-opened PSBT keeps the PSBT labels"
         );
+    }
+
+    /// Opening a PSBT from Activity reloads this panel, and the reload's
+    /// `SpendTxs` rebuilds the open detail. The rebuilt detail must keep
+    /// "‹ Activity", matching where its Back goes.
+    #[test]
+    fn a_refresh_rebuild_keeps_the_activity_back_label() {
+        let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
+        let mut panel = PsbtsPanel::new(wallet);
+        panel.preselect_from_activity(spend_tx());
+        // Marks the pre-refresh state: a rebuild resets it to saved.
+        panel.selected_tx.as_mut().unwrap().saved = false;
+
+        let daemon: Arc<dyn Daemon + Sync + Send> =
+            Arc::new(Coincubed::new(MockDaemon::new(vec![]).run()));
+        drop(panel.update(
+            Some(daemon),
+            &Cache::default(),
+            Message::SpendTxs(Ok(vec![spend_tx()])),
+        ));
+
+        let rebuilt = panel.selected_tx.as_ref().expect("detail stays open");
+        assert!(rebuilt.saved, "the refresh rebuilt the detail");
+        assert!(rebuilt.back_to_activity, "label follows Back");
+        assert!(panel.returns_to_activity());
     }
 
     // Regression: a background `SpendTxs` refresh must NOT rebuild the open
