@@ -6,6 +6,7 @@ impl App {
     pub(super) fn invalidate_node_history(&mut self) {
         self.bitcoind_sync_probe_in_progress = false;
         self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
+        self.node_history_epoch = self.node_history_epoch.wrapping_add(1);
         self.node_history_in_progress = false;
         self.node_history_pending = None;
         self.cache.node_history = node_history::Status::default();
@@ -173,6 +174,59 @@ mod tests {
                 assert!(app.cache.node_bitcoind_last_log.is_none());
             });
         }
+    }
+
+    #[test]
+    fn daemon_restart_rejects_pre_restart_history_from_the_same_node() {
+        use coincubed::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth};
+
+        with_app(|app| {
+            let local = BitcoindConfig {
+                addr: "127.0.0.1:18333".parse().unwrap(),
+                rpc_auth: BitcoindRpcAuth::UserPass("fixture".into(), "fixture".into()),
+            };
+            let mut config = app.daemon.as_ref().unwrap().config().unwrap().clone();
+            config.pending_bitcoind = Some(local.clone());
+            app.daemon = Some(Arc::new(EmbeddedDaemon::unstarted_for_test(
+                config.clone(),
+                None,
+            )));
+            let previous_epoch = app.node_history_epoch;
+
+            // Promotion changes the daemon while retaining the node being probed.
+            config.pending_bitcoind = None;
+            config.bitcoin_backend = Some(BitcoinBackend::Bitcoind(local.clone()));
+            drop(
+                app.update(Message::DaemonRestarted(DaemonRestart::Started(Arc::new(
+                    EmbeddedDaemon::unstarted_for_test(config, None),
+                )))),
+            );
+
+            let reply = |app: &App, history_epoch| Message::BitcoindSyncProgress {
+                app: app.cache.app_generation,
+                history_epoch,
+                wallet: app.wallet.as_ref().map(|wallet| wallet.id()),
+                config: local.clone(),
+                result: Ok(LocalNodeSync {
+                    progress: 1.0,
+                    ibd: false,
+                    blocks: 100,
+                    headers: 100,
+                    subversion: None,
+                    pruning: Some(local_switch::NodePruning::Pruned { prune_height: 1 }),
+                }),
+                vault_history: Some(local_switch::VaultHistory::TrackedLocally),
+            };
+            drop(app.update(reply(app, previous_epoch)));
+            assert_eq!(app.cache.local_switch_history, None);
+            assert_eq!(app.cache.node_bitcoind_sync_heights, Some((100, 100)));
+
+            drop(app.update(reply(app, app.node_history_epoch)));
+            assert_eq!(
+                app.cache.local_switch_history,
+                Some(local_switch::VaultHistory::TrackedLocally)
+            );
+        });
     }
 
     #[test]
