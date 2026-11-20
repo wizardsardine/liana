@@ -5513,14 +5513,17 @@ mod tests {
     /// Each route tile's "**Spark** in Cube" stays one phrase (COIN-677):
     /// on one line when it fits, else "in Cube" drops whole under the
     /// asset. It never wraps beside the asset, stranding the asset on its
-    /// last line.
+    /// last line. A name with no spaces that is wider than the tile breaks
+    /// between glyphs instead of painting past the tile.
     #[test]
     fn transfer_route_tiles_keep_asset_and_place_together() {
         let fixture = ViewFixture::new();
+        const UNBREAKABLE: &str = "EmmanuelsLongTermSavingsCube";
         for cube_name in [
             "Everyday",
             "Emmanuel's Cube",
             "Emmanuel's Long-Term Savings Cube",
+            UNBREAKABLE,
         ] {
             for direction in [
                 TransferDirection::SparkToVault,
@@ -5566,6 +5569,22 @@ mod tests {
                             value,
                             place
                         );
+                        // A text node's bounds are clamped to its limits, so
+                        // overflow shows as a missing line break, not as width:
+                        // at 1024 the unbreakable name is about twice the
+                        // tile's width. Word wrapping gives two lines ("in",
+                        // then the whole name, painted past the tile); it must
+                        // break inside the name too.
+                        if cube_name == UNBREAKABLE && outer == (1024, 768) {
+                            assert!(
+                                place.height > 2.0 * asset.height + 0.5,
+                                "{:?} at {:?}: {:?} {:?} did not break inside its tile",
+                                direction,
+                                outer,
+                                value,
+                                place
+                            );
+                        }
                     }
                     assert_eq!(tiles, 2, "From and To: {:?}", shown.text);
                 }

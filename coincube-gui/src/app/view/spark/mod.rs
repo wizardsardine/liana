@@ -91,7 +91,16 @@ pub(crate) fn route_tile_body_with_detail<'a, M: 'a>(
                                 .bold()
                                 .style(theme::text::primary),
                         )
-                        .push(text(place).size(P1_SIZE + 2).style(theme::text::secondary))
+                        // `wrap()` lays the place out at the row's width, so it
+                        // wraps at word breaks; a word wider than the tile
+                        // (a Cube name with no spaces) breaks between glyphs
+                        // rather than painting past the tile.
+                        .push(
+                            text(place)
+                                .size(P1_SIZE + 2)
+                                .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
+                                .style(theme::text::secondary),
+                        )
                         .wrap()
                         .vertical_spacing(0),
                 )
