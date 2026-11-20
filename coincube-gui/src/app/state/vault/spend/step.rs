@@ -428,32 +428,7 @@ impl DefineSpend {
                 return Task::done(Message::View(view::Message::ShowError(err_msg)));
             }
             view::CreateSpendMessage::CustomFeerate => {
-                self.custom_feerate = true;
-                self.selected_feerate_target = None;
-                // A preset fetch still in flight would replace the
-                // custom rate when it lands: drop it.
-                let dropped_fetch = self.loading_fee_estimate.take().is_some();
-                if let Some(value) = self
-                    .custom_feerate_value
-                    .clone()
-                    .filter(|value| *value != self.feerate.value)
-                {
-                    // Applied here rather than sent as a message: a message
-                    // lands on whatever is on screen, and would be lost if
-                    // the user left Send before it was handled. It drafts
-                    // the restored rate as a typed one does.
-                    return self.update_spend_form(
-                        daemon,
-                        cache,
-                        CreateSpendMessage::FeerateEdited(value),
-                    );
-                }
-                // The dropped fetch had set the draft aside: the rate in the
-                // field stays, so draft it again.
-                if dropped_fetch {
-                    return self.schedule_redraft();
-                }
-                return Task::none();
+                return self.select_custom_feerate(daemon, cache);
             }
             view::CreateSpendMessage::FeeEstimated { feerate, .. } => {
                 // The pending preset's estimate (stale ones returned
@@ -526,6 +501,35 @@ impl DefineSpend {
         let redraft_task = self.schedule_redraft();
         self.check_valid();
         redraft_task
+    }
+
+    fn select_custom_feerate(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+    ) -> Task<Message> {
+        self.custom_feerate = true;
+        self.selected_feerate_target = None;
+        // A preset fetch still in flight would replace the
+        // custom rate when it lands: drop it.
+        let dropped_fetch = self.loading_fee_estimate.take().is_some();
+        if let Some(value) = self
+            .custom_feerate_value
+            .clone()
+            .filter(|value| *value != self.feerate.value)
+        {
+            // Applied here rather than sent as a message: a message
+            // lands on whatever is on screen, and would be lost if
+            // the user left Send before it was handled. It drafts
+            // the restored rate as a typed one does.
+            return self.update_spend_form(daemon, cache, CreateSpendMessage::FeerateEdited(value));
+        }
+        // The dropped fetch had set the draft aside: the rate in the
+        // field stays, so draft it again.
+        if dropped_fetch {
+            return self.schedule_redraft();
+        }
+        Task::none()
     }
 
     fn prepare_spend(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
@@ -1351,6 +1355,47 @@ impl DefineSpend {
             }
         }
     }
+    fn apply_coins_tip_height(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        res_coins: Result<Vec<Coin>, Error>,
+        res_tip: Result<i32, Error>,
+    ) -> Task<Message> {
+        match (res_coins, res_tip) {
+            (Ok(coins), Ok(tip)) => {
+                self.tip_height = tip as u32;
+                // If it's a recovery spend and user has never edited the selection, then we won't pass
+                // any selection and will let `filter_coins` select all by default.
+                let selected = (self.recovery_timelock.is_none() || self.is_user_coin_selection)
+                    .then_some(HashSet::from_iter(self.coins.iter().filter_map(
+                        |(c, selected)| {
+                            if *selected {
+                                Some(c.outpoint)
+                            } else {
+                                None
+                            }
+                        },
+                    )));
+                self.coins = filter_coins(&coins, self.recovery_timelock, tip, selected);
+                self.sort_coins(tip as u32);
+                // In case some selected coins are not spendable anymore and
+                // new coins make more sense to be selected. A redraft is triggered
+                // if all forms are valid (checked in the redraft method). This
+                // is not a keystroke path, so run it immediately (still off the
+                // UI thread) rather than debouncing.
+                self.redraft_seq = next_redraft_seq();
+                let seq = self.redraft_seq;
+                let task = self.run_redraft(daemon, seq);
+                self.check_valid();
+                task
+            }
+            (Err(e), _) | (Ok(_), Err(e)) => {
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
 }
 
 impl Step for DefineSpend {
@@ -1455,41 +1500,9 @@ impl Step for DefineSpend {
                     return Task::done(Message::View(view::Message::ShowError(err_msg)));
                 }
             },
-            Message::CoinsTipHeight(res_coins, res_tip) => match (res_coins, res_tip) {
-                (Ok(coins), Ok(tip)) => {
-                    self.tip_height = tip as u32;
-                    // If it's a recovery spend and user has never edited the selection, then we won't pass
-                    // any selection and will let `filter_coins` select all by default.
-                    let selected = (self.recovery_timelock.is_none()
-                        || self.is_user_coin_selection)
-                        .then_some(HashSet::from_iter(self.coins.iter().filter_map(
-                            |(c, selected)| {
-                                if *selected {
-                                    Some(c.outpoint)
-                                } else {
-                                    None
-                                }
-                            },
-                        )));
-                    self.coins = filter_coins(&coins, self.recovery_timelock, tip, selected);
-                    self.sort_coins(tip as u32);
-                    // In case some selected coins are not spendable anymore and
-                    // new coins make more sense to be selected. A redraft is triggered
-                    // if all forms are valid (checked in the redraft method). This
-                    // is not a keystroke path, so run it immediately (still off the
-                    // UI thread) rather than debouncing.
-                    self.redraft_seq = next_redraft_seq();
-                    let seq = self.redraft_seq;
-                    let task = self.run_redraft(daemon, seq);
-                    self.check_valid();
-                    return task;
-                }
-                (Err(e), _) | (Ok(_), Err(e)) => {
-                    let err_msg = crate::user_error::report(&e);
-                    self.warning = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
+            Message::CoinsTipHeight(res_coins, res_tip) => {
+                return self.apply_coins_tip_height(daemon, res_coins, res_tip);
+            }
             Message::RedraftDebounce(seq) => {
                 // Only the latest scheduled redraft survives; older ticks were
                 // superseded by subsequent edits that bumped `redraft_seq`.
