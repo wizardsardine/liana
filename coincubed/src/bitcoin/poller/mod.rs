@@ -45,6 +45,9 @@ pub struct Poller {
     // Where each poll's outcome is recorded, so `get_info` can tell a wallet whose
     // history is still loading, or failing to load, from one that is up to date.
     history_sync: sync::Arc<crate::bitcoin::HistorySyncCache>,
+    // The tip and its header time, so a new spend's locktime is set without
+    // waiting for the `BitcoinInterface` mutex this poller holds across a sync.
+    tip_cache: sync::Arc<crate::bitcoin::TipTimeCache>,
 }
 
 impl Poller {
@@ -55,6 +58,7 @@ impl Poller {
         sync_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
         reorg_alert: sync::Arc<crate::bitcoin::ReorgAlertCache>,
         history_sync: sync::Arc<crate::bitcoin::HistorySyncCache>,
+        tip_cache: sync::Arc<crate::bitcoin::TipTimeCache>,
     ) -> Result<Poller, crate::bitcoin::GenesisError> {
         let secp = secp256k1::Secp256k1::verification_only();
         let (receive, change) = desc.branches_public();
@@ -78,6 +82,7 @@ impl Poller {
             sync_cache,
             reorg_alert,
             history_sync,
+            tip_cache,
         })
     }
 
@@ -122,17 +127,50 @@ impl Poller {
         // don't attempt another poll too soon.
         *last_poll = Some(time::Instant::now());
         if *synced {
-            self.apply_eager_request();
-            looper::poll(
-                &mut self.bit,
-                &self.db,
-                &self.secp,
-                &self.descs,
-                &self.reorg_alert,
-                &self.history_sync,
-            );
+            self.poll_once();
         } else {
             log::warn!("Skipped poll as block chain is still synchronizing.");
+        }
+    }
+
+    /// One poll, with the tip published to `tip_cache` before it (so a spend
+    /// made during the first, possibly long, sync has a tip) and after it.
+    fn poll_once(&mut self) {
+        self.publish_tip();
+        self.apply_eager_request();
+        looper::poll(
+            &mut self.bit,
+            &self.db,
+            &self.secp,
+            &self.descs,
+            &self.reorg_alert,
+            &self.history_sync,
+        );
+        self.publish_tip();
+    }
+
+    /// Record the backend's tip and its header time. The time is fetched only
+    /// when the tip has changed: over Esplora it is an HTTP request.
+    fn publish_tip(&mut self) {
+        let tip = match self.bit.try_chain_tip() {
+            Ok(tip) => tip,
+            Err(error) => {
+                log::debug!("Chain tip unavailable, keeping the cached one: {}", error);
+                return;
+            }
+        };
+        if self
+            .tip_cache
+            .load()
+            .is_some_and(|cached| cached.tip == tip)
+        {
+            return;
+        }
+        match self.bit.tip_time() {
+            Some(time) => self
+                .tip_cache
+                .store(crate::bitcoin::TipWithTime { tip, time }),
+            None => log::debug!("Tip time unavailable, keeping the cached tip."),
         }
     }
 
@@ -223,15 +261,7 @@ impl Poller {
                 continue;
             }
 
-            self.apply_eager_request();
-            looper::poll(
-                &mut self.bit,
-                &self.db,
-                &self.secp,
-                &self.descs,
-                &self.reorg_alert,
-                &self.history_sync,
-            );
+            self.poll_once();
         }
     }
 

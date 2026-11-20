@@ -118,6 +118,38 @@ impl SyncProgressCache {
     }
 }
 
+/// A best block and its header time, as the poller last read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TipWithTime {
+    pub tip: BlockChainTip,
+    pub time: u32,
+}
+
+/// The chain tip and its header time, published by the poller so a new spend's
+/// anti-fee-sniping locktime can be set without taking the `BitcoinInterface`
+/// mutex (same rationale as [`SyncProgressCache`]).
+///
+/// Every spend draft needs this. Over Esplora the poller holds that mutex for a
+/// whole wallet sync, a long series of HTTP requests, so reading the tip through
+/// the backend left the Send form at "Calculating…" until the sync ended. The
+/// cached tip can trail the real one by a poll. That only makes the locktime a
+/// little lower, which is still valid.
+#[derive(Debug, Default)]
+pub struct TipTimeCache {
+    latest: sync::Mutex<Option<TipWithTime>>,
+}
+
+impl TipTimeCache {
+    pub fn store(&self, latest: TipWithTime) {
+        *self.latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(latest);
+    }
+
+    /// `None` until the poller has published a tip.
+    pub fn load(&self) -> Option<TipWithTime> {
+        *self.latest.lock().unwrap_or_else(|e| e.into_inner())
+    }
+}
+
 /// A chain-sync alert the poller raises when it deliberately stops updating our view
 /// of the chain from the backend. Two distinct conditions lead here, and they must not
 /// be conflated — see the variants.
