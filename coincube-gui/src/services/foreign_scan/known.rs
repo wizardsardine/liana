@@ -4,7 +4,7 @@ use super::*;
 use std::{collections::BTreeMap, time::Instant};
 
 pub const NOTICE_MAX_AGE: Duration = Duration::from_secs(60);
-const FORK_HEIGHT: u32 = 961_640;
+pub(crate) const FORK_HEIGHT: u32 = 961_640;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KnownOutput {
