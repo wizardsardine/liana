@@ -1045,7 +1045,8 @@ mod tests {
                     view::activity::ActivityMessage::ViewAll(view::activity::WalletFilter::Spark)
                 ))]
             ),
-            "{outputs:?}"
+            "{:?}",
+            outputs
         );
     }
 

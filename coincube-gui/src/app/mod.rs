@@ -17753,6 +17753,47 @@ mod wallet_recent_activity_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// A PSBT that Activity opened returns there on Back; the PSBT list
+    /// keeps its own Back otherwise.
+    #[test]
+    fn back_from_an_activity_opened_psbt_returns_to_activity() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-psbt-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let activity = Menu::Cube(menu::CubeSubMenu::Activity);
+        app.panels.current = activity.clone();
+        drop(app.update(Message::ActivityOpenDetail(
+            state::activity::ActivityTarget::Psbt(state::vault::psbts::tests::spend_tx()),
+        )));
+        assert_eq!(
+            app.panels.current,
+            Menu::Vault(menu::VaultSubMenu::PSBTs(None))
+        );
+        assert!(app.panels.psbts.as_ref().unwrap().returns_to_activity());
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, activity);
+        assert!(!app.panels.psbts.as_ref().unwrap().returns_to_activity());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// With no detail open, Close is the wallet panel's own (it reloads):
+    /// it does not navigate.
+    #[test]
+    fn close_without_a_detail_open_does_not_navigate() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-noop-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        for route in [
+            Menu::Vault(menu::VaultSubMenu::Transactions(None)),
+            Menu::Spark(menu::SparkSubMenu::Transactions(None)),
+        ] {
+            app.panels.current = route.clone();
+            drop(app.update(Message::View(view::Message::Close)));
+            assert_eq!(app.panels.current, route);
+        }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     #[test]
     fn activity_detail_without_a_vault_panel_keeps_the_current_route() {
         let _guard = crate::app::session::test_guard();

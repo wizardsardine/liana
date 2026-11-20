@@ -627,7 +627,11 @@ fn result_card<'a>(line: &'static str, title: &'static str, again: bool) -> Elem
             ACTIVITY_ID,
             coincube_ui::locale::copy("See in Activity"),
             ActionKind::Secondary,
-            Some(Message::Menu(Menu::Spark(SparkSubMenu::Transactions(None)))),
+            Some(Message::Activity(
+                crate::app::view::activity::ActivityMessage::ViewAll(
+                    crate::app::view::activity::WalletFilter::Spark,
+                ),
+            )),
         ))
         .push(action(
             AGAIN_ID,
