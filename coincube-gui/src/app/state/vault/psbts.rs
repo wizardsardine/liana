@@ -46,11 +46,19 @@ impl PsbtsPanel {
     pub fn preselect_from_activity(&mut self, spend_tx: SpendTx) {
         self.preselect(spend_tx);
         self.opened_from_activity = true;
+        if let Some(selected) = self.selected_tx.as_mut() {
+            selected.back_to_activity = true;
+        }
     }
 
     /// The detail page is showing and Activity opened it.
     pub fn returns_to_activity(&self) -> bool {
         self.opened_from_activity && self.selected_tx.is_some()
+    }
+
+    /// A PSBT's detail page is open, from either route.
+    pub fn has_selection(&self) -> bool {
+        self.selected_tx.is_some()
     }
 
     /// Leave the detail page without re-reading the PSBT list.
@@ -385,9 +393,16 @@ pub(crate) mod tests {
         assert!(!panel.returns_to_activity(), "direct route keeps list Back");
 
         panel.preselect_from_activity(spend_tx());
+        assert!(panel.selected_tx.as_ref().unwrap().back_to_activity);
         panel.clear_selection();
         assert!(!panel.returns_to_activity());
         assert!(panel.selected_tx.is_none());
+
+        panel.preselect(spend_tx());
+        assert!(
+            !panel.selected_tx.as_ref().unwrap().back_to_activity,
+            "a list-opened PSBT keeps the PSBT labels"
+        );
     }
 
     // Regression: a background `SpendTxs` refresh must NOT rebuild the open

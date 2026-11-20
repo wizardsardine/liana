@@ -166,6 +166,9 @@ pub struct RecipientIdentities {
 
 pub struct PsbtState {
     action_scope: u64,
+    /// Cube › Activity opened this PSBT, so its Back returns there and is
+    /// labelled so.
+    pub back_to_activity: bool,
     /// A direct signer choice may remove the focused row when its result lands.
     signer_focus_return: bool,
     pub wallet: Arc<Wallet>,
@@ -285,6 +288,7 @@ impl PsbtState {
         });
         Self {
             action_scope: NEXT_PSBT_ACTION_SCOPE.fetch_add(1, Ordering::Relaxed),
+            back_to_activity: false,
             signer_focus_return: false,
             desc_policy: wallet.policy(),
             wallet,
@@ -1440,7 +1444,10 @@ impl PsbtState {
                 ))));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
-                self.modal = Some(PsbtModal::Delete(DeleteModal::default()));
+                self.modal = Some(PsbtModal::Delete(DeleteModal {
+                    back_to_activity: self.back_to_activity,
+                    ..DeleteModal::default()
+                }));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 return self.open_signer_picker(daemon, cache)
@@ -1544,6 +1551,7 @@ impl PsbtState {
             self.replay_presentation(cache),
             self.broadcast_ready(cache),
             self.recipient_identities(),
+            self.back_to_activity,
         );
         if let Some(modal) = &self.modal {
             modal.as_ref().view(content)
@@ -1896,6 +1904,8 @@ impl Modal for KeychainUnavailableModal {
 pub struct DeleteModal {
     deleted: bool,
     error: Option<Error>,
+    /// Labels its Close for Cube › Activity, which opened the PSBT.
+    back_to_activity: bool,
 }
 
 impl Modal for DeleteModal {
@@ -1933,9 +1943,12 @@ impl Modal for DeleteModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(content, view::vault::psbt::delete_action(self.deleted))
-            .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-            .into()
+        modal::Modal::new(
+            content,
+            view::vault::psbt::delete_action(self.deleted, self.back_to_activity),
+        )
+        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
+        .into()
     }
 }
 

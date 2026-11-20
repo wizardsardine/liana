@@ -197,6 +197,7 @@ pub fn psbt_view<'a>(
     replay: Option<ReplayPill<'a>>,
     broadcast_ready: bool,
     recipient_identities: &'a [(usize, crate::services::branta::LookupResult)],
+    back_to_activity: bool,
 ) -> Element<'a, Message> {
     // A pending PSBT is an authorization screen: Sign and Broadcast must
     // always show the exact amounts the user is approving. Once the proposal
@@ -224,7 +225,11 @@ pub fn psbt_view<'a>(
             .push(
                 secondary_action(
                     action_id(action_scope, "overview.back"),
-                    localized_copy("‹ All PSBTs"),
+                    localized_copy(if back_to_activity {
+                        "‹ Activity"
+                    } else {
+                        "‹ All PSBTs"
+                    }),
                 )
                 .on_press(Message::Close),
             )
@@ -610,7 +615,8 @@ pub fn broadcast_recipient_identities<'a>(
         .into()
 }
 
-pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
+/// `back_to_activity`: Cube › Activity opened the PSBT, so Close returns there.
+pub fn delete_action<'a>(deleted: bool, back_to_activity: bool) -> Element<'a, Message> {
     if deleted {
         card::simple(
             Column::new()
@@ -620,8 +626,15 @@ pub fn delete_action<'a>(deleted: bool) -> Element<'a, Message> {
                     "Successfully deleted this transaction.",
                 )))
                 .push(
-                    button::secondary(None, localized_copy("Go back to PSBTs"))
-                        .on_press(Message::Close),
+                    button::secondary(
+                        None,
+                        localized_copy(if back_to_activity {
+                            "Go back to Activity"
+                        } else {
+                            "Go back to PSBTs"
+                        }),
+                    )
+                    .on_press(Message::Close),
                 ),
         )
         .align_x(iced::alignment::Horizontal::Center)
@@ -3315,8 +3328,9 @@ mod tests {
 
         let _ = save_action(false);
         let _ = save_action(true);
-        let _ = delete_action(false);
-        let _ = delete_action(true);
+        let _ = delete_action(false, false);
+        let _ = delete_action(true, false);
+        let _ = delete_action(true, true);
         let _ = keychain_unavailable_action(1, false);
         let _ = keychain_unavailable_action(1, true);
         let _ = broadcast_action(
