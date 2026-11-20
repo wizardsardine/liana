@@ -82,9 +82,7 @@ impl App {
             self.cache.node_bitcoind_ibd = None;
             self.cache.node_bitcoind_subversion = None;
             self.cache.node_bitcoind_pruning = None;
-            self.cache.local_switch_history = None;
             self.cache.node_bitcoind_last_log = None;
-            self.local_switch_hold = None;
         }
         // An imported wallet's panel holds the runtime for its scan and
         // signing work; hand it the one now running. When the switch left no
