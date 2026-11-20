@@ -25,7 +25,19 @@ runs:
         $name = "protoc-$env:PROTOC_VERSION-win64.zip"
         $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$env:PROTOC_VERSION/$name"
         $zip = Join-Path $env:RUNNER_TEMP $name
-        Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 5 -RetryIntervalSec 10
+        # -MaximumRetryCount only retries HTTP error statuses; the loop also
+        # retries connection-level failures (DNS, dropped or timed-out sockets).
+        $attempts = 5
+        for ($attempt = 1; ; $attempt++) {
+          try {
+            Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3 -RetryIntervalSec 10 -TimeoutSec 120
+            break
+          } catch {
+            if ($attempt -ge $attempts) { throw }
+            Write-Warning "protoc download attempt $attempt of $attempts failed: $($_.Exception.Message)"
+            Start-Sleep -Seconds (10 * $attempt)
+          }
+        }
         $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLowerInvariant()
         if ($actual -ne $env:PROTOC_SHA256) {
           throw "protoc $env:PROTOC_VERSION checksum mismatch: expected $env:PROTOC_SHA256, got $actual"
