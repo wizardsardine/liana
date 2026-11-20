@@ -21,6 +21,7 @@ use iced::{
 use crate::app::{
     breez_spark::assets::format_token_display,
     cache::Cache,
+    menu::{Menu, VaultSubMenu},
     state::activity::{Activity, ActivityTarget},
 };
 use crate::daemon::model::{HistoryTransaction, LabelItem, SpendTx};
@@ -1393,6 +1394,68 @@ fn entry_row<'a>(
 /// Rows a "Recent activity" table shows.
 pub const RECENT_ACTIVITY_ROWS: usize = 5;
 
+/// The Vault's unbroadcast drafts, by whether they still need signatures.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DraftSummary {
+    /// Drafts short of their signing threshold.
+    pub awaiting: usize,
+    /// Drafts holding enough signatures to broadcast.
+    pub ready: usize,
+}
+
+impl DraftSummary {
+    /// "2 Vault transactions awaiting signatures · 1 ready to broadcast";
+    /// none when there is no draft.
+    pub fn line(self) -> Option<String> {
+        let plural = |count: usize| if count == 1 { "" } else { "s" };
+        let awaiting = (self.awaiting > 0).then(|| {
+            format!(
+                "{} Vault transaction{} awaiting signatures",
+                self.awaiting,
+                plural(self.awaiting)
+            )
+        });
+        let ready = (self.ready > 0).then(|| {
+            if self.awaiting > 0 {
+                format!("{} ready to broadcast", self.ready)
+            } else {
+                format!(
+                    "{} Vault transaction{} ready to broadcast",
+                    self.ready,
+                    plural(self.ready)
+                )
+            }
+        });
+        match (awaiting, ready) {
+            (Some(awaiting), Some(ready)) => Some(format!("{awaiting} · {ready}")),
+            (one, other) => one.or(other),
+        }
+    }
+}
+
+/// The drafts' one line under the heading, in place of their rows, with the
+/// way into the Vault's PSBTs page where they are signed.
+fn draft_summary_row<'a>(summary: DraftSummary) -> Option<Element<'a, Message>> {
+    let line = summary.line()?;
+    Some(
+        row![
+            glyph::glyph(glyph::SIGNING, 16.0, glyph::warn),
+            words(line, 13.0, font::MEDIUM, glyph::ink).width(Length::Fill),
+            Action::new(
+                Id::from("tenshu.recent.vault.drafts"),
+                text("Review").size(13).font(font::MEDIUM),
+                Message::FocusAction,
+            )
+            .style(theme::button::secondary)
+            .padding([6, 12])
+            .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None)))),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center)
+        .into(),
+    )
+}
+
 /// Where a "Recent activity" table sits, which rows it lists, and what a row
 /// press does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1645,6 +1708,11 @@ pub fn recent_activity<'a>(
         ));
     }
     content = push_recent_failures(content, &entries, &states);
+    if scope.includes(WalletFilter::Vault) {
+        if let Some(drafts) = draft_summary_row(activity.vault_drafts()) {
+            content = content.push(drafts);
+        }
+    }
     // `.acts5`: Activity's column heads, its day headings and its rows.
     let mut rows = Column::new().push(columns());
     if entries.is_empty() {
