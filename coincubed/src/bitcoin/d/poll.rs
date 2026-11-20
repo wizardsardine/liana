@@ -36,6 +36,18 @@ impl BitcoinD {
         self.poll_request(ClientKind::PollWallet, method, params)
     }
 
+    /// The header time of the block `hash`, for the poller's published tip.
+    /// Read by hash, so the time belongs to the tip the caller already holds,
+    /// and through the poll client, which does not retry.
+    pub fn try_block_time(&self, hash: &bitcoin::BlockHash) -> Result<u32, String> {
+        let response = self
+            .poll_node("getblockheader", params!(Json::String(hash.to_string()),))
+            .map_err(|e| e.to_string())?;
+        parse_block_stats(*hash, response)
+            .map(|stats| stats.time)
+            .map_err(|e| e.to_string())
+    }
+
     pub fn try_get_block_hash(&self, height: i32) -> Result<Option<bitcoin::BlockHash>, String> {
         match self.poll_node("getblockhash", params!(Json::Number(height.into()))) {
             Ok(value) => value

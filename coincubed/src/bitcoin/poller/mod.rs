@@ -149,29 +149,9 @@ impl Poller {
         self.publish_tip();
     }
 
-    /// Record the backend's tip and its header time. The time is fetched only
-    /// when the tip has changed: over Esplora it is an HTTP request.
+    /// Record the backend's tip and its header time.
     fn publish_tip(&mut self) {
-        let tip = match self.bit.try_chain_tip() {
-            Ok(tip) => tip,
-            Err(error) => {
-                log::debug!("Chain tip unavailable, keeping the cached one: {}", error);
-                return;
-            }
-        };
-        if self
-            .tip_cache
-            .load()
-            .is_some_and(|cached| cached.tip == tip)
-        {
-            return;
-        }
-        match self.bit.tip_time() {
-            Some(time) => self
-                .tip_cache
-                .store(crate::bitcoin::TipWithTime { tip, time }),
-            None => log::debug!("Tip time unavailable, keeping the cached tip."),
-        }
+        publish_tip(&self.bit, &self.tip_cache);
     }
 
     fn apply_eager_request(&mut self) {
@@ -290,5 +270,120 @@ impl Poller {
     /// own view of the chain and is unaffected by whatever we do to the managed node.
     fn paused_for_node_maintenance(&self) -> bool {
         crate::bitcoin::managed_node_maintenance() && self.bit.is_bitcoind()
+    }
+}
+
+/// Publish the backend's tip and its header time to `cache`. The time is read
+/// only when the tip has changed: over Esplora it is an HTTP request.
+///
+/// A cached tip above the backend's (after a reorg to a lower height) would give
+/// a locktime above the chain, which nodes refuse to relay until the chain
+/// catches up. If the new tip's time cannot be read then, the cache is cleared
+/// rather than kept. A lower cached tip is kept: its locktime is still valid.
+fn publish_tip(bit: &impl BitcoinInterface, cache: &crate::bitcoin::TipTimeCache) {
+    let tip = match bit.try_chain_tip() {
+        Ok(tip) => tip,
+        Err(error) => {
+            log::debug!("Chain tip unavailable, keeping the cached one: {}", error);
+            return;
+        }
+    };
+    let cached = cache.load();
+    if cached.is_some_and(|cached| cached.tip == tip) {
+        return;
+    }
+    match bit.try_tip_time(&tip) {
+        Ok(time) => cache.store(crate::bitcoin::TipWithTime { tip, time }),
+        Err(error) if cached.is_some_and(|cached| cached.tip.height > tip.height) => {
+            log::debug!(
+                "Tip time unavailable after the tip went down to {}, clearing the cached tip: {}",
+                tip.height,
+                error
+            );
+            cache.clear();
+        }
+        Err(error) => log::debug!("Tip time unavailable, keeping the cached tip: {}", error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::publish_tip;
+    use crate::{
+        bitcoin::{BlockChainTip, TipTimeCache, TipWithTime},
+        testutils::DummyBitcoind,
+    };
+    use miniscript::bitcoin::{self, hashes::Hash};
+
+    fn tip(height: i32) -> BlockChainTip {
+        BlockChainTip {
+            hash: bitcoin::BlockHash::from_byte_array([height as u8; 32]),
+            height,
+        }
+    }
+
+    fn cached(height: i32, time: u32) -> TipTimeCache {
+        let cache = TipTimeCache::default();
+        cache.store(TipWithTime {
+            tip: tip(height),
+            time,
+        });
+        cache
+    }
+
+    #[test]
+    fn publishes_a_new_tip_with_its_time() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.tip = tip(101);
+        bitcoind.tip_timestamp = Some(2_000);
+        let cache = cached(100, 1_000);
+        publish_tip(&bitcoind, &cache);
+        assert_eq!(
+            cache.load(),
+            Some(TipWithTime {
+                tip: tip(101),
+                time: 2_000
+            })
+        );
+    }
+
+    #[test]
+    fn an_unchanged_tip_keeps_its_time_without_reading_it_again() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.tip = tip(100);
+        bitcoind.tip_timestamp = Some(5_000);
+        let cache = cached(100, 1_000);
+        publish_tip(&bitcoind, &cache);
+        assert_eq!(cache.load().map(|latest| latest.time), Some(1_000));
+    }
+
+    /// After a reorg to a lower height, a kept tip would give a locktime above
+    /// the chain: without the new tip's time, spends must not use it.
+    #[test]
+    fn a_lower_tip_without_a_time_clears_the_cache() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.tip = tip(99);
+        bitcoind.tip_timestamp = None;
+        let cache = cached(100, 1_000);
+        publish_tip(&bitcoind, &cache);
+        assert_eq!(cache.load(), None);
+    }
+
+    /// A higher tip without a time keeps the older one: its locktime is lower
+    /// than the chain's, which is still valid.
+    #[test]
+    fn a_higher_tip_without_a_time_keeps_the_cached_one() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.tip = tip(101);
+        bitcoind.tip_timestamp = None;
+        let cache = cached(100, 1_000);
+        publish_tip(&bitcoind, &cache);
+        assert_eq!(
+            cache.load(),
+            Some(TipWithTime {
+                tip: tip(100),
+                time: 1_000
+            })
+        );
     }
 }

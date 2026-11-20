@@ -298,6 +298,7 @@ fn unreachable_node_is_not_absence_or_rescan_completion() {
     assert!(bit.try_list_since_block(&hash).is_err());
     assert!(bit.try_chain_tip().is_err());
     assert!(bit.try_sync_progress().is_err());
+    assert!(bit.try_block_time(&hash).is_err());
 }
 
 #[test]
@@ -347,11 +348,30 @@ fn polling_transport_errors_make_one_attempt_per_read() {
         bit.try_list_since_block(&hash).is_err(),
         bit.try_chain_tip().is_err(),
         bit.try_sync_progress().is_err(),
+        bit.try_block_time(&hash).is_err(),
     ];
     stop.send(()).unwrap();
     let requests = worker.join().unwrap();
     assert!(failures.iter().all(|failed| *failed));
-    assert_eq!(requests, 7, "polling must not retry a transport failure");
+    assert_eq!(requests, 8, "polling must not retry a transport failure");
+}
+
+/// The poller's tip time is the header time of the very block it holds.
+#[test]
+fn block_time_reads_the_header_of_the_given_block() {
+    let hash = bitcoin::BlockHash::all_zeros();
+    let time = response(
+        "getblockheader",
+        serde_json::json!({
+            "confirmations": 1,
+            "height": 900_000,
+            "time": 1_700_000_000u32,
+            "mediantime": 1_699_999_000u32,
+        }),
+        Json::Null,
+        |bit| bit.try_block_time(&hash),
+    );
+    assert_eq!(time, Ok(1_700_000_000));
 }
 
 #[test]
