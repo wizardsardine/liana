@@ -1313,7 +1313,9 @@ impl State for SparkReceive {
                 Task::none()
             }
             SparkReceiveMessage::SelectTransaction(idx) => self.open_receive_transaction(idx),
-            SparkReceiveMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+            SparkReceiveMessage::History => crate::app::state::view_all_activity(
+                crate::app::view::activity::WalletFilter::Spark,
+            ),
             SparkReceiveMessage::CopyPaymentRequest(text) => self.copy_payment_request(cache, text),
         }
     }

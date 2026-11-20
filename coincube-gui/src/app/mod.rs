@@ -9010,6 +9010,9 @@ impl App {
                 let nickname_task = self.save_pending_spark_nickname(&menu);
                 return Task::batch([close_task, nickname_task, self.set_current_panel(menu)]);
             }
+            Message::View(view::Message::Close) if self.activity_detail_back_applies() => {
+                return self.route_activity_detail_back();
+            }
             // Activity's own results and intents reach it from any route: the
             // Vault and Spark pages show its rows and its detail pane.
             msg @ (Message::ActivityVaultLoaded(..)
@@ -17698,6 +17701,55 @@ mod wallet_recent_activity_tests {
                 current_ids
             );
         }
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Cube › Activity is the one history list: Back from a Vault or
+    /// Spark transaction's detail page returns there, never to the
+    /// wallet's own list behind it.
+    #[test]
+    fn back_from_a_transaction_detail_returns_to_activity() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-back-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let activity = Menu::Cube(menu::CubeSubMenu::Activity);
+
+        app.panels.current = activity.clone();
+        drop(app.update(Message::ActivityOpenDetail(
+            state::activity::ActivityTarget::Vault(vault_payment()),
+        )));
+        assert_eq!(
+            app.panels.current,
+            Menu::Vault(menu::VaultSubMenu::Transactions(None))
+        );
+        assert!(app.panels.transactions.as_ref().unwrap().has_selection());
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, activity, "Vault detail Back");
+        assert!(!app.panels.transactions.as_ref().unwrap().has_selection());
+
+        drop(app.update(Message::ActivityOpenDetail(
+            state::activity::ActivityTarget::Spark(receipt("spark-1")),
+        )));
+        assert_eq!(
+            app.panels.current,
+            Menu::Spark(menu::SparkSubMenu::Transactions(None))
+        );
+        assert!(app.panels.spark_transactions.has_selection());
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, activity, "Spark detail Back");
+        assert!(!app.panels.spark_transactions.has_selection());
+
+        // The Vault page's "Recent activity" opens the same detail page;
+        // its Back also lands on Activity.
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Overview);
+        app.panels
+            .transactions
+            .as_mut()
+            .unwrap()
+            .preselect(vault_payment());
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Transactions(None));
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, activity, "Vault page detail Back");
         let _ = std::fs::remove_dir_all(root);
     }
 

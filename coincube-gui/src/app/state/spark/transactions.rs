@@ -144,6 +144,16 @@ impl SparkTransactions {
         self.fetch_page(page)
     }
 
+    /// The detail page is showing (its Back leaves for Cube › Activity).
+    pub fn has_selection(&self) -> bool {
+        self.selected_payment.is_some()
+    }
+
+    /// Leave the detail page; the next visit opens on a fresh selection.
+    pub fn clear_selection(&mut self) {
+        self.selected_payment = None;
+    }
+
     /// Point an open detail pane at its freshly fetched row, so late
     /// metadata shows while the user is looking at the payment. A payment
     /// that isn't on the fetched page keeps its existing snapshot.

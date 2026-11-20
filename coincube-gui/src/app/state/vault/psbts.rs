@@ -17,6 +17,9 @@ pub struct PsbtsPanel {
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
     modal: Option<VaultExportModal>,
+    /// The selected PSBT was opened from Cube › Activity, so its Back
+    /// returns there rather than to this panel's list.
+    opened_from_activity: bool,
 }
 
 impl PsbtsPanel {
@@ -27,6 +30,7 @@ impl PsbtsPanel {
             warning: None,
             selected_tx: None,
             modal: None,
+            opened_from_activity: false,
         }
     }
 
@@ -35,6 +39,24 @@ impl PsbtsPanel {
         self.selected_tx = Some(psbt_state);
         self.warning = None;
         self.modal = None;
+        self.opened_from_activity = false;
+    }
+
+    /// Open `spend_tx` as Cube › Activity's detail page: Back returns there.
+    pub fn preselect_from_activity(&mut self, spend_tx: SpendTx) {
+        self.preselect(spend_tx);
+        self.opened_from_activity = true;
+    }
+
+    /// The detail page is showing and Activity opened it.
+    pub fn returns_to_activity(&self) -> bool {
+        self.opened_from_activity && self.selected_tx.is_some()
+    }
+
+    /// Leave the detail page without re-reading the PSBT list.
+    pub fn clear_selection(&mut self) {
+        self.selected_tx = None;
+        self.opened_from_activity = false;
     }
 
     fn apply_spend_tx_refresh(
@@ -165,6 +187,7 @@ impl State for PsbtsPanel {
                     let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
+                    self.opened_from_activity = false;
                     return cmd;
                 }
             }
@@ -205,6 +228,7 @@ impl State for PsbtsPanel {
         let wallet = wallet.expect("Vault panels require wallet");
         self.wallet = wallet;
         self.selected_tx = None;
+        self.opened_from_activity = false;
         self.modal = None;
         let daemon = daemon.clone();
         Task::perform(
@@ -344,6 +368,26 @@ mod tests {
                 .expect("captured status label");
             assert!(status_height <= 24.0, "status pill text wrapped");
         }
+    }
+
+    /// Only a PSBT that Cube › Activity opened sends its Back there; one
+    /// opened from this panel's own list (or a direct route) stays here.
+    #[test]
+    fn only_an_activity_opened_psbt_returns_to_activity() {
+        let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
+        let mut panel = PsbtsPanel::new(wallet);
+        assert!(!panel.returns_to_activity());
+
+        panel.preselect_from_activity(spend_tx());
+        assert!(panel.returns_to_activity());
+
+        panel.preselect(spend_tx());
+        assert!(!panel.returns_to_activity(), "direct route keeps list Back");
+
+        panel.preselect_from_activity(spend_tx());
+        panel.clear_selection();
+        assert!(!panel.returns_to_activity());
+        assert!(panel.selected_tx.is_none());
     }
 
     // Regression: a background `SpendTxs` refresh must NOT rebuild the open

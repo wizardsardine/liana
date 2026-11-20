@@ -2416,7 +2416,9 @@ impl State for SparkSend {
                 Task::none()
             }
             SparkSendMessage::SelectTransaction(idx) => self.select_transaction(idx),
-            SparkSendMessage::History => redirect(Menu::Spark(SparkSubMenu::Transactions(None))),
+            SparkSendMessage::History => crate::app::state::view_all_activity(
+                crate::app::view::activity::WalletFilter::Spark,
+            ),
         }
     }
 }

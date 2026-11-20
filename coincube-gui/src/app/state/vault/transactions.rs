@@ -154,6 +154,18 @@ impl VaultTransactionsPanel {
         self.warning = None;
         self.modal = VaultTransactionsModal::None;
     }
+
+    /// The detail page is showing (its Back leaves for Cube › Activity).
+    pub fn has_selection(&self) -> bool {
+        self.selected_tx.is_some()
+    }
+
+    /// Leave the detail page without re-reading history: the list behind
+    /// it is never shown on its own, so a reload would be wasted.
+    pub fn clear_selection(&mut self) {
+        self.selected_tx = None;
+        self.modal = VaultTransactionsModal::None;
+    }
 }
 
 impl VaultTransactionsPanel {

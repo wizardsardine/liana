@@ -82,6 +82,14 @@ pub fn redirect(menu: Menu) -> Task<Message> {
     Task::done(Message::View(view::Message::Menu(menu)))
 }
 
+/// Open Cube › Activity filtered to `wallet`. Activity is the one full
+/// history list; a wallet's "History" shortcut lands there.
+pub fn view_all_activity(wallet: view::activity::WalletFilter) -> Task<Message> {
+    Task::done(Message::View(view::Message::Activity(
+        view::activity::ActivityMessage::ViewAll(wallet),
+    )))
+}
+
 /// Returns the confirmed and unconfirmed balances from `coins`, as well
 /// as:
 /// - the `OutPoint`s of those coins, if any, for which the current
