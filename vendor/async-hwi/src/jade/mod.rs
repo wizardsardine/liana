@@ -1026,7 +1026,10 @@ mod registration_tests {
             &detail(&[KEYS[0], KEYS[1], KEYS[0]], vec![], true),
             &p
         ));
-        assert!(!multisig_detail_matches(&detail(&KEYS[..2], vec![], true), &p));
+        assert!(!multisig_detail_matches(
+            &detail(&KEYS[..2], vec![], true),
+            &p
+        ));
         assert!(!multisig_detail_matches(
             &detail(&KEYS, vec![Value::Integer(5)], true),
             &p

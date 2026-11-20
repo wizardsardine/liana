@@ -6649,15 +6649,7 @@ impl App {
         let was_vaultless = self.wallet.is_none();
 
         if self.wallet.as_ref().map(|w| w.id()) != Some(wallet.id()) {
-            // A permission to switch is specific to the probed Vault.
-            self.cache.local_switch_history = None;
-            self.local_switch_hold = None;
-            self.bitcoind_sync_probe_in_progress = false;
-            self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
-            self.node_history_in_progress = false;
-            self.node_history_pending = None;
-            self.cache.node_history = node_history::Status::default();
-            self.cache.node_history_switch_requested = false;
+            self.invalidate_node_history();
             self.cache.local_node_transfer_visible = false;
         }
         self.wallet = Some(wallet.clone());
