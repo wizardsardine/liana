@@ -778,7 +778,7 @@ mod registration_tests {
         ])
     }
 
-    fn detail(xpubs: &[&str], path: Vec<Value>) -> Value {
+    fn detail(xpubs: &[&str], path: Vec<Value>, sorted: bool) -> Value {
         let signers = xpubs
             .iter()
             .map(|key| {
@@ -797,7 +797,7 @@ mod registration_tests {
                 "descriptor",
                 map(vec![
                     ("variant", text("wsh(multi(k))")),
-                    ("sorted", Value::Bool(true)),
+                    ("sorted", Value::Bool(sorted)),
                     ("threshold", Value::Integer(2)),
                     ("signers", Value::Array(signers)),
                 ]),
@@ -874,7 +874,7 @@ mod registration_tests {
                 ),
                 (
                     ("get_registered_multisig", Some("Specter")),
-                    detail(&KEYS, vec![]),
+                    detail(&KEYS, vec![], true),
                 ),
             ],
         });
@@ -992,16 +992,64 @@ mod registration_tests {
             &summary("wsh(multi(k))", true, 2, 4),
             &p
         ));
+        // Variant and sortedness have to be present. A reply that reports
+        // only the other fields cannot vouch for the entry.
+        assert!(!multisig_summary_matches(
+            &map(vec![
+                ("sorted", Value::Bool(true)),
+                ("threshold", Value::Integer(2)),
+                ("num_signers", Value::Integer(3)),
+            ]),
+            &p
+        ));
+        assert!(!multisig_summary_matches(
+            &map(vec![
+                ("variant", text("wsh(multi(k))")),
+                ("threshold", Value::Integer(2)),
+                ("num_signers", Value::Integer(3)),
+            ]),
+            &p
+        ));
     }
 
     #[test]
     fn detail_must_hold_exactly_the_policy_keys_on_standard_branches() {
         let p = policy();
-        assert!(multisig_detail_matches(&detail(&KEYS, vec![]), &p));
-        assert!(!multisig_detail_matches(&detail(&KEYS[..2], vec![]), &p));
-        assert!(!multisig_detail_matches(
-            &detail(&KEYS, vec![Value::Integer(5)]),
+        assert!(multisig_detail_matches(&detail(&KEYS, vec![], true), &p));
+        // sortedmulti: the registry may list the same keys in any order.
+        assert!(multisig_detail_matches(
+            &detail(&[KEYS[2], KEYS[0], KEYS[1]], vec![], true),
             &p
+        ));
+        // Same signer count, but not this wallet's keys.
+        assert!(!multisig_detail_matches(
+            &detail(&[KEYS[0], KEYS[1], KEYS[0]], vec![], true),
+            &p
+        ));
+        assert!(!multisig_detail_matches(&detail(&KEYS[..2], vec![], true), &p));
+        assert!(!multisig_detail_matches(
+            &detail(&KEYS, vec![Value::Integer(5)], true),
+            &p
+        ));
+    }
+
+    /// Plain `multi` (not `sortedmulti`) puts key order into the script, so a
+    /// registry entry with the same keys in another order is a different wallet.
+    #[test]
+    fn an_unsorted_registry_entry_keeps_key_order() {
+        let policy = utils::MultisigPolicy::parse(&format!(
+            "wsh(multi(2,{}/<0;1>/*,{}/<0;1>/*,{}/<0;1>/*))",
+            KEYS[0], KEYS[1], KEYS[2]
+        ))
+        .unwrap();
+        assert!(!policy.sorted);
+        assert!(multisig_detail_matches(
+            &detail(&KEYS, vec![], false),
+            &policy
+        ));
+        assert!(!multisig_detail_matches(
+            &detail(&[KEYS[2], KEYS[1], KEYS[0]], vec![], false),
+            &policy
         ));
     }
 }
