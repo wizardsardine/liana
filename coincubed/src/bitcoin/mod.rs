@@ -118,6 +118,43 @@ impl SyncProgressCache {
     }
 }
 
+/// A best block and its header time, as the poller last read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TipWithTime {
+    pub tip: BlockChainTip,
+    pub time: u32,
+}
+
+/// The chain tip and its header time, published by the poller so a new spend's
+/// anti-fee-sniping locktime can be set without taking the `BitcoinInterface`
+/// mutex (same rationale as [`SyncProgressCache`]).
+///
+/// Every spend draft needs this. Over Esplora the poller holds that mutex for a
+/// whole wallet sync, a long series of HTTP requests, so reading the tip through
+/// the backend left the Send form at "Calculating…" until the sync ended. The
+/// cached tip can trail the real one by a poll. That only makes the locktime a
+/// little lower, which is still valid.
+#[derive(Debug, Default)]
+pub struct TipTimeCache {
+    latest: sync::Mutex<Option<TipWithTime>>,
+}
+
+impl TipTimeCache {
+    pub fn store(&self, latest: TipWithTime) {
+        *self.latest.lock().unwrap_or_else(|e| e.into_inner()) = Some(latest);
+    }
+
+    /// `None` until the poller has published a tip.
+    pub fn load(&self) -> Option<TipWithTime> {
+        *self.latest.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Forget the published tip, so spends stop using it.
+    pub fn clear(&self) {
+        *self.latest.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
 /// A chain-sync alert the poller raises when it deliberately stops updating our view
 /// of the chain from the backend. Two distinct conditions lead here, and they must not
 /// be conflated — see the variants.
@@ -657,6 +694,15 @@ pub trait BitcoinInterface: Send {
     /// Get the timestamp set in the best block's header.
     fn tip_time(&self) -> Option<u32>;
 
+    /// The header time of `tip`, for the poller. Like [`Self::try_chain_tip`] it
+    /// must not use an interactive retry budget: the poller holds the backend
+    /// mutex while it waits. The default asks for the best block's time, which
+    /// is the tip's or a later block's, so a locktime from it can only be lower.
+    fn try_tip_time(&self, _tip: &BlockChainTip) -> Result<u32, String> {
+        self.tip_time()
+            .ok_or_else(|| "The backend did not report the tip's time".to_string())
+    }
+
     /// Check whether this former tip is part of the current best chain.
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool;
 
@@ -1118,6 +1164,10 @@ impl BitcoinInterface for d::BitcoinD {
 
     fn chain_tip_result(&self) -> Result<BlockChainTip, String> {
         self.chain_tip_result().map_err(|e| e.to_string())
+    }
+
+    fn try_tip_time(&self, tip: &BlockChainTip) -> Result<u32, String> {
+        self.try_block_time(&tip.hash)
     }
 
     fn try_sync_progress(&self) -> Result<SyncProgress, String> {
@@ -2006,6 +2056,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn tip_time(&self) -> Option<u32> {
         self.lock().unwrap().tip_time()
+    }
+
+    fn try_tip_time(&self, tip: &BlockChainTip) -> Result<u32, String> {
+        self.lock().unwrap().try_tip_time(tip)
     }
 
     fn wallet_transaction(

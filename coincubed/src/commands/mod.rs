@@ -872,12 +872,41 @@ impl DaemonControl {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .expect("time measured now cannot be before unix epoch");
-        // A backend we cannot reach degrades like a stale tip does: no
-        // anti-fee-sniping locktime, rather than a panic mid-spend (#589).
-        let (tip_height, tip_time) = match self.bitcoin.chain_tip_result() {
+        // The poller's published tip: reading it through the backend would wait
+        // for the poller's mutex, held across a whole wallet sync.
+        let (tip_height, tip_time) = match self.tip_time_cache.load() {
+            Some(latest) => (
+                latest
+                    .tip
+                    .height
+                    .try_into()
+                    .expect("block height must fit in u32"),
+                Some(latest.time),
+            ),
+            None => self.uncached_tip_for_locktime(),
+        };
+        spend::anti_fee_sniping_locktime(now, tip_height, tip_time)
+    }
+
+    /// The tip and its time from the backend, before the poller has published
+    /// them. A poll already holding the backend, or a backend we cannot reach,
+    /// degrades like a stale tip does: no anti-fee-sniping locktime, rather than
+    /// waiting out the poll or panicking mid-spend (#589).
+    fn uncached_tip_for_locktime(&self) -> (u32, Option<u32>) {
+        let backend = match self.bitcoin.try_lock() {
+            Ok(backend) => backend,
+            Err(sync::TryLockError::WouldBlock) => {
+                log::debug!(
+                    "The backend is busy polling, not setting an anti-fee-sniping locktime"
+                );
+                return (0, None);
+            }
+            Err(sync::TryLockError::Poisoned(e)) => e.into_inner(),
+        };
+        match backend.chain_tip_result() {
             Ok(tip) => (
                 tip.height.try_into().expect("block height must fit in u32"),
-                self.bitcoin.tip_time(),
+                backend.tip_time(),
             ),
             Err(e) => {
                 log::warn!(
@@ -886,8 +915,7 @@ impl DaemonControl {
                 );
                 (0, None)
             }
-        };
-        spend::anti_fee_sniping_locktime(now, tip_height, tip_time)
+        }
     }
 
     /// Ancestor size and fees of an unconfirmed coin's transaction, for coin
@@ -3940,6 +3968,86 @@ mod tests {
         (daemon, conflict_count, outpoint, destination)
     }
 
+    /// Over Esplora the poller holds the backend lock for a whole wallet sync. A
+    /// spend used to read the tip for its anti-fee-sniping locktime through that
+    /// lock, which held the Send form at "Calculating…" until the sync ended. It
+    /// now takes the tip the poller published.
+    #[test]
+    fn create_spend_does_not_wait_for_a_poll_holding_the_backend() {
+        let (daemon, _, outpoint, destination) = funded_conflict_control(0);
+        let control = daemon.control().clone();
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as u32;
+        let tip = crate::bitcoin::BlockChainTip {
+            hash: bitcoin::BlockHash::from_str(
+                "000000000000000000014ab9b6db3e3d0f5e6e0a4c8b0b4b0d5c0e1f2a3b4c5d",
+            )
+            .unwrap(),
+            height: 900_000,
+        };
+        control
+            .tip_time_cache
+            .store(crate::bitcoin::TipWithTime { tip, time: now });
+
+        // The poller, mid-sync.
+        let _polling = control.bitcoin.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spender = control.clone();
+        std::thread::spawn(move || {
+            tx.send(spender.create_spend(
+                &HashMap::from([(destination, 10_000)]),
+                &[outpoint],
+                1,
+                None,
+            ))
+            .unwrap()
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("create_spend must not wait for the backend lock")
+            .unwrap();
+        let CreateSpendResult::Success { psbt, .. } = result else {
+            panic!("expected a successful spend, got {:?}", result);
+        };
+        let height = match psbt.unsigned_tx.lock_time {
+            absolute::LockTime::Blocks(height) => height.to_consensus_u32(),
+            other => panic!("expected a height locktime, got {:?}", other),
+        };
+        assert!(
+            (899_900..=900_000).contains(&height),
+            "locktime {} is not from the published tip",
+            height
+        );
+    }
+
+    /// The poller publishes the backend's tip and its time, so a spend made
+    /// during the first sync already has a locktime to use.
+    #[test]
+    fn the_poller_publishes_the_tip_and_its_time() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.tip_timestamp = Some(1_700_000_000);
+        let tip = bitcoind.tip;
+        let daemon = DummyCoincube::new(bitcoind, DummyDatabase::new());
+        let cache = daemon.control().tip_time_cache.clone();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while cache.load().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the poller never published a tip"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(
+            cache.load(),
+            Some(crate::bitcoin::TipWithTime {
+                tip,
+                time: 1_700_000_000
+            })
+        );
+    }
+
     #[test]
     fn create_spend_rebuilds_on_conflict_and_stops_at_the_budget() {
         let (daemon, conflicts, outpoint, destination) = funded_conflict_control(2);
@@ -6106,6 +6214,7 @@ mod tests {
             Default::default(),
             Default::default(),
             history,
+            Default::default(),
         );
 
         // The poller, mid-scan.
@@ -6140,6 +6249,7 @@ mod tests {
             Default::default(),
             Default::default(),
             history.clone(),
+            Default::default(),
         );
 
         let _scanning = backend.lock().unwrap();
@@ -6285,6 +6395,7 @@ mod tests {
                 poller_sender,
                 std::sync::Arc::new(std::sync::Mutex::new(DummyDatabase::new())),
                 secp256k1::Secp256k1::verification_only(),
+                Default::default(),
                 Default::default(),
                 Default::default(),
                 Default::default(),

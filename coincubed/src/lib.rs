@@ -1142,6 +1142,9 @@ pub struct DaemonControl {
     // Lock-free record of full-scan progress and poll outcomes, read by `get_info` for
     // the same reason as `sync_progress_cache`.
     history_sync_cache: sync::Arc<crate::bitcoin::HistorySyncCache>,
+    // The poller's latest tip and header time, read when setting a new spend's
+    // anti-fee-sniping locktime for the same reason as `sync_progress_cache`.
+    tip_time_cache: sync::Arc<crate::bitcoin::TipTimeCache>,
 }
 
 impl DaemonControl {
@@ -1155,6 +1158,7 @@ impl DaemonControl {
         sync_progress_cache: sync::Arc<crate::bitcoin::SyncProgressCache>,
         reorg_alert_cache: sync::Arc<crate::bitcoin::ReorgAlertCache>,
         history_sync_cache: sync::Arc<crate::bitcoin::HistorySyncCache>,
+        tip_time_cache: sync::Arc<crate::bitcoin::TipTimeCache>,
     ) -> DaemonControl {
         DaemonControl {
             config,
@@ -1165,6 +1169,7 @@ impl DaemonControl {
             sync_progress_cache,
             reorg_alert_cache,
             history_sync_cache,
+            tip_time_cache,
         }
     }
 
@@ -1429,6 +1434,7 @@ impl DaemonHandle {
         // that awaits it) never blocks behind the poller's full wallet scan.
         let sync_progress_cache = sync::Arc::new(crate::bitcoin::SyncProgressCache::default());
         let reorg_alert_cache = sync::Arc::new(crate::bitcoin::ReorgAlertCache::default());
+        let tip_time_cache = sync::Arc::new(crate::bitcoin::TipTimeCache::default());
 
         // Start the poller thread. Keep the thread handle to be able to check if it crashed. Store
         // an atomic to be able to stop it.
@@ -1439,6 +1445,7 @@ impl DaemonHandle {
             sync_progress_cache.clone(),
             reorg_alert_cache.clone(),
             history_sync_cache.clone(),
+            tip_time_cache.clone(),
         )?;
         let (poller_sender, poller_receiver) = mpsc::sync_channel(1);
         let poller_handle = thread::Builder::new()
@@ -1464,6 +1471,7 @@ impl DaemonHandle {
             sync_progress_cache,
             reorg_alert_cache,
             history_sync_cache,
+            tip_time_cache,
         );
 
         if with_rpc_server {
