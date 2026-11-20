@@ -1699,6 +1699,12 @@ pub fn recent_activity<'a>(
         );
     }
     let mut content = Column::new().spacing(10).push(heading);
+    // The drafts' line sits above the hint: the hint is about the rows.
+    if scope.includes(WalletFilter::Vault) {
+        if let Some(drafts) = draft_summary_row(activity.vault_drafts()) {
+            content = content.push(drafts);
+        }
+    }
     if !entries.is_empty() {
         content = content.push(words(
             localized_copy("Select a transaction to view details"),
@@ -1708,11 +1714,6 @@ pub fn recent_activity<'a>(
         ));
     }
     content = push_recent_failures(content, &entries, &states);
-    if scope.includes(WalletFilter::Vault) {
-        if let Some(drafts) = draft_summary_row(activity.vault_drafts()) {
-            content = content.push(drafts);
-        }
-    }
     // `.acts5`: Activity's column heads, its day headings and its rows.
     let mut rows = Column::new().push(columns());
     if entries.is_empty() {
@@ -4115,6 +4116,18 @@ mod tests {
                 mounted.text
             );
             assert!(!mounted.contains("0/2 signed"));
+            let y = |needle: &str| {
+                mounted
+                    .text
+                    .iter()
+                    .find(|(value, _)| value.contains(needle))
+                    .map(|(_, bounds)| bounds.y)
+                    .unwrap()
+            };
+            assert!(
+                y("awaiting signatures") < y("Select a transaction"),
+                "the drafts' line sits above the rows' hint"
+            );
             assert!(!mounted
                 .text
                 .iter()
