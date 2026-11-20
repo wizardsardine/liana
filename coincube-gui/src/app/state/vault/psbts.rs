@@ -17,6 +17,9 @@ pub struct PsbtsPanel {
     spend_txs: Vec<SpendTx>,
     warning: Option<Error>,
     modal: Option<VaultExportModal>,
+    /// The selected PSBT was opened from Cube › Activity, so its Back
+    /// returns there rather than to this panel's list.
+    opened_from_activity: bool,
 }
 
 impl PsbtsPanel {
@@ -27,6 +30,7 @@ impl PsbtsPanel {
             warning: None,
             selected_tx: None,
             modal: None,
+            opened_from_activity: false,
         }
     }
 
@@ -35,6 +39,24 @@ impl PsbtsPanel {
         self.selected_tx = Some(psbt_state);
         self.warning = None;
         self.modal = None;
+        self.opened_from_activity = false;
+    }
+
+    /// Open `spend_tx` as Cube › Activity's detail page: Back returns there.
+    pub fn preselect_from_activity(&mut self, spend_tx: SpendTx) {
+        self.preselect(spend_tx);
+        self.opened_from_activity = true;
+    }
+
+    /// The detail page is showing and Activity opened it.
+    pub fn returns_to_activity(&self) -> bool {
+        self.opened_from_activity && self.selected_tx.is_some()
+    }
+
+    /// Leave the detail page without re-reading the PSBT list.
+    pub fn clear_selection(&mut self) {
+        self.selected_tx = None;
+        self.opened_from_activity = false;
     }
 
     fn apply_spend_tx_refresh(
@@ -165,6 +187,7 @@ impl State for PsbtsPanel {
                     let tx = psbt::PsbtState::new(self.wallet.clone(), tx.clone(), true);
                     let cmd = tx.load(daemon);
                     self.selected_tx = Some(tx);
+                    self.opened_from_activity = false;
                     return cmd;
                 }
             }
@@ -205,6 +228,7 @@ impl State for PsbtsPanel {
         let wallet = wallet.expect("Vault panels require wallet");
         self.wallet = wallet;
         self.selected_tx = None;
+        self.opened_from_activity = false;
         self.modal = None;
         let daemon = daemon.clone();
         Task::perform(
@@ -226,7 +250,7 @@ impl From<PsbtsPanel> for Box<dyn State> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::app::view::shared::landing::capture;
     use crate::{
@@ -247,7 +271,7 @@ mod tests {
     // used by the psbt panel tests).
     const UNSIGNED_PSBT: &str = "cHNidP8BAIkCAAAAAc0x/jtWvFugrl8zc34KVIlWCugXT6JNtgir6UqX+Vv6AQAAAAD9////AkBCDwAAAAAAIgAgtQu/fA/8rQhJ0I6wUoBDO0vNa3lgsEpEIj7rTOMnBcXuIEkBAAAAACIAIOdCiXh7yL2V/f6S6KMTOzgqKkqyIXgmFuwDnmXbIiosAAAAAAABAP04AQIAAAAAAQKYYriMs/PtSqm6LPNWWFYskTL6nWZegJdwxYcVCRn8vwEAAAAA/f///87D7dkdgMd1Laj/v6xspNRtrQXGP+8BPFMLqkeBb6MRAQAAAAD9////AuGQDgAAAAAAIlEg7DgdNxI7WybaPUZXcMCh+uN1E4X8E5DzJIlj83S+tIMQZFgBAAAAACIAIJZAn7j5iOen7xo2sKzjMc24llTZIuS+RpdwcLHtE6ufAUCksqYUJBbHB9x8eHdoRvRqiGzG4wQXpmY96vh14zAJEM2CS/oZaNVC4Wj8rY2cdjAvZj9dlVZFPbOxx9g5tFxUAUA24s2KJ7sjSHUAcUSd4yqRK/G3CZM8qhkhyHhGDSS0zZvZaIcgoqOPe23gH32wAI9Aax1gJUDv4kKOqOx64ltg9BADAAEBKxBkWAEAAAAAIgAglkCfuPmI56fvGjawrOMxzbiWVNki5L5Gl3Bwse0Tq58BBYZSIQIeYxzruE4/cvi6zbRmB1asJO0bMfUutoH0bpubw1zAZSEDLZSmORZKW/k5A+4QxJR2/H+vcV8U0WPX9SvS+MRMffNSrnNkdqkUmNf1mL657o/oxxnHkIrtdNkbge+IrGt2qRSIigBO15eaB9dj93ihNpAX9HHDuoisbJNRiAP//wCyaCIGAh5jHOu4Tj9y+LrNtGYHVqwk7Rsx9S62gfRum5vDXMBlHPcUwigwAACAAQAAgAAAAIACAACAAAAAAAAAAAAiBgIr7HqsyKEvERWQsmsv6FleMuXThpI77+TVkQ3TSOOLURz3FMIoMAAAgAEAAIAAAACAAgAAgAIAAAAAAAAAIgYDLZSmORZKW/k5A+4QxJR2/H+vcV8U0WPX9SvS+MRMffMcJSLyPDAAAIABAACAAAAAgAIAAIAAAAAAAAAAACIGA/h0pUXGHq1+kSuTYVTO8RHKfQLJlhfNtm+qdcIIr09jHCUi8jwwAACAAQAAgAAAAIACAACAAgAAAAAAAAAAIgICGAO/4xFiX/S5DXTV6uARFTcMwP1hto8BtPkdn3gIjf0c9xTCKDAAAIABAACAAAAAgAIAAIACAAAAAgAAACICAuNOSbsNRv31XkF2ygwCOuCnsJNRLhV0isJ/VRdj1k7IHPcUwigwAACAAQAAgAAAAIACAACAAAAAAAIAAAAiAgOpBJHEchNOeXuQwuLHlwOfkAyfoGvrYfb4pCFLKEPw2hwlIvI8MAAAgAEAAIAAAACAAgAAgAIAAAACAAAAIgIDyLkJiZTjLCysDOQotYs9us5CEYev4kyTYW2uL2r5H1McJSLyPDAAAIABAACAAAAAgAIAAIAAAAAAAgAAAAAiAgIlvGBvHRPmmVP6sn9g/akW2VJAvbJagMnZ/24gLdITsxz3FMIoMAAAgAEAAIAAAACAAgAAgAMAAAADAAAAIgIDNmVQOMMezQgABjk1zjfc3I2eKFJ4xLqT55jG4BP4p0Ec9xTCKDAAAIABAACAAAAAgAIAAIABAAAAAwAAACICA4Subm7T6yYCMWLgDtMy92hOgjanJefukbCOSVEHlX0IHCUi8jwwAACAAQAAgAAAAIACAACAAQAAAAMAAAAiAgPpsETw12nxLEM6OSOPfxp4YYj8NtRcLdqBpi3S4/BTuRwlIvI8MAAAgAEAAIAAAACAAgAAgAMAAAADAAAAAA==";
 
-    fn spend_tx() -> SpendTx {
+    pub(crate) fn spend_tx() -> SpendTx {
         let desc = CoincubeDescriptor::from_str(DESC).unwrap();
         let psbt = Psbt::from_str(UNSIGNED_PSBT).unwrap();
         let secp = Secp256k1::verification_only();
@@ -344,6 +368,26 @@ mod tests {
                 .expect("captured status label");
             assert!(status_height <= 24.0, "status pill text wrapped");
         }
+    }
+
+    /// Only a PSBT that Cube › Activity opened sends its Back there; one
+    /// opened from this panel's own list (or a direct route) stays here.
+    #[test]
+    fn only_an_activity_opened_psbt_returns_to_activity() {
+        let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
+        let mut panel = PsbtsPanel::new(wallet);
+        assert!(!panel.returns_to_activity());
+
+        panel.preselect_from_activity(spend_tx());
+        assert!(panel.returns_to_activity());
+
+        panel.preselect(spend_tx());
+        assert!(!panel.returns_to_activity(), "direct route keeps list Back");
+
+        panel.preselect_from_activity(spend_tx());
+        panel.clear_selection();
+        assert!(!panel.returns_to_activity());
+        assert!(panel.selected_tx.is_none());
     }
 
     // Regression: a background `SpendTxs` refresh must NOT rebuild the open

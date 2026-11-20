@@ -602,9 +602,9 @@ impl SparkSwap {
                 Task::none()
             }
             SparkSwapMessage::SelectTransaction(idx) => self.open_swap_transaction(idx),
-            SparkSwapMessage::History => crate::app::state::redirect(Menu::Spark(
-                crate::app::menu::SparkSubMenu::Transactions(None),
-            )),
+            SparkSwapMessage::History => crate::app::state::view_all_activity(
+                crate::app::view::activity::WalletFilter::Spark,
+            ),
             SparkSwapMessage::AutoConvertLoaded { read, line } => {
                 // An unread state keeps the last one rather than guessing.
                 if read == self.auto_convert_read && line.is_some() {

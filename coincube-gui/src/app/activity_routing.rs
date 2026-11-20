@@ -88,6 +88,40 @@ impl App {
         Task::batch([forwarded, refresh])
     }
 
+    /// Back from a transaction detail page goes to Cube › Activity, the
+    /// one history list: always from a Vault or Spark transaction, and
+    /// from a PSBT when Activity opened it. Otherwise the page handles it.
+    pub(super) fn activity_detail_back_applies(&self) -> bool {
+        match &self.panels.current {
+            Menu::Vault(menu::VaultSubMenu::Transactions(_)) => self
+                .panels
+                .transactions
+                .as_ref()
+                .is_some_and(|panel| panel.has_selection()),
+            Menu::Vault(menu::VaultSubMenu::PSBTs(_)) => self
+                .panels
+                .psbts
+                .as_ref()
+                .is_some_and(|panel| panel.returns_to_activity()),
+            Menu::Spark(menu::SparkSubMenu::Transactions(_)) => {
+                self.panels.spark_transactions.has_selection()
+            }
+            _ => false,
+        }
+    }
+
+    /// See [`Self::activity_detail_back_applies`], which gates this.
+    pub(super) fn route_activity_detail_back(&mut self) -> Task<Message> {
+        if let Some(panel) = self.panels.transactions.as_mut() {
+            panel.clear_selection();
+        }
+        if let Some(panel) = self.panels.psbts.as_mut() {
+            panel.clear_selection();
+        }
+        self.panels.spark_transactions.clear_selection();
+        self.set_current_panel(Menu::Cube(menu::CubeSubMenu::Activity))
+    }
+
     pub(super) fn route_activity_detail(
         &mut self,
         target: state::activity::ActivityTarget,
@@ -112,7 +146,7 @@ impl App {
                 if self.panels.psbts.is_some() {
                     let load = self.set_current_panel(Menu::Vault(menu::VaultSubMenu::PSBTs(None)));
                     let panel = self.panels.psbts.as_mut().expect("checked above");
-                    panel.preselect(tx);
+                    panel.preselect_from_activity(tx);
                     return load;
                 }
             }

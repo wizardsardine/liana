@@ -378,7 +378,9 @@ impl State for SparkOverview {
                     ]);
                 }
                 view::SparkOverviewMessage::History => {
-                    return redirect(Menu::Spark(SparkSubMenu::Transactions(None)));
+                    return crate::app::state::view_all_activity(
+                        crate::app::view::activity::WalletFilter::Spark,
+                    );
                 }
                 view::SparkOverviewMessage::SelectTransaction(id) => {
                     if let Some(payment) =
@@ -1010,6 +1012,42 @@ mod tests {
         assert_eq!(panel.recent_transactions.len(), 5);
         assert_eq!(panel.recent_transactions[0].id, "payment-0");
         assert_eq!(panel.recent_transactions[4].id, "payment-4");
+    }
+
+    /// "History" opens Cube › Activity filtered to Spark: Activity is the
+    /// one full history list, not a Spark-only list page.
+    #[test]
+    fn history_opens_activity_filtered_to_spark() {
+        use iced_runtime::futures::futures::StreamExt;
+        let mut panel = SparkOverview::new(None);
+        let task = panel.update(
+            None,
+            &Cache::default(),
+            Message::View(view::Message::SparkOverview(
+                view::SparkOverviewMessage::History,
+            )),
+        );
+        let stream = iced_runtime::task::into_stream(task).expect("History navigates");
+        let outputs: Vec<Message> = iced_runtime::futures::futures::executor::block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        iced_runtime::Action::Output(message) => Some(message),
+                        _ => None,
+                    }
+                })
+                .collect(),
+        );
+        assert!(
+            matches!(
+                outputs.as_slice(),
+                [Message::View(view::Message::Activity(
+                    view::activity::ActivityMessage::ViewAll(view::activity::WalletFilter::Spark)
+                ))]
+            ),
+            "{:?}",
+            outputs
+        );
     }
 
     #[test]
