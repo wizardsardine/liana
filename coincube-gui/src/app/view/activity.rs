@@ -4070,6 +4070,94 @@ mod tests {
         assert!(!vault.contains("View all transactions"));
     }
 
+    #[test]
+    fn recent_activity_shows_one_draft_line_in_place_of_draft_rows() {
+        use crate::app::menu::{Menu, VaultSubMenu};
+        use crate::app::state::activity::tests::draft;
+        let base = 1_763_600_000;
+        let mut activity = loaded(Vec::new(), vault_payments_at(&[base, base + 60]));
+        let mut second = draft();
+        // A second, distinct draft: same PSBT, different locktime.
+        second.psbt.unsigned_tx.lock_time =
+            coincube_core::miniscript::bitcoin::absolute::LockTime::from_consensus(1);
+        drop(activity.update(
+            None,
+            &Cache::default(),
+            crate::app::message::Message::ActivityPsbtLoaded(0, Ok(vec![draft(), second])),
+        ));
+        let cache = Cache {
+            balance_privacy: Some(BalancePrivacyChrome {
+                privacy: BalancePrivacy::Shown,
+                busy: false,
+                interactive: false,
+            }),
+            ..Default::default()
+        };
+        for (scenario, scope, width) in [
+            (
+                "vault-recent-activity-drafts",
+                RecentScope::Wallet(WalletFilter::Vault),
+                1106,
+            ),
+            ("overview-recent-activity-drafts", RecentScope::Cube, 1106),
+        ] {
+            let mounted = mount(
+                scenario,
+                recent_activity(&activity, &cache, scope, None),
+                (1440, 900),
+                "dark",
+                coincube_ui::theme::Theme::dark(),
+                width,
+            );
+            assert!(
+                mounted.contains("2 Vault transactions awaiting signatures"),
+                "{:?}",
+                mounted.text
+            );
+            assert!(!mounted.contains("0/2 signed"));
+            assert!(!mounted
+                .text
+                .iter()
+                .any(|(value, _)| value == "Vault transaction"));
+            assert_eq!(
+                mounted
+                    .text
+                    .iter()
+                    .filter(|(value, _)| value == "Sent Bitcoin")
+                    .count(),
+                2,
+                "the payments keep their rows"
+            );
+            let pressed = press(
+                recent_activity(&activity, &cache, scope, None),
+                Id::from("tenshu.recent.vault.drafts"),
+            );
+            assert!(
+                matches!(
+                    pressed.as_slice(),
+                    [Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(None)))]
+                ),
+                "{:?}",
+                pressed
+            );
+        }
+        // Spark's page never mentions the Vault's drafts.
+        let spark = mount(
+            "spark-recent-activity-drafts",
+            recent_activity(
+                &activity,
+                &cache,
+                RecentScope::Wallet(WalletFilter::Spark),
+                None,
+            ),
+            (1440, 900),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+            1106,
+        );
+        assert!(!spark.contains("awaiting signatures"));
+    }
+
     /// Vault payments at `times`, each its own transaction.
     fn vault_payments_at(times: &[u32]) -> Vec<HistoryTransaction> {
         use coincube_core::miniscript::bitcoin::{hashes::Hash, Txid};
