@@ -188,8 +188,9 @@ impl Activity {
             .iter()
             .filter(|tx| tx.status == SpendStatus::Pending)
         {
-            let sigs = tx.sigs.primary_path();
-            if sigs.sigs_count >= sigs.threshold {
+            // Ready as the PSBTs page reads it: any spending path complete,
+            // a recovery path included.
+            if tx.path_ready().is_some() {
                 summary.ready += 1;
             } else {
                 summary.awaiting += 1;
@@ -962,6 +963,24 @@ pub(crate) mod tests {
             view::activity::DraftSummary {
                 awaiting: 1,
                 ready: 0
+            }
+        );
+        // A draft holding enough signatures counts as ready to broadcast.
+        let mut signed = draft();
+        signed.sigs = coincube_core::descriptors::PartialSpendInfo::primary_only(
+            coincube_core::descriptors::PathSpendInfo {
+                threshold: 2,
+                sigs_count: 2,
+                signed_pubkeys: Default::default(),
+            },
+        );
+        assert!(signed.path_ready().is_some());
+        activity.psbts.push(signed);
+        assert_eq!(
+            activity.vault_drafts(),
+            view::activity::DraftSummary {
+                awaiting: 1,
+                ready: 1
             }
         );
     }

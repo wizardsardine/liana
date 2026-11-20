@@ -1407,26 +1407,35 @@ impl DraftSummary {
     /// "2 Vault transactions awaiting signatures · 1 ready to broadcast";
     /// none when there is no draft.
     pub fn line(self) -> Option<String> {
-        let plural = |count: usize| if count == 1 { "" } else { "s" };
-        let awaiting = (self.awaiting > 0).then(|| {
-            format!(
-                "{} Vault transaction{} awaiting signatures",
-                self.awaiting,
-                plural(self.awaiting)
-            )
-        });
-        let ready = (self.ready > 0).then(|| {
-            if self.awaiting > 0 {
-                format!("{} ready to broadcast", self.ready)
+        let (awaiting, ready) = (self.awaiting, self.ready);
+        let awaiting_part = match awaiting {
+            0 => None,
+            1 => Some(localized_format!(
+                "1 Vault transaction awaiting signatures",
+                "1 transacción del Vault esperando firmas"
+            )),
+            n => Some(localized_format!(
+                "{n} Vault transactions awaiting signatures",
+                "{n} transacciones del Vault esperando firmas"
+            )),
+        };
+        let ready_part = match (ready, awaiting > 0) {
+            (0, _) => None,
+            (n, true) => Some(if n == 1 {
+                localized_format!("1 ready to broadcast", "1 lista para transmitir")
             } else {
-                format!(
-                    "{} Vault transaction{} ready to broadcast",
-                    self.ready,
-                    plural(self.ready)
-                )
-            }
-        });
-        match (awaiting, ready) {
+                localized_format!("{n} ready to broadcast", "{n} listas para transmitir")
+            }),
+            (1, false) => Some(localized_format!(
+                "1 Vault transaction ready to broadcast",
+                "1 transacción del Vault lista para transmitir"
+            )),
+            (n, false) => Some(localized_format!(
+                "{n} Vault transactions ready to broadcast",
+                "{n} transacciones del Vault listas para transmitir"
+            )),
+        };
+        match (awaiting_part, ready_part) {
             (Some(awaiting), Some(ready)) => Some(format!("{awaiting} · {ready}")),
             (one, other) => one.or(other),
         }
@@ -1443,7 +1452,7 @@ fn draft_summary_row<'a>(summary: DraftSummary) -> Option<Element<'a, Message>> 
             words(line, 13.0, font::MEDIUM, glyph::ink).width(Length::Fill),
             Action::new(
                 Id::from("tenshu.recent.vault.drafts"),
-                text("Review").size(13).font(font::MEDIUM),
+                text(localized_copy("Review")).size(13).font(font::MEDIUM),
                 Message::FocusAction,
             )
             .style(theme::button::secondary)
@@ -1700,10 +1709,12 @@ pub fn recent_activity<'a>(
     }
     let mut content = Column::new().spacing(10).push(heading);
     // The drafts' line sits above the hint: the hint is about the rows.
-    if scope.includes(WalletFilter::Vault) {
-        if let Some(drafts) = draft_summary_row(activity.vault_drafts()) {
-            content = content.push(drafts);
-        }
+    let drafts = scope
+        .includes(WalletFilter::Vault)
+        .then(|| activity.vault_drafts())
+        .filter(|drafts| drafts.line().is_some());
+    if let Some(row) = drafts.and_then(draft_summary_row) {
+        content = content.push(row);
     }
     if !entries.is_empty() {
         content = content.push(words(
@@ -1723,6 +1734,9 @@ pub fn recent_activity<'a>(
             localized_copy("Loading payment history…")
         } else if failed {
             localized_copy("No transactions to show")
+        } else if drafts.is_some() {
+            // The drafts' line says what is waiting; nothing has moved yet.
+            localized_copy("Nothing sent or received yet")
         } else {
             localized_copy("No transactions yet")
         };
@@ -4169,6 +4183,65 @@ mod tests {
             1106,
         );
         assert!(!spark.contains("awaiting signatures"));
+    }
+
+    #[test]
+    fn recent_activity_with_only_drafts_does_not_read_as_empty() {
+        use crate::app::state::activity::tests::draft;
+        let mut activity = loaded(Vec::new(), Vec::new());
+        drop(activity.update(
+            None,
+            &Cache::default(),
+            crate::app::message::Message::ActivityPsbtLoaded(0, Ok(vec![draft()])),
+        ));
+        let cache = Cache::default();
+        let scope = RecentScope::Wallet(WalletFilter::Vault);
+        let page = mount(
+            "vault-recent-activity-only-drafts",
+            recent_activity(&activity, &cache, scope, None),
+            (1440, 900),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+            1106,
+        );
+        assert!(page.contains("1 Vault transaction awaiting signatures"));
+        assert!(page.contains("Nothing sent or received yet"));
+        assert!(!page.contains("No transactions yet"));
+        // Without drafts the usual empty copy stands.
+        let empty = loaded(Vec::new(), Vec::new());
+        let page = mount(
+            "vault-recent-activity-empty",
+            recent_activity(&empty, &cache, scope, None),
+            (1440, 900),
+            "dark",
+            coincube_ui::theme::Theme::dark(),
+            1106,
+        );
+        assert!(page.contains("No transactions yet"));
+        assert!(!page.contains("awaiting signatures"));
+        // Spanish: the line, its button and the empty copy are translated.
+        coincube_ui::locale::render_in(coincube_ui::locale::Language::Spanish, || {
+            let page = mount(
+                "vault-recent-activity-only-drafts-es",
+                recent_activity(&activity, &cache, scope, None),
+                (1440, 900),
+                "dark",
+                coincube_ui::theme::Theme::dark(),
+                1106,
+            );
+            assert!(page.contains("1 transacción del Vault esperando firmas"));
+            assert!(page.contains("Revisar"));
+            assert!(page.contains("Aún no se ha enviado ni recibido nada"));
+            assert_eq!(
+                DraftSummary {
+                    awaiting: 3,
+                    ready: 1
+                }
+                .line()
+                .as_deref(),
+                Some("3 transacciones del Vault esperando firmas · 1 lista para transmitir")
+            );
+        });
     }
 
     /// Vault payments at `times`, each its own transaction.
