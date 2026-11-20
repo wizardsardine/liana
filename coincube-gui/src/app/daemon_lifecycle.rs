@@ -2,6 +2,18 @@
 use super::*;
 
 impl App {
+    /// Invalidate history probes and switch consent tied to the previous Vault or backend.
+    pub(super) fn invalidate_node_history(&mut self) {
+        self.bitcoind_sync_probe_in_progress = false;
+        self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
+        self.node_history_in_progress = false;
+        self.node_history_pending = None;
+        self.cache.node_history = node_history::Status::default();
+        self.cache.node_history_switch_requested = false;
+        self.cache.local_switch_history = None;
+        self.local_switch_hold = None;
+    }
+
     pub(super) fn handle_daemon_restarted(&mut self, outcome: DaemonRestart) -> Task<Message> {
         self.daemon_switch_in_progress = false;
         self.cache.daemon_switch_in_progress = false;
@@ -64,12 +76,7 @@ impl App {
         // A successful switch invalidates the previous node probe and
         // clears its cached permission before polling the replacement.
         if result.is_ok() {
-            self.bitcoind_sync_probe_in_progress = false;
-            self.node_history_request_epoch = self.node_history_request_epoch.wrapping_add(1);
-            self.node_history_in_progress = false;
-            self.node_history_pending = None;
-            self.cache.node_history = node_history::Status::default();
-            self.cache.node_history_switch_requested = false;
+            self.invalidate_node_history();
             self.cache.node_bitcoind_sync_progress = None;
             self.cache.node_bitcoind_sync_heights = None;
             self.cache.node_bitcoind_ibd = None;
@@ -124,6 +131,7 @@ mod tests {
         app.cache.node_history.busy = true;
         app.cache.node_history.error = Some("old probe".into());
         app.cache.node_history_switch_requested = true;
+        app.cache.local_node_transfer_visible = true;
         app.cache.node_bitcoind_sync_progress = Some(0.75);
         app.cache.node_bitcoind_sync_heights = Some((30, 40));
         app.cache.node_bitcoind_ibd = Some(true);
@@ -158,6 +166,7 @@ mod tests {
                 assert!(!app.cache.node_history.busy);
                 assert!(app.cache.node_history.error.is_none());
                 assert!(!app.cache.node_history_switch_requested);
+                assert!(app.cache.local_node_transfer_visible);
                 assert!(app.cache.node_bitcoind_sync_progress.is_none());
                 assert!(app.cache.node_bitcoind_sync_heights.is_none());
                 assert!(app.cache.node_bitcoind_ibd.is_none());
