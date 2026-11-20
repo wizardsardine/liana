@@ -1816,8 +1816,8 @@ fn card_phase_ux<'a>(
         ),
         summary_row(
             localized_copy("Status"),
-            iced::widget::Space::new().into(),
-            Some(status_line(status_icon(tone), status_text, tone)),
+            status_line(status_icon(tone), status_text, tone),
+            None,
         ),
     ]);
 
@@ -2297,13 +2297,17 @@ fn checkout_phase_ux<'a>(
             .or_else(|| resp.map(|r| r.charge_id.clone())),
     };
     let (status_text, tone) = checkout_status(checkout);
-    let status_main: Element<'a, Msg> = match &invoice_id {
-        Some(id) => tenshu_text::mono(format!("Invoice {id}"))
-            .size(12)
-            .style(theme::tenshu::text::muted)
-            .into(),
-        None => iced::widget::Space::new().into(),
-    };
+    let mut status_main =
+        Column::new()
+            .spacing(4)
+            .push(status_line(status_icon(tone), status_text, tone));
+    if let Some(id) = &invoice_id {
+        status_main = status_main.push(
+            tenshu_text::mono(format!("Invoice {id}"))
+                .size(12)
+                .style(theme::tenshu::text::muted),
+        );
+    }
     let list = ruled_list([
         summary_row(localized_copy("Plan"), plan_main.into(), None),
         summary_row(
@@ -2315,11 +2319,7 @@ fn checkout_phase_ux<'a>(
             None,
         ),
         summary_row(localized_copy("Covers"), covers.into(), None),
-        summary_row(
-            localized_copy("Status"),
-            status_main,
-            Some(status_line(status_icon(tone), status_text, tone)),
-        ),
+        summary_row(localized_copy("Status"), status_main.into(), None),
     ]);
 
     let body: Element<'a, Msg> = match &checkout.phase {
@@ -2971,8 +2971,7 @@ fn review_summary_list<'a>(
         summary_row(localized_copy("Covers"), covers_main.into(), None),
         summary_row(
             localized_copy("Status"),
-            iced::widget::Space::new().into(),
-            Some(status_line(
+            status_line(
                 dash_circle_icon(),
                 if to_free {
                     localized_copy("Nothing to pay")
@@ -2982,7 +2981,8 @@ fn review_summary_list<'a>(
                     localized_copy("Not invoiced yet")
                 },
                 Tone::Muted,
-            )),
+            ),
+            None,
         ),
     ]);
 
