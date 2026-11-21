@@ -4130,9 +4130,8 @@ mod tests {
             .expect("now is after the unix epoch")
             .as_secs();
         bitcoind.tip.height = height;
-        bitcoind.tip_timestamp = Some(
-            u32::try_from(now).expect("a current unix time fits the header timestamp"),
-        );
+        bitcoind.tip_timestamp =
+            Some(u32::try_from(now).expect("a current unix time fits the header timestamp"));
         bitcoind
     }
 
