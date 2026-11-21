@@ -2212,6 +2212,17 @@ impl Step for SaveSpend {
         cache: &Cache,
         message: Message,
     ) -> Task<Message> {
+        // A proposal deleted from the review has nothing left to review:
+        // show the PSBTs list, which says what was deleted.
+        if let Message::View(view::Message::Psbts(view::PsbtsMessage::Deleted(name))) = &message {
+            let deleted = Message::View(view::Message::Psbts(view::PsbtsMessage::Deleted(
+                name.clone(),
+            )));
+            return Task::done(Message::View(view::Message::Menu(Menu::Vault(
+                crate::app::menu::VaultSubMenu::PSBTs(None),
+            ))))
+            .chain(Task::done(deleted));
+        }
         if self.mcp_review {
             match &message {
                 #[cfg(feature = "mcp-transactions")]
@@ -2261,6 +2272,7 @@ impl Step for SaveSpend {
             psbt_state.replay_presentation(cache),
             psbt_state.broadcast_ready(cache),
             self.mcp_review,
+            psbt_state.delete,
         );
         if let Some(modal) = &psbt_state.modal {
             modal.as_ref().view(content)
