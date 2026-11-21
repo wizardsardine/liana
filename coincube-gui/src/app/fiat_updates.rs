@@ -20,22 +20,7 @@ impl App {
         if fiat_price.request.origin.is_some() {
             return Task::none();
         }
-        let mut updated = false;
-
-        // Always extract BTC/USD price for USDt→sats conversion,
-        // regardless of whether fiat display is enabled.
-        if fiat_price.currency() == crate::services::fiat::Currency::USD
-            && self
-                .cache
-                .btc_usd_requested_at
-                .is_none_or(|at| at < fiat_price.requested_at())
-        {
-            if let Ok(price) = fiat_price.res.as_ref() {
-                self.cache.btc_usd_price = Some(price.value);
-                self.cache.btc_usd_requested_at = Some(fiat_price.requested_at());
-                updated = true;
-            }
-        }
+        let mut updated = self.update_btc_usd_conversion_rate(&fiat_price);
 
         // Store user's selected currency price (only when fiat display is enabled).
         let is_relevant = self.cube_settings.fiat_price.as_ref().is_some_and(|sett| {
@@ -64,6 +49,24 @@ impl App {
             return Task::done(Message::CacheUpdated);
         }
         Task::none()
+    }
+
+    fn update_btc_usd_conversion_rate(&mut self, fiat_price: &cache::FiatPrice) -> bool {
+        // Always extract BTC/USD price for USDt→sats conversion,
+        // regardless of whether fiat display is enabled.
+        if fiat_price.currency() == crate::services::fiat::Currency::USD
+            && self
+                .cache
+                .btc_usd_requested_at
+                .is_none_or(|at| at < fiat_price.requested_at())
+        {
+            if let Ok(price) = fiat_price.res.as_ref() {
+                self.cache.btc_usd_price = Some(price.value);
+                self.cache.btc_usd_requested_at = Some(fiat_price.requested_at());
+                return true;
+            }
+        }
+        false
     }
 }
 
