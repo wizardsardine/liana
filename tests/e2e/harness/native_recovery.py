@@ -58,6 +58,20 @@ def require(ok, code):
         raise Failed('NATIVE_RECOVERY_' + code, 'Native recovery prerequisite/validation failed: ' + code)
 
 
+def create_backend_retry(case, config, records, pending):
+    if (pending != {'chain': config['chain'], 'action': 'create_export', 'config_sha256': digest(config)}
+            or set(records) != {'preflight', 'bind_auth'} or case.is_symlink()):
+        return False
+    try:
+        state = json.loads(private_read(case / 'state.json'))
+    except (Blocked, ValueError):
+        return False
+    # The signed runner must revalidate and consume this checkpoint under its
+    # case lock before allowing creation. A missing response alone proves nothing.
+    return (isinstance(state, dict) and state.get('config') == config
+            and state.get('stage') == 'create_backend_refused' and state.get('pending') == 'create_export')
+
+
 def options(value):
     require(isinstance(value, dict) and set(value) == {'version', 'checkout', 'revision'}, 'CONFIG')
     require(type(value['version']) is int and value['version'] == 1
@@ -506,9 +520,12 @@ class NativeRecovery:
                                 access_token=account['tokens']['access_token'])
             records = self.journal.data['artifacts'].setdefault(chain, {})
             pending = self.journal.data['artifacts'].get('pending_native_action')
+            retry_create = create_backend_retry(case, config, records, pending)
             if pending is not None and 'retire_remote' not in records:
-                require(pending == {'chain': chain, 'action': 'retire_remote', 'config_sha256': digest(config)}
-                        and all(action in records for action in ('preflight', 'bind_auth', *ACTIONS)), 'UNCERTAIN_RETIREMENT')
+                require(retry_create
+                        or (pending == {'chain': chain, 'action': 'retire_remote', 'config_sha256': digest(config)}
+                            and all(action in records for action in ('preflight', 'bind_auth', *ACTIONS))),
+                        'UNCERTAIN_RETIREMENT')
             if not records:
                 # Read-only and deliberately not journaled as a secret-producing
                 # action: quota refusal must leave no fixture credentials.
@@ -533,14 +550,18 @@ class NativeRecovery:
             for action in ('preflight', 'bind_auth', *ACTIONS):
                 if action in records:
                     continue  # Exact same consumer/action only; proofs below revalidated.
-                if self.journal.data['artifacts'].get('pending_native_action'):
+                retry = retry_create and action == 'create_export'
+                if self.journal.data['artifacts'].get('pending_native_action') and not retry:
                     raise Blocked('NATIVE_RECOVERY_UNCERTAIN', 'A native action has uncertain outcome; preserve the sealed fixture and reconcile it.')
                 require(source(self.config) == self.binding and hashlib.sha256(executable.read_bytes()).hexdigest() == receipt['sha256'], 'BUILD_CHANGED')
-                if action in ('wipe_original', 'restore', 'reopen_sign'):
+                if retry or action in ('wipe_original', 'restore', 'reopen_sign'):
                     checked_process(self.config, self.binding, executable, receipt, {'action': 'refresh_auth', 'config': config}, self.directory,
                                     access_token=account['tokens']['access_token'])
                 self.journal.artifact('pending_native_action', {'chain': chain, 'action': action, 'config_sha256': digest(config)})
-                record = checked_process(self.config, self.binding, executable, receipt, {'action': action, 'config': config}, self.directory,
+                request = {'action': action, 'config': config}
+                if retry:
+                    request['retry_create'] = True
+                record = checked_process(self.config, self.binding, executable, receipt, request, self.directory,
                                  access_token=account['tokens']['access_token'] if action == 'bind_auth' else None)
                 records[action] = record
                 if action in ('create_export', 'restore'):

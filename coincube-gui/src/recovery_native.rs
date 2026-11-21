@@ -268,6 +268,7 @@ pub async fn admit_create(
 
 /// Drive Home's real creation/backup ceremony, then real in-Cube Vault installation
 /// and the exact full-kit encrypt/upload function shared by Settings and creation.
+/// The signed runner checks backend readiness before calling this function.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_export(
     chain: ChainId,
@@ -280,7 +281,6 @@ pub async fn create_export(
     client: CoincubeClient,
 ) -> Result<(Identity, RecoveryKit)> {
     allowed_chain(chain)?;
-    admit_backend_readiness(chain, &client).await?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
     if chain.is_blake2b() {
         check(

@@ -120,6 +120,8 @@ mod native {
     struct Request {
         action: String,
         config: Config,
+        #[serde(default)]
+        retry_create: bool,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -927,28 +929,9 @@ mod native {
             "native_abandon_identity",
         )?;
         check(
-            state.stage == "new"
-                && state.pending.as_deref() == Some("create_export")
-                && state.identity.is_none()
-                && state.kit.is_none()
-                && state.restorer.is_none()
-                && state.original_manifest.is_none()
-                && state.original_files.is_none()
-                && state.wipe_manifest.is_none()
-                && state.wipe_oracle.is_none()
-                && state.retirement_oracle.is_none()
-                && state.original_factor.is_none()
-                && state.restored_factor.is_none()
-                && state.proof_sha256.is_none()
-                && !state.remote_delete_started
-                && state.canary_uuid.is_some()
-                && state
-                    .canary
-                    .as_ref()
-                    .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit())),
+            state.stage == "new" && prepared_create_state(state),
             "native_abandon_stage",
-        )?;
-        Ok(())
+        )
     }
 
     async fn audit_capacity_abandonment(input: &AbandonInput) -> Result<()> {
@@ -1565,8 +1548,31 @@ mod native {
         Ok(lock)
     }
 
-    fn load_action_state(c: &Config, root: &Path, action: &str) -> Result<State> {
-        let state = if action == "create_export" {
+    const CREATE_BACKEND_REFUSED: &str = "create_backend_refused";
+
+    fn prepared_create_state(state: &State) -> bool {
+        state.pending.as_deref() == Some("create_export")
+            && state.identity.is_none()
+            && state.kit.is_none()
+            && state.restorer.is_none()
+            && state.original_manifest.is_none()
+            && state.original_files.is_none()
+            && state.wipe_manifest.is_none()
+            && state.wipe_oracle.is_none()
+            && state.retirement_oracle.is_none()
+            && state.original_factor.is_none()
+            && state.restored_factor.is_none()
+            && state.proof_sha256.is_none()
+            && !state.remote_delete_started
+            && state.canary_uuid.is_some()
+            && state
+                .canary
+                .as_ref()
+                .is_some_and(|v| v.len() == 64 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+    }
+
+    fn load_action_state(c: &Config, root: &Path, fresh_create: bool) -> Result<State> {
+        let state = if fresh_create {
             State {
                 config: c.clone(),
                 stage: "new".into(),
@@ -1592,6 +1598,44 @@ mod native {
                 .map_err(|_| "native_state_invalid")?
         };
         Ok(state)
+    }
+
+    fn validate_create_retry(c: &Config, state: &State) -> Result<()> {
+        check(
+            state.config == *c
+                && state.stage == CREATE_BACKEND_REFUSED
+                && prepared_create_state(state),
+            "native_uncertain_action",
+        )?;
+        process_absent(&state.creator)?;
+        let root = &c.case_root;
+        check(
+            state_staging_absent(root)?
+                && absent(&root.join("original"))?
+                && absent(&root.join("restored"))?
+                && absent(&root.join("quarantined-original"))?,
+            "native_create_retry_files",
+        )
+    }
+
+    fn record_create_admission(
+        root: &Path,
+        state: &mut State,
+        admission: Result<()>,
+    ) -> Result<()> {
+        if let Err(code) = admission {
+            state.stage = CREATE_BACKEND_REFUSED.into();
+            save(root, state)?;
+            return Err(code);
+        }
+        if state.stage == CREATE_BACKEND_REFUSED {
+            // Persist consumption before anything can create a local or remote
+            // Cube. A lost response after this point remains uncertain.
+            state.stage = "new".into();
+            state.creator = this_process()?;
+            save(root, state)?;
+        }
+        Ok(())
     }
 
     fn validate_action_state(c: &Config, state: &State, action: &str) -> Result<()> {
@@ -1625,9 +1669,77 @@ mod native {
         Ok(())
     }
 
+    fn prepare_create_secrets(c: &Config, state: &mut State) -> Result<()> {
+        let pin = Zeroizing::new(format!(
+            "{:04}",
+            u32::from_le_bytes(
+                random(4)
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "native_entropy")?
+            ) % 10_000
+        ));
+        let mut next = Zeroizing::new(format!(
+            "{:04}",
+            u32::from_le_bytes(
+                random(4)
+                    .as_slice()
+                    .try_into()
+                    .map_err(|_| "native_entropy")?
+            ) % 10_000
+        ));
+        if *next == *pin {
+            next = Zeroizing::new(format!(
+                "{:04}",
+                (pin.parse::<u32>().map_err(|_| "native_pin")? + 1) % 10_000
+            ));
+        }
+        let password = Zeroizing::new(hex::encode(random(32).as_slice()));
+        put(c, "original_pin", pin.as_bytes())?;
+        put(c, "recovery_password", password.as_bytes())?;
+        put(c, "restored_pin", next.as_bytes())?;
+        let canary_id = uuid::Uuid::new_v4();
+        check(
+            device_secret::load_optional(&canary_id.to_string())
+                .map_err(|_| "native_keychain_blocked")?
+                .is_none(),
+            "native_canary_exists",
+        )?;
+        let canary = device_secret::get_or_create(&c.case_root, &canary_id.to_string())
+            .map_err(|_| "native_canary_create")?;
+        put(c, "canary", canary.as_ref())?;
+        state.canary_uuid = Some(canary_id);
+        state.canary = Some(hash(canary.as_ref()));
+        save(&c.case_root, state)
+    }
+
+    fn validate_canary(c: &Config, state: &State) -> Result<()> {
+        check(
+            Some(hash(&load(c, "canary")?)) == state.canary,
+            "native_canary_changed",
+        )?;
+        let production_canary = device_secret::load(
+            &state
+                .canary_uuid
+                .ok_or("native_canary_missing")?
+                .to_string(),
+        )
+        .map_err(|_| "native_production_canary_missing")?;
+        check(
+            Some(hash(production_canary.as_ref())) == state.canary,
+            "native_production_canary_changed",
+        )
+    }
+
     async fn action(request: Request) -> Result<()> {
         let c = request.config;
         preflight(&c)?;
+        let retry_create = request.retry_create;
+        let fresh_create = request.action == "create_export" && !retry_create;
+        check(
+            !retry_create || request.action == "create_export",
+            "native_action",
+        )?;
         let root = &c.case_root;
         validate_action_parent(root)?;
         let original = root.join("original");
@@ -1649,10 +1761,9 @@ mod native {
             )?;
             return Ok(());
         }
-        if request.action == "create_export" {
+        if fresh_create {
             check(absent(root)?, "native_run_not_fresh")?;
             let (client, _) = auth(&c)?;
-            recovery_native::admit_backend_readiness(c.chain, &client).await?;
             recovery_native::admit_create(c.chain, c.run_id, c.owner_id, &client).await?;
             fs::DirBuilder::new()
                 .mode(0o700)
@@ -1660,10 +1771,14 @@ mod native {
                 .map_err(|_| "native_run_create")?;
         }
         let _lock = lock_action_directory(root)?;
-        let mut state = load_action_state(&c, root, &request.action)?;
-        validate_action_state(&c, &state, &request.action)?;
-        state.pending = Some(request.action.clone());
-        save(root, &state)?;
+        let mut state = load_action_state(&c, root, fresh_create)?;
+        if retry_create {
+            validate_create_retry(&c, &state)?;
+        } else {
+            validate_action_state(&c, &state, &request.action)?;
+            state.pending = Some(request.action.clone());
+            save(root, &state)?;
+        }
         match request.action.as_str() {
             "create_export" => {
                 check(
@@ -1672,51 +1787,6 @@ mod native {
                         .is_none(),
                     "native_original_factor_exists",
                 )?;
-                let entropy = random(16);
-                let phrase =
-                    bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
-                let words = Zeroizing::new(phrase.words().map(str::to_owned).collect::<Vec<_>>());
-                let pin = Zeroizing::new(format!(
-                    "{:04}",
-                    u32::from_le_bytes(
-                        random(4)
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| "native_entropy")?
-                    ) % 10_000
-                ));
-                let mut next = Zeroizing::new(format!(
-                    "{:04}",
-                    u32::from_le_bytes(
-                        random(4)
-                            .as_slice()
-                            .try_into()
-                            .map_err(|_| "native_entropy")?
-                    ) % 10_000
-                ));
-                if *next == *pin {
-                    next = Zeroizing::new(format!(
-                        "{:04}",
-                        (pin.parse::<u32>().map_err(|_| "native_pin")? + 1) % 10_000
-                    ));
-                }
-                let password = Zeroizing::new(hex::encode(random(32).as_slice()));
-                put(&c, "original_pin", pin.as_bytes())?;
-                put(&c, "recovery_password", password.as_bytes())?;
-                put(&c, "restored_pin", next.as_bytes())?;
-                let canary_id = uuid::Uuid::new_v4();
-                check(
-                    device_secret::load_optional(&canary_id.to_string())
-                        .map_err(|_| "native_keychain_blocked")?
-                        .is_none(),
-                    "native_canary_exists",
-                )?;
-                let canary = device_secret::get_or_create(root, &canary_id.to_string())
-                    .map_err(|_| "native_canary_create")?;
-                put(&c, "canary", canary.as_ref())?;
-                state.canary_uuid = Some(canary_id);
-                state.canary = Some(hash(canary.as_ref()));
-                save(root, &state)?;
                 let (client, jwt) = auth(&c)?;
                 check(
                     client
@@ -1727,6 +1797,21 @@ mod native {
                         == c.owner_id,
                     "native_account_changed",
                 )?;
+                if retry_create {
+                    observe_remote_before_create(&c, &jwt, &client).await?;
+                    validate_canary(&c, &state)?;
+                } else {
+                    prepare_create_secrets(&c, &mut state)?;
+                }
+                let pin = string(load(&c, "original_pin")?)?;
+                let password = string(load(&c, "recovery_password")?)?;
+                let _restored_pin = load(&c, "restored_pin")?;
+                let admission = recovery_native::admit_backend_readiness(c.chain, &client).await;
+                record_create_admission(root, &mut state, admission)?;
+                let entropy = random(16);
+                let phrase =
+                    bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
+                let words = Zeroizing::new(phrase.words().map(str::to_owned).collect::<Vec<_>>());
                 let (identity, kit) = recovery_native::create_export(
                     c.chain,
                     &CoincubeDirectory::new(original.clone()),
@@ -1913,21 +1998,7 @@ mod native {
             }
             _ => return Err("native_action"),
         }
-        check(
-            Some(hash(&load(&c, "canary")?)) == state.canary,
-            "native_canary_changed",
-        )?;
-        let production_canary = device_secret::load(
-            &state
-                .canary_uuid
-                .ok_or("native_canary_missing")?
-                .to_string(),
-        )
-        .map_err(|_| "native_production_canary_missing")?;
-        check(
-            Some(hash(production_canary.as_ref())) == state.canary,
-            "native_production_canary_changed",
-        )?;
+        validate_canary(&c, &state)?;
         state.pending = None;
         save(root, &state)?;
         Ok(())
@@ -2013,6 +2084,10 @@ mod native {
                     &client,
                 ))?;
             } else if mode.as_deref() == Some("--admit-create") {
+                runtime.block_on(recovery_native::admit_backend_readiness(
+                    request.config.chain,
+                    &client,
+                ))?;
                 runtime.block_on(observe_before_create(
                     &request.config,
                     &request.access_token,
@@ -2051,6 +2126,53 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn create_backend_refusal_is_durable_and_consumed_before_creation() {
+            let (mut config, _, _) = fixture();
+            let root = tempfile::tempdir().unwrap();
+            config.case_root = root.path().to_owned();
+            let mut state = load_action_state(&config, root.path(), true).unwrap();
+            state.pending = Some("create_export".into());
+            let canary_uuid = uuid::Uuid::new_v4();
+            state.canary_uuid = Some(canary_uuid);
+            state.canary = Some(hash(b"test canary"));
+            let mut prior_creator = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+            state.creator.pid = prior_creator.id();
+            assert!(prior_creator.wait().unwrap().success());
+
+            assert_eq!(
+                record_create_admission(root.path(), &mut state, Err("native_b2_backend_syncing")),
+                Err("native_b2_backend_syncing")
+            );
+            let mut state = load_action_state(&config, root.path(), false).unwrap();
+            assert_eq!(validate_create_retry(&config, &state), Ok(()));
+            let mut wrong_config = config.clone();
+            wrong_config.owner_id += 1;
+            assert_eq!(
+                validate_create_retry(&wrong_config, &state),
+                Err("native_uncertain_action")
+            );
+            let original = root.path().join("original");
+            fs::create_dir(&original).unwrap();
+            assert_eq!(
+                validate_create_retry(&config, &state),
+                Err("native_create_retry_files")
+            );
+            fs::remove_dir(&original).unwrap();
+
+            record_create_admission(root.path(), &mut state, Ok(())).unwrap();
+            let consumed = load_action_state(&config, root.path(), false).unwrap();
+            assert_eq!(consumed.creator.pid, std::process::id());
+            assert_eq!(consumed.canary_uuid, Some(canary_uuid));
+            assert_eq!(consumed.canary, Some(hash(b"test canary")));
+            assert_eq!(consumed.pending.as_deref(), Some("create_export"));
+            assert_eq!(
+                validate_create_retry(&config, &consumed),
+                Err("native_uncertain_action")
+            );
+        }
+
         fn fixture() -> (Config, Identity, Kit) {
             use coincube_core::miniscript::bitcoin::{
                 bip32::DerivationPath, secp256k1::Secp256k1, Network,
