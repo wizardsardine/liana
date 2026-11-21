@@ -496,6 +496,44 @@ pub(crate) mod tests {
         SpendTx::new(None, psbt, vec![], &desc, &secp, Network::Signet)
     }
 
+    /// A wallet for `spend_tx()`'s descriptor.
+    pub(crate) fn spend_wallet() -> Arc<Wallet> {
+        Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()))
+    }
+
+    /// A delete started from another proposal that finishes while this one
+    /// is on screen (the Send review) is not this proposal's result
+    /// (Cursor review).
+    #[test]
+    fn a_delete_for_another_proposal_leaves_the_open_review_alone() {
+        use crate::app::view::vault::psbt::DeleteState;
+        use coincube_core::miniscript::bitcoin::Txid;
+        let cache = Cache::default();
+        let tx = spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        let other = Txid::from_str(&format!("{:064x}", 7)).unwrap();
+        assert_ne!(txid, other);
+        let mut review = psbt::PsbtState::new(spend_wallet(), tx, true);
+
+        for res in [Ok(()), Err(Error::Unexpected("refused".into()))] {
+            let task = review.update(mock_daemon(), &cache, Message::PsbtDeleted(other, res));
+            assert_eq!(task.units(), 0, "nothing is shown or navigated");
+            assert_eq!(review.delete, DeleteState::Idle);
+            assert!(review.warning.is_none());
+        }
+
+        drop(review.update(
+            mock_daemon(),
+            &cache,
+            Message::PsbtDeleted(txid, Err(Error::Unexpected("refused".into()))),
+        ));
+        assert_eq!(
+            review.delete,
+            DeleteState::Confirming,
+            "its own result applies"
+        );
+    }
+
     #[test]
     fn hidden_psbt_list_masks_spend_and_fee_without_removing_entry() {
         let mut tx = spend_tx();

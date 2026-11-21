@@ -105,6 +105,14 @@ impl TransactionDraft {
         }
     }
 
+    /// A draft whose PSBT is already generated, for the review step.
+    #[cfg(test)]
+    pub(super) fn generated_for_test(network: Network, psbt: Psbt) -> Self {
+        let mut draft = Self::new(network, None);
+        draft.generated = Some((psbt, Vec::new()));
+        draft
+    }
+
     #[cfg(feature = "mcp-transactions")]
     pub(super) fn from_mcp(native: crate::app::local_mcp::transactions::NativeDraft) -> Self {
         let mut draft = Self::new(native.chain.bitcoin_network(), None);
@@ -143,6 +151,10 @@ pub trait Step {
         None
     }
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, _draft: &TransactionDraft) {}
+    /// Whether this step is showing the proposal `txid` (the review step).
+    fn shows_psbt(&self, _txid: &coincube_core::miniscript::bitcoin::Txid) -> bool {
+        false
+    }
     fn reload_wallet(&mut self, _wallet: Arc<Wallet>) {}
     fn subscription(&self) -> Subscription<Message> {
         Subscription::none()
@@ -2154,6 +2166,12 @@ impl SaveSpend {
 }
 
 impl Step for SaveSpend {
+    fn shows_psbt(&self, txid: &coincube_core::miniscript::bitcoin::Txid) -> bool {
+        self.spend
+            .as_ref()
+            .is_some_and(|(state, _)| state.tx.psbt.unsigned_tx.compute_txid() == *txid)
+    }
+
     fn load(&mut self, _coins: &[Coin], _tip_height: i32, draft: &TransactionDraft) {
         let (psbt, warnings) = draft.generated.clone().unwrap();
         let mut tx = SpendTx::new(

@@ -1493,7 +1493,11 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::ConfirmDelete)) => {
                 return self.delete_proposal(daemon);
             }
-            Message::PsbtDeleted(_, res) => return self.finish_delete(res),
+            // Only the proposal on screen takes a delete result: one started
+            // from another detail and finishing here belongs to the list.
+            Message::PsbtDeleted(txid, res) if txid == self.tx.psbt.unsigned_tx.compute_txid() => {
+                return self.finish_delete(res)
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 return self.open_signer_picker(daemon, cache)
             }

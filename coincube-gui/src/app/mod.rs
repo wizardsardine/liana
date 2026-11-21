@@ -5890,17 +5890,29 @@ impl App {
     }
 
     /// A PSBT delete reports back after its detail page may have been left
-    /// for another route (Back to Activity, the menu). Off the PSBTs and Send
-    /// pages the PSBTs panel still takes the result, so its list drops the
-    /// row and a refusal is shown.
+    /// for another route (Back to Activity, the menu, Send). The PSBTs panel
+    /// takes the result unless the page on screen is the PSBTs list itself
+    /// or a Send/Recovery review of that same proposal, so its list drops
+    /// the row and a refusal is shown.
     fn takes_detached_psbt_delete(&self, message: &Message) -> bool {
-        matches!(message, Message::PsbtDeleted(..))
-            && !matches!(
-                self.panels.current,
-                Menu::Vault(menu::VaultSubMenu::PSBTs(_) | menu::VaultSubMenu::Send)
-            )
-            && self.daemon.is_some()
-            && self.panels.psbts.is_some()
+        let Message::PsbtDeleted(txid, _) = message else {
+            return false;
+        };
+        let kept_by_page = match &self.panels.current {
+            Menu::Vault(menu::VaultSubMenu::PSBTs(_)) => true,
+            Menu::Vault(menu::VaultSubMenu::Send) => self
+                .panels
+                .create_spend
+                .as_ref()
+                .is_some_and(|panel| panel.shows_psbt(txid)),
+            Menu::Vault(menu::VaultSubMenu::Recovery) => self
+                .panels
+                .recovery
+                .as_ref()
+                .is_some_and(|panel| panel.shows_psbt(txid)),
+            _ => false,
+        };
+        !kept_by_page && self.daemon.is_some() && self.panels.psbts.is_some()
     }
 
     /// Recomputes the Vault's alert from its sync result (C8).
@@ -14113,6 +14125,51 @@ pub(crate) mod shell_tests {
             .unwrap(),
         );
         (app, wallet)
+    }
+
+    /// A PSBT delete finishing on Send belongs to the Send review only when
+    /// that review shows the same proposal; otherwise the PSBTs list takes
+    /// it, as on every other route (Cursor review).
+    #[test]
+    fn a_late_psbt_delete_on_send_goes_to_the_list_unless_reviewed_there() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = {
+            let _guard = crate::app::session::test_guard();
+            bitcoin_app(root.path())
+        };
+        let tx = state::vault::psbts::tests::spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        let other =
+            coincube_core::miniscript::bitcoin::Txid::from_str(&format!("{:064x}", 7)).unwrap();
+        let deleted = |id| Message::PsbtDeleted(id, Ok(()));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(txid)),
+            "an earlier Send step hands it to the list"
+        );
+
+        app.panels.create_spend = Some(CreateSpendPanel::reviewing_for_test(
+            state::vault::psbts::tests::spend_wallet(),
+            coincube_core::miniscript::bitcoin::Network::Signet,
+            tx.psbt.clone(),
+        ));
+        assert!(
+            !app.takes_detached_psbt_delete(&deleted(txid)),
+            "its own review"
+        );
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(other)),
+            "another proposal's result goes to the list"
+        );
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        app.panels.recovery = None;
+        assert!(app.takes_detached_psbt_delete(&deleted(txid)));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        assert!(!app.takes_detached_psbt_delete(&deleted(other)));
+        assert!(!app.takes_detached_psbt_delete(&Message::CubeKeys(Ok(vec![]))));
     }
 
     #[test]
