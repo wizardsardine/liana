@@ -955,6 +955,20 @@ mod tests {
         assert!(probe.contains("Check Activity before"));
         assert!(probe.contains("See in Activity"));
         assert!(!probe.contains("didn't go through") && !probe.contains("failed"));
+        // The card's link opens Cube › Activity filtered to Spark, not the
+        // Spark-only list.
+        let messages = crate::app::view::shared::landing::capture::activate(
+            swap_body(&cache, &swap),
+            Id::new(ACTIVITY_ID),
+            (1440, 900),
+            true,
+        );
+        assert!(messages.iter().any(|m| matches!(
+            m,
+            Message::Activity(crate::app::view::activity::ActivityMessage::ViewAll(
+                crate::app::view::activity::WalletFilter::Spark
+            ))
+        )));
     }
 
     /// H-Convert: the side panel says what happens to bitcoin received

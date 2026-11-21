@@ -17768,6 +17768,91 @@ mod wallet_recent_activity_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    /// Back clears only the detail page that is showing. The wallet panels
+    /// stay alive across routes, so a PSBT left open from its own list (with
+    /// any signing in progress) survives Back from a Spark payment.
+    #[test]
+    fn back_from_a_spark_payment_keeps_a_psbt_open_from_its_list() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-keep-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let activity = Menu::Cube(menu::CubeSubMenu::Activity);
+        app.panels
+            .psbts
+            .as_mut()
+            .unwrap()
+            .preselect(state::vault::psbts::tests::spend_tx());
+        app.panels
+            .transactions
+            .as_mut()
+            .unwrap()
+            .preselect(vault_payment());
+
+        app.panels.current = activity.clone();
+        drop(app.update(Message::ActivityOpenDetail(
+            state::activity::ActivityTarget::Spark(receipt("spark-1")),
+        )));
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, activity);
+        assert!(!app.panels.spark_transactions.has_selection());
+        assert!(
+            app.panels.psbts.as_ref().unwrap().has_selection(),
+            "the PSBT open from its list is kept"
+        );
+        assert!(
+            app.panels.transactions.as_ref().unwrap().has_selection(),
+            "the Vault detail behind another route is kept"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// A PSBT opened from its own list keeps that list's Back: Close stays
+    /// on the PSBTs route.
+    #[test]
+    fn back_from_a_list_opened_psbt_stays_on_the_psbt_list() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-list-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        let psbts = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        app.panels.current = psbts.clone();
+        app.panels
+            .psbts
+            .as_mut()
+            .unwrap()
+            .preselect(state::vault::psbts::tests::spend_tx());
+        assert!(!app.activity_detail_back_applies());
+        drop(app.update(Message::View(view::Message::Close)));
+        assert_eq!(app.panels.current, psbts);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// While an imported Vault's own panel holds the Vault routes, a stale
+    /// selection in the Vault panel behind it does not send Back to Activity.
+    #[test]
+    fn an_imported_vault_route_keeps_its_own_back() {
+        let _guard = crate::app::session::test_guard();
+        let root = std::env::temp_dir().join(format!("activity-import-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = super::shell_tests::bitcoin_app(&root);
+        app.panels
+            .transactions
+            .as_mut()
+            .unwrap()
+            .preselect(vault_payment());
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Transactions(None));
+        assert!(app.activity_detail_back_applies());
+
+        app.panels.imported_bitcoin = Some(Box::new(
+            state::imported_bitcoin::ImportedBitcoinPanel::new(
+                CoincubeDirectory::new(root.clone()).network_directory(app.cache.fiat_chain),
+                "fixture".into(),
+                settings::BitcoinImport::pending(),
+            ),
+        ));
+        assert!(app.panels.imported_holds_route());
+        assert!(!app.activity_detail_back_applies());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
     /// With no detail open, Close is the wallet panel's own (it reloads):
     /// it does not navigate.
     #[test]
