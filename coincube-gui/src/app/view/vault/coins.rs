@@ -401,12 +401,12 @@ pub fn coins_view<'a>(
 /// Coin control's selection and split state, as the table shows it.
 #[derive(Debug, Default)]
 pub struct CoinControl {
-    /// Ticked coins: the Split coins overlay's inputs while it is open.
+    /// Ticked coins, for Send selected.
     pub chosen: std::collections::BTreeSet<coincube_core::miniscript::bitcoin::OutPoint>,
     /// Coins still on both chains (count, total, whether Split coins can
     /// open now), when the Chains column shows and any are.
     pub both_chains: Option<(usize, coincube_core::miniscript::bitcoin::Amount, bool)>,
-    /// Whether to show the selection bar (not while the overlay is open).
+    /// Whether to show the selection bar.
     pub selection_bar: bool,
     /// The label write in flight; its editor stays visible but cannot resubmit.
     pub label_saving: Option<coincube_core::miniscript::bitcoin::OutPoint>,
