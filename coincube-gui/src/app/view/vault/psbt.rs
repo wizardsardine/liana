@@ -26,7 +26,7 @@ use coincube_ui::{
     color,
     component::{
         amount::*,
-        badge, button, card,
+        button, card,
         collapse::Collapse,
         form, separation,
         text::{self, *},
@@ -182,6 +182,18 @@ fn replay_status_view<'a>(pill: &ReplayPill<'a>) -> Element<'a, Message> {
     column.into()
 }
 
+/// What the detail page's inline delete shows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DeleteState {
+    /// A quiet "Delete this proposal" link.
+    #[default]
+    Idle,
+    /// The inline confirmation.
+    Confirming,
+    /// The delete is in flight.
+    Deleting,
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn psbt_view<'a>(
     action_scope: u64,
@@ -198,7 +210,9 @@ pub fn psbt_view<'a>(
     broadcast_ready: bool,
     recipient_identities: &'a [(usize, crate::services::branta::LookupResult)],
     back_to_activity: bool,
+    delete: DeleteState,
 ) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
     // A pending PSBT is an authorization screen: Sign and Broadcast must
     // always show the exact amounts the user is approving. Once the proposal
     // is terminal, its detail is passive and follows the global privacy eye.
@@ -217,6 +231,50 @@ pub fn psbt_view<'a>(
     } else {
         recipient_identities
     };
+    // The state supplies cryptographically verified readiness. Claimed
+    // signature counts are progress hints only.
+    let signatures_complete = match &replay {
+        None => broadcast_ready,
+        Some(pill) => pill.review.signatures_complete(),
+    };
+    let ledger = Column::new()
+        .spacing(16)
+        .width(Length::Fill)
+        .push(tt::section(localized_copy("Where the coins go")))
+        .push(history_inputs_view(
+            &tx.coins,
+            &tx.psbt.unsigned_tx,
+            &tx.labels,
+            labels_editing,
+            bitcoin_unit,
+            mask_amounts,
+        ))
+        .push(outputs_view_with_identities_masked(
+            &tx.psbt.unsigned_tx,
+            network,
+            &tx.change_indexes,
+            &tx.labels,
+            labels_editing,
+            bitcoin_unit,
+            tx.is_single_payment().is_some(),
+            false,
+            output_identities,
+            cache.theme_mode,
+            mask_amounts,
+        ));
+    let side = Column::new()
+        .spacing(16)
+        .width(Length::Fixed(352.0))
+        .push(signatures_card(
+            tx,
+            desc_info,
+            key_aliases,
+            signatures_complete,
+        ))
+        .push_maybe(replay.as_ref().map(|pill| {
+            Container::new(replay_status_view(pill)).style(theme::tenshu::surface::card)
+        }))
+        .push(share_card(action_scope, tx, saved, currently_signing));
     dashboard(
         &Menu::Vault(VaultSubMenu::PSBTs(None)),
         cache,
@@ -233,87 +291,32 @@ pub fn psbt_view<'a>(
                 )
                 .on_press(Message::Close),
             )
-            .push(
-                Row::new()
-                    .align_y(Alignment::Center)
-                    .spacing(10)
-                    .push(
-                        Container::new(h3(localized_copy("PSBT proposal")).bold())
-                            .width(Length::Fill),
-                    )
-                    .push(if !tx.sigs.recovery_paths().is_empty() {
-                        Some(badge::recovery())
-                    } else {
-                        None
-                    })
-                    .push(match tx.status {
-                        SpendStatus::Deprecated => Some(badge::deprecated()),
-                        SpendStatus::Broadcast => Some(badge::unconfirmed()),
-                        SpendStatus::Spent => Some(badge::spent()),
-                        _ => None,
-                    }),
-            )
-            .push(p1_regular(crate::chain::canonical_network_name(
-                cache.chain(),
-            )))
-            .push(spend_header_masked(
+            .push(detail_head(
+                cache,
                 tx,
                 labels_editing,
                 bitcoin_unit,
                 mask_amounts,
+                signatures_complete,
             ))
-            .push_maybe(identity_summary)
-            .push(spend_overview_view(
+            .push_maybe(primary_action_row(
                 action_scope,
                 tx,
-                desc_info,
-                key_aliases,
                 currently_signing,
-                saved,
-                replay,
+                signatures_complete,
                 broadcast_ready,
-                true,
             ))
+            .push_maybe(detail_note(tx, signatures_complete, broadcast_ready))
+            .push_maybe(identity_summary)
             .push(
-                Column::new()
-                    .spacing(20)
-                    .push(history_inputs_view(
-                        &tx.coins,
-                        &tx.psbt.unsigned_tx,
-                        &tx.labels,
-                        labels_editing,
-                        bitcoin_unit,
-                        mask_amounts,
-                    ))
-                    .push(outputs_view_with_identities_masked(
-                        &tx.psbt.unsigned_tx,
-                        network,
-                        &tx.change_indexes,
-                        &tx.labels,
-                        labels_editing,
-                        bitcoin_unit,
-                        tx.is_single_payment().is_some(),
-                        false,
-                        output_identities,
-                        cache.theme_mode,
-                        mask_amounts,
-                    )),
+                Row::new()
+                    .spacing(32)
+                    .align_y(Alignment::Start)
+                    .push(ledger)
+                    .push(side),
             )
             .push(if saved {
-                Row::new()
-                    .push(
-                        secondary_action(
-                            action_id(action_scope, "overview.delete"),
-                            localized_copy("Delete"),
-                        )
-                        .width(Length::Fixed(200.0))
-                        .on_press_maybe(if currently_signing {
-                            None
-                        } else {
-                            Some(Message::Spend(SpendTxMessage::Delete))
-                        }),
-                    )
-                    .width(Length::Fill)
+                delete_section(action_scope, tx, currently_signing, delete)
             } else {
                 Row::new()
                     .push(Space::new().width(Length::Fill))
@@ -330,9 +333,516 @@ pub fn psbt_view<'a>(
                         }),
                     )
                     .width(Length::Fill)
+                    .into()
             })
             .push(Space::new().height(10)),
     )
+}
+
+/// Title (the editable label), status line, amount and fee.
+fn detail_head<'a>(
+    cache: &'a Cache,
+    tx: &'a SpendTx,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
+    mask_amounts: bool,
+    signatures_complete: bool,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
+    let title: Element<'a, Message> = if let Some(outpoint) = tx.is_single_payment() {
+        let outpoint = outpoint.to_string();
+        if let Some(label) = labels_editing.get(&outpoint) {
+            label::label_editing(vec![outpoint.clone(), txid.clone()], label, 20)
+        } else if tx.labels.get(&outpoint).is_some_and(|l| !l.is_empty()) {
+            label::label_editable(
+                vec![outpoint.clone(), txid.clone()],
+                tx.labels.get(&outpoint),
+                20,
+            )
+        } else {
+            titled_label(
+                vec![outpoint.clone(), txid.clone()],
+                crate::app::view::vault::psbts::proposal_title(tx),
+            )
+        }
+    } else if let Some(label) = labels_editing.get(&txid) {
+        label::label_editing(vec![txid.clone()], label, 20)
+    } else if tx.labels.get(&txid).is_some_and(|l| !l.is_empty()) {
+        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), 20)
+    } else {
+        titled_label(
+            vec![txid.clone()],
+            crate::app::view::vault::psbts::proposal_title(tx),
+        )
+    };
+    let (status, tone) = detail_status(tx, signatures_complete);
+    let mut status_line = Row::new()
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .push(tt::label(status).style(move |t: &theme::Theme| tone_text::tone(t, tone)))
+        .push(tt::body("·").style(tone_text::muted))
+        .push(
+            tt::body(crate::chain::canonical_network_name(cache.chain())).style(tone_text::muted),
+        );
+    if !tx.sigs.recovery_paths().is_empty() {
+        status_line = status_line
+            .push(tt::body("·").style(tone_text::muted))
+            .push(tt::body(localized_copy("Recovery path available")).style(tone_text::muted));
+    }
+    let amount: Element<'a, Message> = if tx.is_send_to_self() {
+        tt::title(localized_copy("Self-transfer")).size(32).into()
+    } else if mask_amounts {
+        tt::title("••••").size(32).into()
+    } else {
+        amount_with_size_and_unit(&tx.spend_amount, 32, bitcoin_unit).into()
+    };
+    let fee: Element<'a, Message> = match tx.fee_amount {
+        None => tt::body(localized_copy(
+            "Missing information about transaction inputs",
+        ))
+        .style(tone_text::muted)
+        .into(),
+        Some(fee) => Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(tt::body(localized_copy("Network fee")).style(tone_text::muted))
+            .push({
+                let fee: Element<'a, Message> = if mask_amounts {
+                    tt::body("••••").into()
+                } else {
+                    amount_with_size_and_unit(&fee, 14, bitcoin_unit).into()
+                };
+                fee
+            })
+            .push_maybe(
+                tx.min_feerate_vb()
+                    .map(|rate| tt::body(format!("· ~{} sat/vB", rate)).style(tone_text::muted)),
+            )
+            .into(),
+    };
+    Column::new()
+        .spacing(6)
+        .push(title)
+        .push(status_line)
+        .push(Space::new().height(8))
+        .push(amount)
+        .push(fee)
+        .into()
+}
+
+/// The detail's status word. Unlike the list's progress hint, "Ready to
+/// broadcast" here needs the state's verified readiness: claimed signatures
+/// that don't verify must never read as ready.
+fn detail_status(
+    tx: &SpendTx,
+    signatures_complete: bool,
+) -> (String, coincube_ui::theme::tenshu::Tone) {
+    use coincube_ui::theme::tenshu::Tone;
+    match tx.status {
+        SpendStatus::Pending if signatures_complete => {
+            (localized_copy("Ready to broadcast").to_string(), Tone::Good)
+        }
+        SpendStatus::Pending if tx.path_ready().is_some() => {
+            (localized_copy("Not ready").to_string(), Tone::Bad)
+        }
+        _ => crate::app::view::vault::psbts::row_status(tx),
+    }
+}
+
+/// The proposal's derived name, with the same edit affordance as a label.
+fn titled_label<'a>(items: Vec<String>, title: String) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .push(tt::heading(title).wrapping(Wrapping::WordOrGlyph))
+        .push(
+            Button::new(icon::pencil_icon().size(14).style(theme::text::secondary))
+                .padding(4)
+                .style(theme::button::transparent)
+                .on_press(Message::Label(items, LabelMessage::Edited(String::new()))),
+        )
+        .into()
+}
+
+/// The one action this proposal is waiting for.
+fn primary_action_row<'a>(
+    action_scope: u64,
+    tx: &'a SpendTx,
+    currently_signing: bool,
+    signatures_complete: bool,
+    broadcast_ready: bool,
+) -> Option<Element<'a, Message>> {
+    let action = match tx.status {
+        SpendStatus::Pending if !signatures_complete => {
+            // A single "Sign" entry point opens the unified picker, which
+            // lists every signer — local (HW, master, border) and Keychain
+            // (contacts' phones) — as its own row.
+            primary_action(
+                action_id(action_scope, "overview.sign"),
+                localized_copy("Sign"),
+            )
+            .on_press_maybe((!currently_signing).then_some(Message::Spend(SpendTxMessage::Sign)))
+            .width(Length::Fixed(150.0))
+        }
+        // Disabled (never hidden) while a replayable BTCB2 spend awaits its
+        // acknowledgement.
+        SpendStatus::Pending => primary_action(
+            action_id(action_scope, "overview.broadcast"),
+            localized_copy("Broadcast"),
+        )
+        .on_press_maybe(broadcast_ready.then_some(Message::Spend(SpendTxMessage::Broadcast)))
+        .width(Length::Fixed(150.0)),
+        SpendStatus::Broadcast | SpendStatus::Spent => secondary_action(
+            action_id(action_scope, "overview.activity"),
+            localized_copy("View in Activity"),
+        )
+        .on_press(Message::Menu(Menu::Cube(
+            crate::app::menu::CubeSubMenu::Activity,
+        )))
+        .width(Length::Fixed(170.0)),
+        SpendStatus::Deprecated => return None,
+    };
+    Some(Row::new().push(action).into())
+}
+
+/// One line under the actions when the state needs explaining.
+fn detail_note<'a>(
+    tx: &'a SpendTx,
+    signatures_complete: bool,
+    broadcast_ready: bool,
+) -> Option<Element<'a, Message>> {
+    match tx.status {
+        SpendStatus::Deprecated => Some(note(
+            icon::warning_icon(),
+            coincube_ui::theme::tenshu::Tone::Warn,
+            localized_copy("This PSBT can't be broadcast any more"),
+            localized_copy(
+                "A coin it spends was already used by another transaction, so it can't be signed or sent. Delete it when you no longer need it.",
+            ),
+        )),
+        SpendStatus::Pending if signatures_complete && broadcast_ready => Some(note(
+            icon::check_icon(),
+            coincube_ui::theme::tenshu::Tone::Good,
+            localized_copy("Enough keys have signed"),
+            localized_copy("Broadcast it when you're ready. Nothing is sent until you do."),
+        )),
+        _ => None,
+    }
+}
+
+fn note<'a>(
+    glyph: coincube_ui::widget::Text<'a>,
+    tone: coincube_ui::theme::tenshu::Tone,
+    title: &'static str,
+    body: &'static str,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    Container::new(
+        Row::new()
+            .spacing(10)
+            .align_y(Alignment::Center)
+            .push(
+                glyph
+                    .size(18)
+                    .style(move |t: &theme::Theme| tone_text::tone(t, tone)),
+            )
+            .push(
+                Column::new()
+                    .spacing(2)
+                    .width(Length::Fill)
+                    .push(tt::label(title))
+                    .push(tt::caption(body).wrapping(Wrapping::Word)),
+            ),
+    )
+    .padding([10, 14])
+    .width(Length::Fill)
+    .style(theme::tenshu::surface::card)
+    .into()
+}
+
+/// Each key of the reported path with Signed, Waiting or Not needed, and the
+/// other paths in one line each.
+fn signatures_card<'a>(
+    tx: &'a SpendTx,
+    desc_info: &'a CoincubePolicy,
+    key_aliases: &'a HashMap<Fingerprint, String>,
+    signatures_complete: bool,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::{text as tone_text, Tone};
+    let primary_sigs = tx.sigs.primary_path();
+    let (threshold, origins) = desc_info.primary_path().thresh_origins();
+    let mut keys: Vec<Fingerprint> = origins.into_keys().collect();
+    keys.sort();
+    let signed = primary_sigs.sigs_count.min(primary_sigs.threshold);
+    let met = primary_sigs.sigs_count >= primary_sigs.threshold;
+    let mut card = Column::new()
+        .spacing(12)
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(tt::section(localized_copy("Signatures")).width(Length::Fill))
+                .push(tt::caption(localized_format!(
+                    "{} of {} needed",
+                    "Se necesitan {} de {}",
+                    threshold,
+                    keys.len()
+                ))),
+        )
+        .push(crate::app::view::vault::psbts::signature_pips(
+            signed,
+            primary_sigs.threshold,
+        ));
+    for fg in keys {
+        let has_signed = primary_sigs.signed_pubkeys.contains_key(&fg);
+        let (word, tone) = if has_signed {
+            (localized_copy("Signed"), Tone::Good)
+        } else if met {
+            (localized_copy("Not needed"), Tone::Muted)
+        } else {
+            (localized_copy("Waiting"), Tone::Muted)
+        };
+        let name = key_aliases
+            .get(&fg)
+            .cloned()
+            .unwrap_or_else(|| fg.to_string());
+        card = card.push(
+            Row::new()
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .push(
+                    Column::new()
+                        .width(Length::Fill)
+                        .push(tt::label(name).wrapping(Wrapping::WordOrGlyph))
+                        .push(tt::caption(fg.to_string())),
+                )
+                .push(tt::caption(word).style(move |t: &theme::Theme| tone_text::tone(t, tone))),
+        );
+    }
+    card = card.push(
+        tt::caption(if signatures_complete {
+            localized_copy("Enough keys have signed.")
+        } else if tx.status == SpendStatus::Deprecated {
+            localized_copy("No longer collecting signatures.")
+        } else {
+            localized_copy("Any of the waiting keys can sign.")
+        })
+        .wrapping(Wrapping::Word),
+    );
+    for (seq, path) in desc_info.recovery_paths() {
+        let (k, origins) = path.thresh_origins();
+        let progress = tx
+            .sigs
+            .recovery_paths()
+            .get(seq)
+            .map(|sigs| {
+                format!(
+                    " · {} {}",
+                    sigs.sigs_count.min(sigs.threshold),
+                    localized_copy("signed")
+                )
+            })
+            .unwrap_or_default();
+        card = card.push(
+            tt::caption(localized_format!(
+                "Recovery path: {} of {} keys after {}{}",
+                "Ruta de recuperación: {} de {} llaves después de {}{}",
+                k,
+                origins.len(),
+                humanize_timelock(*seq),
+                progress
+            ))
+            .wrapping(Wrapping::Word),
+        );
+    }
+    Container::new(card)
+        .padding([16, 18])
+        .width(Length::Fill)
+        .style(theme::tenshu::surface::card)
+        .into()
+}
+
+/// Export, Import signatures and the transaction ID.
+fn share_card<'a>(
+    action_scope: u64,
+    tx: &'a SpendTx,
+    saved: bool,
+    currently_signing: bool,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    let closed =
+        !crate::app::view::vault::psbts::is_open(&tx.status) || tx.status == SpendStatus::Broadcast;
+    // Force the user to save (which commits the derivation-index increment
+    // to the database) before exporting, otherwise the exported PSBT can
+    // lead to change address reuse.
+    let can_share = saved && !currently_signing && !closed;
+    let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
+    let row = |name: &'static str,
+               label: &'static str,
+               hint: &'static str,
+               glyph: coincube_ui::widget::Text<'a>,
+               message: Message| {
+        Row::new()
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .push(
+                Column::new()
+                    .width(Length::Fill)
+                    .push(tt::label(localized_copy(label)))
+                    .push(tt::caption(localized_copy(hint)).wrapping(Wrapping::Word)),
+            )
+            .push(
+                button::secondary_action(
+                    action_id(action_scope, name),
+                    Some(glyph),
+                    localized_copy(label),
+                    Message::FocusAction,
+                )
+                .on_press_maybe(can_share.then_some(message)),
+            )
+    };
+    let mut card = Column::new()
+        .spacing(14)
+        .push(tt::section(localized_copy("Share with co-signers")))
+        .push(row(
+            "overview.export",
+            "Export",
+            "Save it as a file for another signer or device.",
+            icon::backup_icon(),
+            Message::ExportPsbt,
+        ))
+        .push(row(
+            "overview.import",
+            "Import",
+            "Bring back a copy someone else signed.",
+            icon::restore_icon(),
+            Message::ImportPsbt,
+        ));
+    if !saved {
+        card = card.push(
+            tt::caption(localized_copy(
+                "Sign or save the transaction first to enable export",
+            ))
+            .wrapping(Wrapping::Word),
+        );
+    }
+    card = card.push(
+        Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(
+                Column::new()
+                    .width(Length::Fill)
+                    .push(tt::label("Tx ID"))
+                    .push(tt::mono(txid.clone()).size(12).wrapping(Wrapping::Glyph)),
+            )
+            .push(
+                coincube_ui::widget::action::Action::new(
+                    action_id(action_scope, "overview.copy-txid"),
+                    icon::clipboard_icon().style(theme::text::secondary),
+                    Message::FocusAction,
+                )
+                .on_press(Message::CopyWithToast(
+                    txid,
+                    "Copied transaction ID to clipboard".to_string(),
+                ))
+                .style(theme::button::transparent_border),
+            ),
+    );
+    Container::new(card)
+        .padding([16, 18])
+        .width(Length::Fill)
+        .style(theme::tenshu::surface::card)
+        .into()
+}
+
+/// What deleting loses, in one sentence.
+pub fn delete_consequence(signatures: usize) -> String {
+    match signatures {
+        0 => localized_copy("No signatures have been collected yet.").to_string(),
+        1 => localized_copy("The 1 signature collected so far will be lost.").to_string(),
+        n => localized_format!(
+            "The {} signatures collected so far will be lost.",
+            "Se perderán las {} firmas reunidas hasta ahora.",
+            n
+        ),
+    }
+}
+
+/// A quiet link that opens an inline confirmation; no modal.
+fn delete_section<'a>(
+    action_scope: u64,
+    tx: &'a SpendTx,
+    currently_signing: bool,
+    delete: DeleteState,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    if delete == DeleteState::Idle {
+        return Row::new()
+            .push(
+                button::secondary_action(
+                    action_id(action_scope, "overview.delete"),
+                    Some(icon::trash_icon()),
+                    localized_copy("Delete this proposal"),
+                    Message::FocusAction,
+                )
+                .style(theme::button::transparent)
+                .on_press_maybe(
+                    (!currently_signing).then_some(Message::Spend(SpendTxMessage::Delete)),
+                ),
+            )
+            .into();
+    }
+    let deleting = delete == DeleteState::Deleting;
+    Container::new(
+        Column::new()
+            .spacing(12)
+            .push(tt::section(localized_copy("Delete this proposal?")))
+            .push(
+                tt::body(format!(
+                    "{} {}",
+                    delete_consequence(tx.signers().len()),
+                    localized_copy(
+                        "Nothing was broadcast. Copies you exported still work if someone imports them."
+                    )
+                ))
+                .wrapping(Wrapping::Word),
+            )
+            .push(
+                Row::new()
+                    .spacing(8)
+                    .push(
+                        coincube_ui::component::tenshu::action::ActionButton::new(
+                            action_id(action_scope, "overview.delete.confirm"),
+                            localized_copy(if deleting { "Deleting…" } else { "Delete PSBT" }),
+                            coincube_ui::theme::tenshu::button::ActionKind::Destructive,
+                            Message::FocusAction,
+                        )
+                        .on_press_maybe(
+                            (!deleting).then_some(Message::Spend(SpendTxMessage::ConfirmDelete)),
+                        ),
+                    )
+                    .push(
+                        coincube_ui::component::tenshu::action::ActionButton::new(
+                            action_id(action_scope, "overview.delete.keep"),
+                            localized_copy("Keep it"),
+                            coincube_ui::theme::tenshu::button::ActionKind::Secondary,
+                            Message::FocusAction,
+                        )
+                        .on_press_maybe(
+                            (!deleting).then_some(Message::Spend(SpendTxMessage::Cancel)),
+                        ),
+                    ),
+            ),
+    )
+    .padding([16, 18])
+    .max_width(640)
+    .style(theme::tenshu::surface::card)
+    .into()
 }
 
 fn mask_passive_psbt_detail(balance_amounts_masked: bool, status: &SpendStatus) -> bool {
@@ -613,54 +1123,6 @@ pub fn broadcast_recipient_identities<'a>(
     Container::new(scrollable(content).height(Length::Shrink))
         .max_height(280)
         .into()
-}
-
-/// `back_to_activity`: Cube › Activity opened the PSBT, so Close returns there.
-pub fn delete_action<'a>(deleted: bool, back_to_activity: bool) -> Element<'a, Message> {
-    if deleted {
-        card::simple(
-            Column::new()
-                .spacing(20)
-                .align_x(Alignment::Center)
-                .push(text(localized_copy(
-                    "Successfully deleted this transaction.",
-                )))
-                .push(
-                    button::secondary(
-                        None,
-                        localized_copy(if back_to_activity {
-                            "Go back to Activity"
-                        } else {
-                            "Go back to PSBTs"
-                        }),
-                    )
-                    .on_press(Message::Close),
-                ),
-        )
-        .align_x(iced::alignment::Horizontal::Center)
-        .width(Length::Fixed(400.0))
-        .into()
-    } else {
-        card::simple(
-            Column::new()
-                .spacing(10)
-                .push(text(localized_copy("Delete this PSBT")))
-                .push(
-                    Row::new()
-                        .push(Column::new().width(Length::Fill))
-                        .push(
-                            button::transparent(None, CopyText::Cancel.get())
-                                .on_press(Message::Spend(SpendTxMessage::Cancel)),
-                        )
-                        .push(
-                            button::alert(None, "Delete")
-                                .on_press(Message::Spend(SpendTxMessage::Confirm)),
-                        ),
-                ),
-        )
-        .width(Length::Fixed(400.0))
-        .into()
-    }
 }
 
 /// Modal shown when the user presses "Sign via Keychain" but Connect
@@ -3328,9 +3790,18 @@ mod tests {
 
         let _ = save_action(false);
         let _ = save_action(true);
-        let _ = delete_action(false, false);
-        let _ = delete_action(true, false);
-        let _ = delete_action(true, true);
+        assert_eq!(
+            delete_consequence(0),
+            "No signatures have been collected yet."
+        );
+        assert_eq!(
+            delete_consequence(1),
+            "The 1 signature collected so far will be lost."
+        );
+        assert_eq!(
+            delete_consequence(2),
+            "The 2 signatures collected so far will be lost."
+        );
         let _ = keychain_unavailable_action(1, false);
         let _ = keychain_unavailable_action(1, true);
         let _ = broadcast_action(
