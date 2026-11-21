@@ -304,12 +304,12 @@ fn unreachable_node_is_not_absence_or_rescan_completion() {
 #[test]
 fn polling_transport_errors_make_one_attempt_per_read() {
     // Closed-port connection timing differs across operating systems. Count
-    // real accepted connections instead of timing seven connection refusals.
+    // real accepted connections instead of timing each read's connection refusal.
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let mut bit = backend(listener.local_addr().unwrap());
     // A regression into the generic retry path must fail without making the
-    // test spend a minute on each of the seven reads.
+    // test spend a minute on each of these reads.
     bit.retries = 2;
     let (stop, stopped) = std::sync::mpsc::channel();
     let worker = thread::spawn(move || {
@@ -349,11 +349,19 @@ fn polling_transport_errors_make_one_attempt_per_read() {
         bit.try_chain_tip().is_err(),
         bit.try_sync_progress().is_err(),
         bit.try_block_time(&hash).is_err(),
+        // What the poller actually calls to publish the tip's time, through the
+        // trait (#1478): it must stay on the poll client, not fall back to the
+        // retrying `tip_time` while the poller holds the backend mutex.
+        crate::bitcoin::BitcoinInterface::try_tip_time(
+            &bit,
+            &crate::bitcoin::BlockChainTip { hash, height: 0 },
+        )
+        .is_err(),
     ];
     stop.send(()).unwrap();
     let requests = worker.join().unwrap();
     assert!(failures.iter().all(|failed| *failed));
-    assert_eq!(requests, 8, "polling must not retry a transport failure");
+    assert_eq!(requests, 9, "polling must not retry a transport failure");
 }
 
 /// The poller's tip time is the header time of the very block it holds.
