@@ -420,3 +420,28 @@ fn esplora_full_scan_reports_its_progress_into_the_history_record() {
     cache.poll_succeeded(42);
     assert_eq!(cache.snapshot().full_scan_completed_at, Some(42));
 }
+
+#[test]
+fn public_readiness_checks_genesis_and_tip_without_constructing_a_wallet() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let config = crate::config::EsploraConfig {
+        addr: format!("http://{}", listener.local_addr().unwrap()),
+        token: None,
+        fallback_addr: None,
+        fallback_token: None,
+        secondary_fallback_addr: None,
+        secondary_fallback_token: None,
+    };
+    let (stop, stopped) = mpsc::channel();
+    let server = scripted_server(
+        listener,
+        tip_at(Arc::new(AtomicU64::new(2)), |_| None),
+        stopped,
+    );
+    let ready = Esplora::public_backend_ready(&config, &genesis_hash());
+    let wrong_chain = Esplora::public_backend_ready(&config, &hash_at(1));
+    stop.send(()).unwrap();
+    server.join().unwrap();
+    assert!(matches!(ready, Ok(true)));
+    assert!(matches!(wrong_chain, Ok(false)));
+}

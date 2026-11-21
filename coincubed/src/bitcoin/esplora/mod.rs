@@ -126,6 +126,24 @@ pub struct Esplora {
 }
 
 impl Esplora {
+    /// Read-only public-provider availability probe. No wallet, database or
+    /// authenticated fork authority is created; full sync remains mandatory.
+    pub fn public_backend_ready(
+        config: &crate::config::EsploraConfig,
+        expected_genesis: &BlockHash,
+    ) -> Result<bool, EsploraError> {
+        let client = client::Client::new(
+            config,
+            std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        )
+        .map_err(EsploraError::Client)?;
+        if client.genesis_block_hash().map_err(EsploraError::Client)? != *expected_genesis {
+            return Ok(false);
+        }
+        client.chain_tip().map_err(EsploraError::Client)?;
+        Ok(true)
+    }
+
     pub fn new(
         client: client::Client,
         bdk_wallet: BdkWallet,

@@ -1652,6 +1652,7 @@ mod native {
         if request.action == "create_export" {
             check(absent(root)?, "native_run_not_fresh")?;
             let (client, _) = auth(&c)?;
+            recovery_native::admit_backend_readiness(c.chain, &client).await?;
             recovery_native::admit_create(c.chain, c.run_id, c.owner_id, &client).await?;
             fs::DirBuilder::new()
                 .mode(0o700)
@@ -1967,6 +1968,7 @@ mod native {
             Some(
                 "--bind-auth"
                     | "--admit-create"
+                    | "--admit-backends"
                     | "--observe-cleanup"
                     | "--begin-cleanup"
                     | "--refresh-auth"
@@ -1985,7 +1987,11 @@ mod native {
                 .block_on(client.get_user())
                 .map_err(|_| "native_auth_blocked")?;
             check(user.id == request.config.owner_id, "native_account_changed")?;
-            if mode.as_deref() == Some("--begin-cleanup") {
+            if mode.as_deref() == Some("--admit-backends") {
+                for chain in [ChainId::Testnet4, ChainId::BitcoinBlake2bTestnet4] {
+                    runtime.block_on(recovery_native::admit_backend_readiness(chain, &client))?;
+                }
+            } else if mode.as_deref() == Some("--begin-cleanup") {
                 runtime.block_on(observe_before_create(
                     &request.config,
                     &request.access_token,

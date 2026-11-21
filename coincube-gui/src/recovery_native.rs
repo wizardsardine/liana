@@ -73,6 +73,69 @@ pub(crate) async fn require_backend_feature(
     Ok(())
 }
 
+/// Read-only backend admission: no preferences, Keychain, wallet or remote Cube writes.
+pub async fn admit_backend_readiness(chain: ChainId, client: &CoincubeClient) -> Result<()> {
+    allowed_chain(chain)?;
+    if chain.is_blake2b() {
+        check(
+            client
+                .get_connect_features()
+                .await
+                .map_err(|_| "native_chain_capability_unavailable")?
+                .bitcoin_blake2b_enabled
+                == Some(true),
+            "native_chain_capability_disabled",
+        )?;
+        let endpoint = format!(
+            "{}/api/v1/esplora/{}",
+            client.base_url.trim_end_matches('/'),
+            installer::connect_esplora_path(chain)
+        );
+        let (_, session) = client
+            .authenticated_backend(chain, &endpoint)
+            .await
+            .map_err(backend_admission_code)?;
+        session.invalidate();
+        return Ok(());
+    }
+    let config = installer::integration::recovery_esplora_config(chain, "");
+    tokio::task::spawn_blocking(move || {
+        let expected =
+            bitcoin::blockdata::constants::genesis_block(chain.bitcoin_network()).block_hash();
+        check(
+            coincubed::Esplora::public_backend_ready(&config, &expected)
+                .map_err(|_| "native_ordinary_backend_unavailable")?,
+            "native_ordinary_backend_wrong_chain",
+        )?;
+        Ok(())
+    })
+    .await
+    .map_err(|_| "native_ordinary_backend_unavailable")?
+}
+
+fn backend_admission_code(
+    error: crate::services::coincube::network_anchor::AnchorStartupError,
+) -> &'static str {
+    use crate::services::coincube::network_anchor::{AnchorStartupError as E, AnchorState};
+    use coincubed::connect::AdmissionError as A;
+    match error {
+        E::State(AnchorState::Syncing) => "native_b2_backend_syncing",
+        E::State(AnchorState::WrongChain) | E::Admission(A::WrongChain) => {
+            "native_b2_backend_wrong_chain"
+        }
+        E::State(_) => "native_b2_backend_unavailable",
+        E::Http(401 | 403) | E::Admission(A::MissingAuth) => "native_b2_backend_auth",
+        E::Http(429) | E::Admission(A::Throttled) => "native_b2_backend_throttled",
+        E::Http(_) => "native_b2_backend_http",
+        E::Transport => "native_b2_backend_transport",
+        E::InvalidResponse => "native_b2_backend_malformed",
+        E::Admission(A::Stale) => "native_b2_backend_stale",
+        E::Admission(A::HashMismatch | A::ChangedDuringOperation) => "native_b2_backend_snapshot",
+        E::Admission(A::InvalidBackend) => "native_b2_backend_configuration",
+        E::Admission(_) => "native_b2_backend_unavailable",
+    }
+}
+
 /// Public identity is retained privately; never print its descriptor/xpubs.
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -217,6 +280,7 @@ pub async fn create_export(
     client: CoincubeClient,
 ) -> Result<(Identity, RecoveryKit)> {
     allowed_chain(chain)?;
+    admit_backend_readiness(chain, &client).await?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
     if chain.is_blake2b() {
         check(
@@ -1050,6 +1114,44 @@ pub fn sign_unfunded(wallet: &Wallet) -> Result<bitcoin::psbt::Psbt> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn backend_readiness_refuses_real_syncing_response_without_fixture() {
+        use httpmock::{Method::GET, MockServer};
+        use serde_json::json;
+        let server = MockServer::start_async().await;
+        server.mock_async(|when, then| { when.method(GET).path("/api/v1/connect/features");
+            then.status(200).json_body(json!({"data":{"plans":[],"bitcoin_blake2b_enabled":true,"liquidEnabled":true}})); }).await;
+        let anchor = server.mock_async(|when, then| { when.method(GET).path("/api/v1/connect/networks/bitcoin-blake2b-testnet4/anchor");
+            then.status(503).json_body(json!({"success":false,"error":{"code":"SERVICE_UNAVAILABLE"},"data":{"network":"bitcoin-blake2b-testnet4","state":"syncing"}})); }).await;
+        let mut client = CoincubeClient::for_test(server.base_url());
+        client.set_token("synthetic-test-token");
+        assert_eq!(
+            admit_backend_readiness(ChainId::BitcoinBlake2bTestnet4, &client).await,
+            Err("native_b2_backend_syncing")
+        );
+        anchor.assert_hits_async(1).await;
+    }
+
+    #[test]
+    fn backend_admission_diagnostics_are_fixed_typed_codes() {
+        use crate::services::coincube::network_anchor::{AnchorStartupError as E, AnchorState};
+        use coincubed::connect::AdmissionError as A;
+        for (error, expected) in [
+            (E::State(AnchorState::Syncing), "native_b2_backend_syncing"),
+            (
+                E::State(AnchorState::WrongChain),
+                "native_b2_backend_wrong_chain",
+            ),
+            (E::Admission(A::Stale), "native_b2_backend_stale"),
+            (E::Http(401), "native_b2_backend_auth"),
+            (E::Http(429), "native_b2_backend_throttled"),
+            (E::Transport, "native_b2_backend_transport"),
+            (E::InvalidResponse, "native_b2_backend_malformed"),
+        ] {
+            assert_eq!(backend_admission_code(error), expected);
+        }
+    }
 
     // Existing public test descriptor; no signer, daemon, account or key store.
     fn oracle_diagnostic_info() -> coincubed::commands::GetInfoResult {

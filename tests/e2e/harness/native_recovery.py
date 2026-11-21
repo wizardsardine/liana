@@ -178,7 +178,7 @@ def checked_process(cfg, binding, executable, receipt, request, directory, *, ac
 
 def process(executable, request, directory, *, access_token=None):
     """Wait on fresh process; sample kernel start before providing any action."""
-    modes = {'admit_create': '--admit-create', 'observe_cleanup': '--observe-cleanup', 'begin_cleanup': '--begin-cleanup', 'audit_capacity_abandonment': '--audit-capacity-abandonment', 'bind_auth': '--bind-auth', 'refresh_auth': '--refresh-auth', 'retire_orphan_215': '--retire-orphan-215'}
+    modes = {'admit_backends': '--admit-backends', 'admit_create': '--admit-create', 'observe_cleanup': '--observe-cleanup', 'begin_cleanup': '--begin-cleanup', 'audit_capacity_abandonment': '--audit-capacity-abandonment', 'bind_auth': '--bind-auth', 'refresh_auth': '--refresh-auth', 'retire_orphan_215': '--retire-orphan-215'}
     require(access_token is None or request['action'] in modes, 'AUTH_ROLE')
     argv = [str(executable)] + ([modes[request['action']]] if access_token is not None else [])
     env = dict(os.environ, COINCUBE_API_URL='https://api.coincube.io')
@@ -500,6 +500,10 @@ class NativeRecovery:
             auth_account = hashlib.sha256(f'recovery-native-v1:{case}:{scope}:{chain}:auth'.encode()).hexdigest()
             config = {'version': 1, 'case_root': str(case), 'run_id': scope, 'chain': chain,
                       'auth_account': auth_account, 'owner_id': owner_id, 'source_head': self.binding['head']}
+            if chain == CHAINS[0] and not all('retire_remote' in self.journal.data['artifacts'].get(c, {}) for c in CHAINS):
+                checked_process(self.config, self.binding, executable, receipt,
+                                {'action': 'admit_backends', 'config': config}, self.directory,
+                                access_token=account['tokens']['access_token'])
             records = self.journal.data['artifacts'].setdefault(chain, {})
             pending = self.journal.data['artifacts'].get('pending_native_action')
             if pending is not None and 'retire_remote' not in records:
