@@ -299,6 +299,9 @@ pub struct SplitFlow {
     pub working: bool,
     pub error: Option<String>,
     pub copy: CopyCard,
+    /// Another split waiting to be signed, while the flow goes on with the
+    /// coins it doesn't spend.
+    pub waiting_to_sign: Option<Txid>,
     pub mask_amounts: bool,
     pub unit: BitcoinDisplayUnit,
 }
@@ -640,7 +643,25 @@ fn key_step<'a>(
                 .style(theme::text::secondary),
             )
             .push(body)
-            .push(status),
+            .push(status)
+            .push(flow.signature_available.then(|| {
+                Row::new()
+                    .spacing(12)
+                    .align_y(Alignment::Center)
+                    .push(
+                        Container::new(
+                            p2_regular(localized_copy(
+                                "This Vault can also split with a replay-protected signature, which needs no split coin.",
+                            ))
+                            .style(theme::text::secondary),
+                        )
+                        .width(Length::Fill),
+                    )
+                    .push(
+                        button::secondary_compact(None, localized_copy("Use the signature"))
+                            .on_press(Message::Split(SplitMessage::Method(Method::Signature))),
+                    )
+            })),
     )
 }
 
@@ -932,6 +953,36 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
     panel(column)
 }
 
+/// Another split is built and waiting to be signed; the flow goes on with
+/// the coins it doesn't spend.
+fn waiting_notice<'a>(txid: Txid) -> Element<'a, Message> {
+    Container::new(
+        Row::new()
+            .spacing(12)
+            .align_y(Alignment::Center)
+            .push(
+                Column::new()
+                    .spacing(4)
+                    .width(Length::Fill)
+                    .push(p1_bold(localized_copy("A split is waiting to be signed")))
+                    .push(
+                        p2_regular(localized_copy(
+                            "Its coins aren't listed below. Deleted it? They can be split again 14 days after it was built.",
+                        ))
+                        .style(theme::text::secondary),
+                    ),
+            )
+            .push(
+                button::secondary_compact(None, localized_copy("Open in PSBT proposals"))
+                    .on_press(Message::Menu(Menu::Vault(VaultSubMenu::PSBTs(Some(txid))))),
+            ),
+    )
+    .padding(16)
+    .style(theme::card::warning)
+    .width(Length::Fill)
+    .into()
+}
+
 fn unsigned_step<'a>(txid: Txid) -> Element<'a, Message> {
     panel(
         Column::new()
@@ -1208,6 +1259,7 @@ pub fn split_flow_view<'a>(
         column = column.push(p1_regular(line).style(theme::text::secondary));
     }
     column = column.push(stepper(flow));
+    column = column.push(flow.waiting_to_sign.map(waiting_notice));
     column = column.push(match flow.step {
         Step::Key(status) => key_step(flow, status, qr),
         Step::Review => review_step(flow),
@@ -1253,6 +1305,7 @@ mod tests {
             working: false,
             error: None,
             copy: CopyCard::Create,
+            waiting_to_sign: None,
             mask_amounts: false,
             unit: BitcoinDisplayUnit::BTC,
         }
@@ -1424,6 +1477,45 @@ mod tests {
         }
     }
 
+    /// A Vault that can sign the replay-protected signature but chose a
+    /// split coin can go back to the signature from the split-coin step.
+    #[test]
+    fn the_split_coin_step_offers_the_signature_back() {
+        let f = SplitFlow {
+            here: ChainId::BitcoinBlake2b,
+            step: Step::Key(KeyStatus::Waiting),
+            key: None,
+            signature_available: true,
+            ..flow()
+        };
+        let mounted = mount("vault-split-key-signature-back", &f, (1024, 768));
+        assert!(mounted.contains("Use the signature"));
+        let without = SplitFlow {
+            signature_available: false,
+            ..f
+        };
+        let mounted = mount("vault-split-key-no-signature", &without, (1024, 768));
+        assert!(!mounted.contains("Use the signature"));
+    }
+
+    /// Another split waiting to be signed shows as a notice; the flow goes
+    /// on with the coins it doesn't spend.
+    #[test]
+    fn a_split_waiting_to_be_signed_does_not_block_the_rest() {
+        let f = SplitFlow {
+            waiting_to_sign: Some(Txid::from_str(&"ab".repeat(32)).unwrap()),
+            ..flow()
+        };
+        let mounted = mount("vault-split-review-waiting", &f, (1280, 900));
+        assert!(mounted.contains("A split is waiting to be signed"));
+        assert!(mounted.contains("Open in PSBT proposals"));
+        assert!(mounted.contains("Sign and send"));
+        let es = render_in(Language::Spanish, || {
+            mount("vault-split-review-waiting-es", &f, (1280, 900))
+        });
+        es.assert_spanish("split waiting notice");
+    }
+
     #[test]
     fn later_steps_read_as_written() {
         let mut f = flow();
@@ -1526,6 +1618,16 @@ mod tests {
                 step: Step::Verifying { count: 1 },
                 coins: Vec::new(),
                 error: None,
+                ..flow()
+            },
+        ));
+        steps.push((
+            "key-signature-back",
+            SplitFlow {
+                here: ChainId::BitcoinBlake2b,
+                step: Step::Key(KeyStatus::Waiting),
+                key: None,
+                signature_available: true,
                 ..flow()
             },
         ));

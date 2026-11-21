@@ -60,6 +60,9 @@ pub struct FlowFacts {
     pub sending: Option<u32>,
     /// A split built and stored that nothing has sent yet.
     pub unsigned: Option<Txid>,
+    /// The both-chain coins unsent splits already spend. They wait for that
+    /// split (or its record to expire); the other coins can still be split.
+    pub reserved: Vec<OutPoint>,
     /// Coins this Vault's confirmed splits separated.
     pub split_before: usize,
 }
@@ -69,7 +72,12 @@ pub fn step(facts: &FlowFacts, method: Method, continuing: bool) -> Step {
     if let Some(confirmations) = facts.sending {
         return Step::Sent { confirmations };
     }
-    if let Some(txid) = facts.unsigned {
+    let available = facts
+        .both
+        .iter()
+        .filter(|outpoint| !facts.reserved.contains(outpoint))
+        .count();
+    if let Some(txid) = facts.unsigned.filter(|_| available == 0) {
         return Step::Unsigned { txid };
     }
     if facts.both.is_empty() {
@@ -124,32 +132,41 @@ pub fn key_status(cache: &Cache, address: Option<&str>) -> KeyStatus {
             },
         }
     };
-    if let Some(address) = address {
-        if let Some(coin) = candidates
-            .iter()
-            .find(|coin| coin.address.to_string() == address)
-        {
-            return classify(coin);
-        }
-    }
-    if let Some(coin) = candidates
+    let at_address = |coin: &&&Coin| address.is_some_and(|a| coin.address.to_string() == a);
+    let incoming = |coin: &&&Coin| {
+        coin.amount.to_sat() >= MIN_KEY_SATS
+            && (coin.block_height.is_none()
+                || (coin
+                    .block_height
+                    .is_some_and(|height| tip - height < RECENT_BLOCKS)
+                    && matches!(
+                        cache.chain_status(&coin.outpoint),
+                        ChainStatus::NotChecked | ChainStatus::NotSeen
+                    )))
+    };
+    let pending = |status: &KeyStatus| {
+        matches!(
+            status,
+            KeyStatus::Confirming { .. } | KeyStatus::Checking { .. }
+        )
+    };
+    // A coin still on its way (at the address, or any new incoming one)
+    // wins over one that failed: after "send one from another source" the
+    // replacement must show, not the coin that couldn't be a split coin.
+    let statuses: Vec<KeyStatus> = candidates
         .iter()
-        .find(|coin| coin.block_height.is_none() && coin.amount.to_sat() >= MIN_KEY_SATS)
-    {
-        return classify(coin);
+        .filter(|coin| at_address(coin) || incoming(coin))
+        .map(|coin| classify(coin))
+        .collect();
+    if let Some(status) = statuses.iter().find(|status| pending(status)) {
+        return *status;
     }
-    if let Some(coin) = candidates.iter().find(|coin| {
-        coin.block_height
-            .is_some_and(|height| tip - height < RECENT_BLOCKS)
-            && coin.amount.to_sat() >= MIN_KEY_SATS
-            && matches!(
-                cache.chain_status(&coin.outpoint),
-                ChainStatus::NotChecked | ChainStatus::NotSeen
-            )
-    }) {
-        return classify(coin);
-    }
-    KeyStatus::Waiting
+    candidates
+        .iter()
+        .filter(at_address)
+        .map(|coin| classify(coin))
+        .next()
+        .unwrap_or(KeyStatus::Waiting)
 }
 
 /// Tools › Split coins.
@@ -227,12 +244,19 @@ impl SplitHubPanel {
             .iter()
             .map(|coin| coin.outpoint.txid)
             .collect();
-        let unsigned = cache
+        let unsent: Vec<_> = cache
             .split_records
             .iter()
             .filter(|record| record.confirmations == 0 && !sent.contains(&record.txid))
+            .collect();
+        let unsigned = unsent
+            .iter()
             .max_by_key(|record| record.created_at)
             .map(|record| record.txid);
+        let reserved = unsent
+            .iter()
+            .flat_map(|record| record.inputs.iter().copied())
+            .collect();
         let split_before = cache
             .split_records
             .iter()
@@ -247,6 +271,7 @@ impl SplitHubPanel {
             signature_available: self.signature_available(),
             sending: cache.splitting.values().copied().min(),
             unsigned,
+            reserved,
             split_before,
         }
     }
@@ -266,7 +291,9 @@ impl SplitHubPanel {
         let coins: Vec<ReviewCoin> = cache
             .coins()
             .iter()
-            .filter(|coin| facts.both.contains(&coin.outpoint))
+            .filter(|coin| {
+                facts.both.contains(&coin.outpoint) && !facts.reserved.contains(&coin.outpoint)
+            })
             .map(|coin| ReviewCoin {
                 outpoint: coin.outpoint,
                 amount: coin.amount,
@@ -289,9 +316,13 @@ impl SplitHubPanel {
         } else {
             CopyCard::None
         };
+        let step = step(&facts, method, self.continuing);
+        let waiting_to_sign = facts
+            .unsigned
+            .filter(|_| !matches!(step, Step::Unsigned { .. } | Step::Sent { .. }));
         SplitFlow {
             here: self.wallet.chain,
-            step: step(&facts, method, self.continuing),
+            step,
             coins,
             key: cache.split_keys().first().map(|(coin, _)| coin.amount),
             method,
@@ -304,6 +335,7 @@ impl SplitHubPanel {
             working: self.working,
             error: self.error.clone(),
             copy,
+            waiting_to_sign,
             mask_amounts: cache.balance_amounts_masked(),
             unit: cache.bitcoin_unit,
         }
@@ -566,6 +598,7 @@ mod tests {
             signature_available: false,
             sending: None,
             unsigned: None,
+            reserved: Vec::new(),
             split_before: 0,
         }
     }
@@ -591,12 +624,28 @@ mod tests {
             step(
                 &FlowFacts {
                     unsigned: Some(txid),
+                    reserved: vec![shared(1)],
                     ..facts()
                 },
                 Method::SplitKey,
                 false
             ),
-            Step::Unsigned { txid }
+            Step::Unsigned { txid },
+            "nothing else to split"
+        );
+        assert_eq!(
+            step(
+                &FlowFacts {
+                    unsigned: Some(txid),
+                    both: vec![shared(1), shared(2)],
+                    reserved: vec![shared(1)],
+                    ..facts()
+                },
+                Method::SplitKey,
+                false
+            ),
+            Step::Review,
+            "an unsent split holds back only its own coins"
         );
         assert_eq!(
             step(
@@ -732,10 +781,35 @@ mod tests {
             Entanglement::Entangled,
             std::time::Instant::now(),
         );
+        let failed = panel.flow(&cache).step;
         assert_eq!(
-            panel.flow(&cache).step,
+            failed,
             Step::Key(KeyStatus::BothChains {
                 amount: Amount::from_sat(25_000)
+            })
+        );
+
+        // "Send one from another source": the replacement shows, not the
+        // coin that failed, whether it comes to another address or the same.
+        let replacement = shared(6);
+        cache.daemon_cache.coins.push(Coin {
+            address: bitcoin::Address::from_str("bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq")
+                .unwrap()
+                .assume_checked(),
+            ..coin(replacement, 40_000, None)
+        });
+        assert_eq!(
+            panel.flow(&cache).step,
+            Step::Key(KeyStatus::Confirming {
+                amount: Amount::from_sat(40_000)
+            })
+        );
+        cache.daemon_cache.coins.last_mut().unwrap().address =
+            bitcoin::Address::from_str(FRESH).unwrap().assume_checked();
+        assert_eq!(
+            panel.flow(&cache).step,
+            Step::Key(KeyStatus::Confirming {
+                amount: Amount::from_sat(40_000)
             })
         );
     }
@@ -750,13 +824,27 @@ mod tests {
             txid,
             chain: ChainId::Bitcoin,
             method: Method::SplitKey,
-            inputs: vec![a],
+            inputs: vec![a, b],
             key: Some(key),
             key_path: None,
             created_at: 0,
             confirmations: 0,
         });
         assert_eq!(panel.flow(&cache).step, Step::Unsigned { txid });
+
+        // Spending only `a`, it holds back `a` alone: `b` can still be
+        // split, under a notice pointing at the split waiting to be signed.
+        cache.split_records[0].inputs = vec![a];
+        let flow = panel.flow(&cache);
+        assert_eq!(flow.waiting_to_sign, Some(txid));
+        assert_eq!(
+            flow.coins.iter().map(|c| c.outpoint).collect::<Vec<_>>(),
+            vec![b]
+        );
+        assert!(
+            matches!(flow.step, Step::Key(_)),
+            "its split coin is held back too"
+        );
 
         let output = OutPoint::new(txid, 0);
         cache.daemon_cache.coins.push(Coin {
