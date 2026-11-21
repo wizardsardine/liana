@@ -2669,8 +2669,16 @@ impl Home {
             self.connect_account.forget_shared_session_for_logout();
         }
         let was_authenticated = self.connect_account.is_authenticated();
+        let account_before = self.launcher_account_key();
         let task = map_connect_task(self.connect_account.update_message(msg));
         let now_authenticated = self.connect_account.is_authenticated();
+        // The Cube list is filtered by the signed-in account, so a sign-in,
+        // sign-out, account switch or profile load must re-read it.
+        let task = if self.launcher_account_key() != account_before {
+            Task::batch([task, self.reload()])
+        } else {
+            task
+        };
         self.refresh_displayed_networks();
         self.reconcile_launcher_session(was_authenticated, now_authenticated, explicit_logout);
         self.redirect_unavailable_duress();
@@ -2830,9 +2838,13 @@ impl Home {
         if let Some(client) = self.connect_account.authenticated_client() {
             let datadir = self.datadir_path.clone();
             let owner = self.connect_owner();
+            // Never register a Cube another account already owns under this
+            // one: that would hand it over (and stamp this account as its
+            // owner) on the first sign-in.
             let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
                 .into_iter()
                 .filter(|cube| !cube.remote_synced)
+                .filter(|cube| !self.cube_hidden_from_account(cube))
                 .collect();
             if !unsynced.is_empty() {
                 tasks.push(Task::perform(
@@ -3699,6 +3711,7 @@ impl Home {
                 Task::none()
             }
             Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
+                self.hide_foreign_cubes(&mut state);
                 // The backup step owns the screen and an unwritten Cube's
                 // seed. A reload that lands now (the catch-up sync after
                 // signing in from the hub, say) must not replace it; it
@@ -3708,7 +3721,10 @@ impl Home {
                 }
                 Task::none()
             }
-            Ok(state) => self.apply_checked_state(state),
+            Ok(mut state) => {
+                self.hide_foreign_cubes(&mut state);
+                self.apply_checked_state(state)
+            }
         }
     }
 
@@ -4771,6 +4787,46 @@ impl Home {
             .user
             .as_ref()
             .map(settings::ConnectOwner::from_user)
+    }
+
+    /// Whether `cube` belongs to a different Connect account than the one
+    /// signed in. See [`settings::cube_hidden_from_account`].
+    fn cube_hidden_from_account(&self, cube: &CubeSettings) -> bool {
+        settings::cube_hidden_from_account(
+            cube.connect_owner.as_ref(),
+            self.connect_account.authenticated_client().is_some(),
+            self.connect_account.user.as_ref().map(|u| u.id),
+        )
+    }
+
+    /// Drops Cubes owned by another Connect account from a freshly read list.
+    ///
+    /// Filtering the list at its source (rather than in each view) keeps every
+    /// consumer honest: the floor, the list, the details panel and all the
+    /// index- and key-addressed open / rename / delete handlers only ever see
+    /// Cubes this account may use. A list emptied this way becomes `NoCube`.
+    fn hide_foreign_cubes(&self, state: &mut State) {
+        let State::Cubes {
+            cubes, create_cube, ..
+        } = state
+        else {
+            return;
+        };
+        cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+        if cubes.is_empty() {
+            *state = State::NoCube {
+                create_cube: *create_cube,
+            };
+        }
+    }
+
+    /// The signed-in account as the launcher list sees it: whether a session
+    /// exists, and whose profile is loaded.
+    fn launcher_account_key(&self) -> (bool, Option<u32>) {
+        (
+            self.connect_account.authenticated_client().is_some(),
+            self.connect_account.user.as_ref().map(|u| u.id),
+        )
     }
 
     fn scrub_creation_seed(&mut self) {
@@ -11123,6 +11179,62 @@ mod tests {
         );
         drop(home.update(Message::View(ViewMessage::DismissConnectSignOut)));
         assert_eq!(home.connect_account.signed_out_by, None);
+    }
+
+    fn owned_cube(name: &str, owner: Option<u32>) -> CubeSettings {
+        let mut cube = CubeSettings::new(name.to_string(), ChainId::Bitcoin);
+        cube.connect_owner = owner.map(|user_id| settings::ConnectOwner {
+            user_id,
+            email: format!("user{user_id}@example.com"),
+        });
+        cube
+    }
+
+    fn listed_names(state: &State) -> Vec<String> {
+        match state {
+            State::Cubes { cubes, .. } => cubes.iter().map(|c| c.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_signed_in_account_never_lists_another_accounts_cubes() {
+        let home = signed_in_home(); // signed in as user 7
+        let mut state = State::Cubes {
+            cubes: vec![
+                owned_cube("mine", Some(7)),
+                owned_cube("theirs", Some(9)),
+                owned_cube("unowned", None),
+            ],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert_eq!(listed_names(&state), vec!["mine", "unowned"]);
+    }
+
+    #[test]
+    fn a_list_of_only_foreign_cubes_becomes_the_empty_launcher() {
+        let home = signed_in_home();
+        let mut state = State::Cubes {
+            cubes: vec![owned_cube("theirs", Some(9))],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert!(matches!(state, State::NoCube { create_cube: false }));
+    }
+
+    #[test]
+    fn signed_out_lists_every_cube() {
+        let home = home();
+        let mut state = State::Cubes {
+            cubes: vec![owned_cube("theirs", Some(9)), owned_cube("unowned", None)],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert_eq!(listed_names(&state), vec!["theirs", "unowned"]);
     }
 
     fn signed_in_home() -> Home {
