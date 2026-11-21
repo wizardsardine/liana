@@ -165,14 +165,14 @@ pub(crate) fn balance_sync_state(
 
 /// ", retrying (x%)" while a full scan is retrying after failures, so a retry that
 /// is getting somewhere does not read as failed throughout.
-fn retry_note(retry_progress: Option<f64>) -> String {
+pub(crate) fn retry_note(retry_progress: Option<f64>) -> String {
     retry_progress
         .map(|p| localized_format!(", retrying ({:.1}%)", ", reintentando ({:.1}%)", 100.0 * p))
         .unwrap_or_default()
 }
 
 /// When a run of failed polls began, in local time.
-fn format_failure_time(since: u32) -> String {
+pub(crate) fn format_failure_time(since: u32) -> String {
     DateTime::<Utc>::from_timestamp(i64::from(since), 0)
         .map(|at| {
             let local = at.with_timezone(&Local);

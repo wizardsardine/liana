@@ -794,6 +794,11 @@ impl ImportedBitcoinPanel {
         self.generation
     }
 
+    /// The daemon's latest scan report for this wallet, if it has answered.
+    pub fn history_sync(&self) -> Option<&coincubed::commands::HistorySync> {
+        self.info.as_ref().map(|info| &info.history_sync)
+    }
+
     pub fn is_ready(&self) -> bool {
         self.import.is_ready()
             && self.coins.is_some()
