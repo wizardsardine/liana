@@ -1618,16 +1618,16 @@ mod native {
         )
     }
 
-    fn record_create_admission(
-        root: &Path,
-        state: &mut State,
-        admission: Result<()>,
-    ) -> Result<()> {
+    fn record_backend_refusal(root: &Path, state: &mut State, admission: Result<()>) -> Result<()> {
         if let Err(code) = admission {
             state.stage = CREATE_BACKEND_REFUSED.into();
             save(root, state)?;
             return Err(code);
         }
+        Ok(())
+    }
+
+    fn begin_create(root: &Path, state: &mut State) -> Result<()> {
         if state.stage == CREATE_BACKEND_REFUSED {
             // Persist consumption before anything can create a local or remote
             // Cube. A lost response after this point remains uncertain.
@@ -1807,7 +1807,7 @@ mod native {
                 let password = string(load(&c, "recovery_password")?)?;
                 let _restored_pin = load(&c, "restored_pin")?;
                 let admission = recovery_native::admit_backend_readiness(c.chain, &client).await;
-                record_create_admission(root, &mut state, admission)?;
+                record_backend_refusal(root, &mut state, admission)?;
                 let entropy = random(16);
                 let phrase =
                     bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
@@ -1821,6 +1821,7 @@ mod native {
                     &password,
                     &jwt,
                     client,
+                    || begin_create(root, &mut state),
                 )
                 .await?;
                 check(
@@ -2142,7 +2143,7 @@ mod native {
             assert!(prior_creator.wait().unwrap().success());
 
             assert_eq!(
-                record_create_admission(root.path(), &mut state, Err("native_b2_backend_syncing")),
+                record_backend_refusal(root.path(), &mut state, Err("native_b2_backend_syncing")),
                 Err("native_b2_backend_syncing")
             );
             let mut state = load_action_state(&config, root.path(), false).unwrap();
@@ -2161,7 +2162,11 @@ mod native {
             );
             fs::remove_dir(&original).unwrap();
 
-            record_create_admission(root.path(), &mut state, Ok(())).unwrap();
+            record_backend_refusal(root.path(), &mut state, Ok(())).unwrap();
+            let still_retryable = load_action_state(&config, root.path(), false).unwrap();
+            assert_eq!(validate_create_retry(&config, &still_retryable), Ok(()));
+
+            begin_create(root.path(), &mut state).unwrap();
             let consumed = load_action_state(&config, root.path(), false).unwrap();
             assert_eq!(consumed.creator.pid, std::process::id());
             assert_eq!(consumed.canary_uuid, Some(canary_uuid));

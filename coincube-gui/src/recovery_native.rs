@@ -269,6 +269,7 @@ pub async fn admit_create(
 /// Drive Home's real creation/backup ceremony, then real in-Cube Vault installation
 /// and the exact full-kit encrypt/upload function shared by Settings and creation.
 /// The signed runner checks backend readiness before calling this function.
+/// The driver calls `before_create` after admission and before the first write.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_export(
     chain: ChainId,
@@ -279,6 +280,7 @@ pub async fn create_export(
     password: &Zeroizing<String>,
     jwt: &str,
     client: CoincubeClient,
+    before_create: impl FnOnce() -> Result<()>,
 ) -> Result<(Identity, RecoveryKit)> {
     allowed_chain(chain)?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
@@ -318,6 +320,7 @@ pub async fn create_export(
         words,
         limits.max_allowed,
         client.clone(),
+        before_create,
     )
     .await?;
     let location = unlock::CubeLocation::new(root.path(), &cube);
@@ -1114,6 +1117,55 @@ pub fn sign_unfunded(wallet: &Wallet) -> Result<bitcoin::psbt::Psbt> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn full_account_does_not_begin_fixture_creation() {
+        use httpmock::{Method::GET, MockServer};
+        use serde_json::json;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api/v1/user");
+                then.status(200)
+                    .json_body(json!({"id":1,"email":"fixture@example.invalid"}));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api/v1/connect/cubes");
+                then.status(200).json_body(json!({"data":[]}));
+            })
+            .await;
+        let chain = ChainId::Testnet4;
+        let limits = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api/v1/connect/cubes/limits")
+                    .query_param("network", chain.api_str());
+                then.status(200).json_body(json!({"data":{
+                    "network":chain.api_str(),"currentCount":1,"maxAllowed":1,
+                }}));
+            })
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = CoincubeDirectory::new(directory.path().join("original"));
+        let result = create_export(
+            chain,
+            &root,
+            uuid::Uuid::new_v4(),
+            "1111",
+            &[],
+            &Zeroizing::new(String::new()),
+            "synthetic-test-token",
+            CoincubeClient::for_test(server.base_url()),
+            || panic!("capacity refusal must not consume the retry checkpoint"),
+        )
+        .await;
+        assert_eq!(result.err(), Some("native_capacity_blocked"));
+        assert!(!root.path().exists());
+        limits.assert_hits_async(1).await;
+    }
 
     #[tokio::test]
     async fn backend_readiness_refuses_real_syncing_response_without_fixture() {
