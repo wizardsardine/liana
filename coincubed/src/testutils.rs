@@ -64,6 +64,8 @@ pub struct DummyBitcoind {
     /// What the next `sync_wallet` reports as a reorg's common ancestor, the way
     /// Electrum/Esplora hand it over. Reported once, then `None`.
     pub sync_reorg_ancestor: Option<BlockChainTip>,
+    /// When set, fallible tip reads fail instead of reporting [`Self::tip`].
+    pub chain_tip_error: Option<&'static str>,
 }
 
 /// The endpoint [`DummyBitcoind`] reports by default.
@@ -108,6 +110,7 @@ impl DummyBitcoind {
             history_sync: Default::default(),
             sees_mempool: true,
             sync_reorg_ancestor: None,
+            chain_tip_error: None,
         }
     }
 }
@@ -183,6 +186,17 @@ impl BitcoinInterface for DummyBitcoind {
 
     fn chain_tip(&self) -> BlockChainTip {
         self.tip
+    }
+
+    fn try_chain_tip(&self) -> Result<BlockChainTip, String> {
+        match self.chain_tip_error {
+            Some(error) => Err(error.to_string()),
+            None => Ok(self.chain_tip()),
+        }
+    }
+
+    fn chain_tip_result(&self) -> Result<BlockChainTip, String> {
+        self.try_chain_tip()
     }
 
     fn is_in_chain(&self, tip: &BlockChainTip) -> bool {
