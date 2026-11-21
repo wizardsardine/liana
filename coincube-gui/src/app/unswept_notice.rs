@@ -1,12 +1,15 @@
 //! Ephemeral display evidence for Bitcoin recovery. No signing authority.
 use super::{cache::Cache, wallet::Wallet};
-use crate::services::foreign_scan::known::{KnownOutput, KnownUnspent};
+use crate::{
+    daemon::model::Coin,
+    services::foreign_scan::known::{KnownOutput, KnownUnspent, FORK_HEIGHT},
+};
 use coincube_core::{
     chain::ChainId,
     miniscript::bitcoin::{self},
     wallet_descriptor::WalletDescriptor,
 };
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 #[derive(Debug, Clone)]
 pub struct Notice {
@@ -16,16 +19,22 @@ pub struct Notice {
 }
 
 pub fn owned(cache: &Cache, descriptor: &WalletDescriptor) -> Vec<KnownOutput> {
-    cache
-        .coins()
-        .iter()
+    owned_outputs(cache.coins().iter(), cache.blockheight(), descriptor)
+}
+
+fn owned_outputs<'a>(
+    coins: impl Iterator<Item = &'a Coin>,
+    blockheight: i32,
+    descriptor: &WalletDescriptor,
+) -> Vec<KnownOutput> {
+    coins
         .filter_map(|coin| {
             let height = coin.block_height?;
             if coin.spend_info.is_some()
                 || coin.is_immature
                 || height <= 0
-                || height >= 961_640
-                || height > cache.blockheight()
+                || height as u32 >= FORK_HEIGHT
+                || height > blockheight
                 || coin.derivation_index.is_hardened()
             {
                 return None;
@@ -69,13 +78,20 @@ impl Notice {
         {
             return false;
         }
-        let current = owned(cache, &self.descriptor);
-        !self.proof.outputs().is_empty()
-            && self
-                .proof
-                .outputs()
-                .iter()
-                .all(|output| current.contains(output))
+        let outputs = self.proof.outputs();
+        if outputs.is_empty() {
+            return false;
+        }
+
+        // The notice depends only on the coins in the proof. Avoid deriving
+        // scripts for unrelated wallet coins each time the view is rendered.
+        let proven_outpoints: HashSet<_> = outputs.iter().map(|output| output.outpoint).collect();
+        let candidates = cache
+            .coins()
+            .iter()
+            .filter(|coin| proven_outpoints.contains(&coin.outpoint));
+        let current = owned_outputs(candidates, cache.blockheight(), &self.descriptor);
+        outputs.iter().all(|output| current.contains(output))
     }
 }
 
@@ -100,7 +116,6 @@ impl Cache {
 mod tests {
     use super::*;
     use crate::app::state::vault::test_support::unified::fixture;
-    use crate::daemon::model::Coin;
     use bitcoin::{Address, Amount, Network};
 
     fn setup() -> (Cache, tokio::sync::watch::Sender<u64>) {
@@ -172,6 +187,18 @@ mod tests {
             );
         }
     }
+    #[test]
+    fn unswept_notice_does_not_substitute_an_unproven_outpoint() {
+        let (mut cache, _live) = setup();
+        let mut unrelated = cache.daemon_cache.coins[0].clone();
+        unrelated.outpoint.vout += 1;
+        cache.daemon_cache.coins.push(unrelated);
+        assert!(cache.unswept_recovery_notice().is_some());
+
+        cache.daemon_cache.coins[0].block_height = Some(FORK_HEIGHT as i32);
+        assert!(cache.unswept_recovery_notice().is_none());
+    }
+
     #[test]
     fn unswept_notice_is_session_chain_feature_and_age_bound() {
         let (cache, live) = setup();
