@@ -7947,10 +7947,14 @@ impl App {
         if let Ok(record) = &result {
             tasks.push(self.record_split((**record).clone()));
         }
-        // To the Coins panel whichever panel is showing: its overlay
-        // stays locked until it hears the result.
-        if let (Some(daemon), Some(panel)) = (self.daemon.clone(), self.panels.coins.as_mut()) {
-            tasks.push(panel.update(Some(daemon), &self.cache, Message::SplitPrepared(result)));
+        // To Split coins whichever panel is showing: its review stays
+        // locked until it hears the result.
+        if let Some(panel) = self.panels.split_hub.as_mut() {
+            tasks.push(panel.update(
+                self.daemon.clone(),
+                &self.cache,
+                Message::SplitPrepared(result),
+            ));
         }
         if let Some(txid) = txid {
             // Sign and broadcast through the Vault's normal PSBT screen.
@@ -8856,14 +8860,7 @@ impl App {
                 return self.route_create_blake2b_copy();
             }
             Message::View(view::Message::SplitFirst) => {
-                let menu = Menu::Vault(menu::VaultSubMenu::Coins(None));
-                let load = self.set_current_panel(menu);
-                return Task::batch([
-                    load,
-                    Task::done(Message::View(view::Message::CoinControl(
-                        view::CoinControlMessage::OpenSplit,
-                    ))),
-                ]);
+                return self.set_current_panel(Menu::Vault(menu::VaultSubMenu::SplitCoins));
             }
             Message::SendSelectedCoins(outpoints) => {
                 return self.route_send_selected_coins(outpoints);
@@ -14158,20 +14155,30 @@ pub(crate) mod shell_tests {
     }
 
     #[test]
-    fn a_split_result_reaches_the_coins_panel_from_another_panel() {
+    fn a_split_result_reaches_split_coins_from_another_panel() {
         let root = std::env::temp_dir().join(format!("split-result-{}", uuid::Uuid::new_v4()));
         let (mut app, _) = bitcoin_app(&root);
         app.panels
-            .coins
+            .split_hub
             .as_mut()
             .unwrap()
             .start_building_split_for_test();
         drop(app.set_current_panel(Menu::Vault(menu::VaultSubMenu::Overview)));
         drop(app.update(Message::SplitPrepared(Err("Couldn't build".into()))));
         assert_eq!(
-            app.panels.coins.as_ref().unwrap().split_progress_for_test(),
-            Some((false, Some("Couldn't build".to_string()))),
+            app.panels
+                .split_hub
+                .as_ref()
+                .unwrap()
+                .split_progress_for_test(),
+            (false, Some("Couldn't build".to_string())),
             "unlocked, with the error"
+        );
+        // Coin control's Split coins, and Split first, open the tab.
+        drop(app.update(Message::View(view::Message::SplitFirst)));
+        assert_eq!(
+            app.panels.current,
+            Menu::Vault(menu::VaultSubMenu::SplitCoins)
         );
         let _ = std::fs::remove_dir_all(&root);
     }
