@@ -268,20 +268,8 @@ pub async fn admit_create(
 
 /// Drive Home's real creation/backup ceremony, then real in-Cube Vault installation
 /// and the exact full-kit encrypt/upload function shared by Settings and creation.
-#[derive(Debug)]
-pub enum CreationError {
-    /// Produced only before Home/registration is entered, never inferred from
-    /// an error message or an absent identity after an uncertain request.
-    BeforeRegistration(&'static str),
-    Uncertain(&'static str),
-}
-
-impl From<&'static str> for CreationError {
-    fn from(code: &'static str) -> Self {
-        Self::Uncertain(code)
-    }
-}
-
+/// The signed runner checks backend readiness before calling this function.
+/// The driver calls `before_create` after admission and before the first write.
 #[allow(clippy::too_many_arguments)]
 pub async fn create_export(
     chain: ChainId,
@@ -292,11 +280,9 @@ pub async fn create_export(
     password: &Zeroizing<String>,
     jwt: &str,
     client: CoincubeClient,
-) -> std::result::Result<(Identity, RecoveryKit), CreationError> {
+    before_create: impl FnOnce() -> Result<()>,
+) -> Result<(Identity, RecoveryKit)> {
     allowed_chain(chain)?;
-    admit_backend_readiness(chain, &client)
-        .await
-        .map_err(CreationError::BeforeRegistration)?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
     if chain.is_blake2b() {
         check(
@@ -334,13 +320,14 @@ pub async fn create_export(
         words,
         limits.max_allowed,
         client.clone(),
+        before_create,
     )
     .await?;
     let location = unlock::CubeLocation::new(root.path(), &cube);
     let master =
         match unlock_admitted(&location, chain, pin).map_err(|_| "native_original_unlock")? {
             unlock::PinOutcome::Unlock(signer) => signer,
-            _ => return Err("native_original_unlock".into()),
+            _ => return Err("native_original_unlock"),
         };
     let secp = Secp256k1::new();
     let fingerprint = master.fingerprint(&secp).to_string();
@@ -1132,6 +1119,55 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn full_account_does_not_begin_fixture_creation() {
+        use httpmock::{Method::GET, MockServer};
+        use serde_json::json;
+
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api/v1/user");
+                then.status(200)
+                    .json_body(json!({"id":1,"email":"fixture@example.invalid"}));
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/api/v1/connect/cubes");
+                then.status(200).json_body(json!({"data":[]}));
+            })
+            .await;
+        let chain = ChainId::Testnet4;
+        let limits = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api/v1/connect/cubes/limits")
+                    .query_param("network", chain.api_str());
+                then.status(200).json_body(json!({"data":{
+                    "network":chain.api_str(),"currentCount":1,"maxAllowed":1,
+                }}));
+            })
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let root = CoincubeDirectory::new(directory.path().join("original"));
+        let result = create_export(
+            chain,
+            &root,
+            uuid::Uuid::new_v4(),
+            "1111",
+            &[],
+            &Zeroizing::new(String::new()),
+            "synthetic-test-token",
+            CoincubeClient::for_test(server.base_url()),
+            || panic!("capacity refusal must not consume the retry checkpoint"),
+        )
+        .await;
+        assert_eq!(result.err(), Some("native_capacity_blocked"));
+        assert!(!root.path().exists());
+        limits.assert_hits_async(1).await;
+    }
+
+    #[tokio::test]
     async fn backend_readiness_refuses_real_syncing_response_without_fixture() {
         use httpmock::{Method::GET, MockServer};
         use serde_json::json;
@@ -1146,31 +1182,7 @@ mod tests {
             admit_backend_readiness(ChainId::BitcoinBlake2bTestnet4, &client).await,
             Err("native_b2_backend_syncing")
         );
-        let temporary = tempfile::tempdir().unwrap();
-        let fixture = temporary.path().join("not-created");
-        let outcome = create_export(
-            ChainId::BitcoinBlake2bTestnet4,
-            &CoincubeDirectory::new(fixture.clone()),
-            uuid::Uuid::new_v4(),
-            "unit-only",
-            &[],
-            &Zeroizing::new("unit-only".into()),
-            "synthetic-test-token",
-            client,
-        )
-        .await;
-        assert!(matches!(
-            outcome,
-            Err(CreationError::BeforeRegistration(
-                "native_b2_backend_syncing"
-            ))
-        ));
-        assert!(!fixture.exists());
-        assert!(matches!(
-            CreationError::from("native_installer_blocked"),
-            CreationError::Uncertain("native_installer_blocked")
-        ));
-        anchor.assert_hits_async(2).await;
+        anchor.assert_hits_async(1).await;
     }
 
     #[test]

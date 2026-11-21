@@ -148,9 +148,7 @@ def offline_protocol(config, tmp_path, monkeypatch, crash_retirement=False):
         record={'pid':pid,'start_id':str(pid),'exited':True,'returncode':0}
         if action in ('admit_backends','admit_create','refresh_auth','preflight','bind_auth'):return record
         if action=='create_export':
-            if case.exists():
-                assert json.loads(public_state_read(state_path))['stage']=='creation_admission_refused'
-            else: case.mkdir(mode=0o700)
+            case.mkdir(mode=0o700, exist_ok=request.get('retry_create', False))
             (case/'original').mkdir(mode=0o700)
             psbt,identity=fixture(cfg['chain'])
             state={'config':cfg,'pending':None,'stage':'exported','creator':{'pid':100,'start_id':'100'},'restorer':None,
@@ -169,80 +167,6 @@ def offline_protocol(config, tmp_path, monkeypatch, crash_retirement=False):
         return record
     monkeypatch.setattr(native,'process',worker)
     return calls
-
-
-def test_late_readonly_refusal_can_resume_exact_case_without_replacing_retained_material(config,tmp_path,monkeypatch):
-    from harness.state import atomic_write
-    calls=offline_protocol(config,tmp_path,monkeypatch)
-    worker=native.process; refused=[]
-    def late_refusal(executable,request,directory,access_token=None):
-        cfg=request['config'];case=Path(cfg['case_root'])
-        if request['action']=='create_export' and cfg['chain']==public.CHAINS[1] and not refused:
-            refused.append(cfg)
-            case.mkdir(mode=0o700)
-            atomic_write(case/'retained-test-material',b'unit-only retained PIN/password/canary stand-in')
-            atomic_write(case/'state.json',json.dumps({'config':cfg,'stage':'creation_admission_refused',
-                'pending':None,'identity':None,'kit':None,'remote_delete_started':False,
-                'creator':{'pid':91,'start_id':'91'},
-                'canary_uuid':'unit-canary','canary':'unit-canary-binding'}).encode())
-            raise native.NativeActionBlocked('native_creation_admission_refused',
-                {'pid':91,'start_id':'91','exited':True,'returncode':2})
-        return worker(executable,request,directory,access_token)
-    monkeypatch.setattr(native,'process',late_refusal)
-    suite=native.NativeRecovery(config,tmp_path/'run',{'consumer':'offline-only-test'})
-    try:
-        with pytest.raises(native.NativeActionBlocked):suite.execute({'tokens':{'access_token':'unit'}},1)
-        assert 'pending_native_action' not in suite.journal.data['artifacts']
-        retained=Path(refused[0]['case_root'])/'retained-test-material';before=public_state_read(retained)
-        result=suite.execute({'tokens':{'access_token':'unit'}},1)
-        assert set(result['chains'])==set(public.CHAINS)
-        assert public_state_read(retained)==before
-        assert calls.count((public.CHAINS[1],'preflight'))==1
-        assert calls.count((public.CHAINS[1],'bind_auth'))==1
-    finally:suite.close()
-
-
-@pytest.mark.parametrize('code',['native_installer_blocked','native_creation_admission_refused'])
-def test_partial_creation_is_never_reclassified_as_safe_refusal(config,tmp_path,monkeypatch,code):
-    from harness.state import atomic_write
-    offline_protocol(config,tmp_path,monkeypatch)
-    def partial(executable,request,directory,access_token=None):
-        if request['action']=='create_export':
-            cfg=request['config'];case=Path(cfg['case_root']);case.mkdir(mode=0o700)
-            atomic_write(case/'state.json',json.dumps({'config':cfg,'stage':'new','pending':'create_export',
-                'identity':None,'kit':None,'remote_delete_started':False}).encode())
-            raise native.NativeActionBlocked(code, {'pid':91,'start_id':'91','exited':True,'returncode':2})
-        return {'pid':10,'start_id':'10','exited':True,'returncode':0}
-    monkeypatch.setattr(native,'process',partial)
-    suite=native.NativeRecovery(config,tmp_path/'run',{'consumer':'offline-only-test'})
-    try:
-        with pytest.raises((native.NativeActionBlocked,Failed)):suite.execute({'tokens':{'access_token':'unit'}},1)
-        assert suite.journal.data['artifacts']['pending_native_action']['action']=='create_export'
-        with pytest.raises(Failed,match='UNCERTAIN_RETIREMENT'):suite.execute({'tokens':{'access_token':'unit'}},1)
-    finally:suite.close()
-
-
-@pytest.mark.parametrize('change',['creator','config','identity','kit','pending','stage','original','exit','missing_process'])
-def test_creation_refusal_requires_exact_exited_child_and_empty_checkpoint(tmp_path,change):
-    from harness.state import atomic_write
-    case=tmp_path/'case';case.mkdir(mode=0o700);cfg={'unit':'config'}
-    child={'pid':91,'start_id':'91','exited':True,'returncode':2}
-    state={'config':cfg,'creator':{'pid':91,'start_id':'91'},'stage':'creation_admission_refused',
-           'pending':None,'identity':None,'kit':None,'remote_delete_started':False,
-           'canary_uuid':'unit-canary','canary':'unit-binding'}
-    atomic_write(case/'state.json',json.dumps(state).encode())
-    assert native.creation_refusal_checkpoint(case,cfg,child)
-    if change=='creator':state['creator']['start_id']='different'
-    elif change=='config':state['config']={'unit':'different'}
-    elif change=='identity':state['identity']={'remote_cube_id':349}
-    elif change=='kit':state['kit']={'id':1}
-    elif change=='pending':state['pending']='create_export'
-    elif change=='stage':state['stage']='new'
-    elif change=='original':(case/'original').mkdir()
-    elif change=='exit':child['returncode']=0
-    elif change=='missing_process':child=None
-    atomic_write(case/'state.json',json.dumps(state).encode())
-    assert not native.creation_refusal_checkpoint(case,cfg,child)
 
 
 def public_state_read(path):
@@ -347,6 +271,82 @@ def test_both_chain_backend_refusal_precedes_all_fixture_actions(config, tmp_pat
         assert not any(chain in suite.journal.data['artifacts'] for chain in public.CHAINS)
         assert 'pending_native_action' not in suite.journal.data['artifacts']
         assert not any(p.is_dir() for p in suite.directory.iterdir())
+    finally:
+        suite.close()
+
+
+@pytest.mark.parametrize('chain', public.CHAINS)
+def test_late_backend_refusal_retries_exact_pending_create(chain, config, tmp_path, monkeypatch):
+    calls = offline_protocol(config, tmp_path, monkeypatch)
+    original = native.process
+    account = {'tokens': {'access_token': 'unit-not-a-credential'}}
+    consumer = {'consumer': 'create-retry'}
+    attempts = []
+
+    def worker(executable, request, directory, access_token=None):
+        cfg = request['config']
+        if request['action'] == 'create_export' and cfg['chain'] == chain:
+            case = Path(cfg['case_root'])
+            attempts.append(request)
+            if len(attempts) <= 2:
+                case.mkdir(mode=0o700, exist_ok=len(attempts) == 2)
+                native.atomic_write(case/'state.json', json.dumps(
+                    {'config': cfg, 'stage': 'create_backend_refused', 'pending': 'create_export'}
+                ).encode())
+                raise native.NativeActionBlocked('native_backend_test_refusal')
+        return original(executable, request, directory, access_token=access_token)
+
+    monkeypatch.setattr(native, 'process', worker)
+    for _ in range(2):
+        suite = native.NativeRecovery(config, tmp_path/'run', consumer)
+        try:
+            with pytest.raises(native.NativeActionBlocked, match='native_backend_test_refusal'):
+                suite.execute(account, 1)
+            assert set(suite.journal.data['artifacts'][chain]) == {'preflight', 'bind_auth'}
+        finally:
+            suite.close()
+
+    suite = native.NativeRecovery(config, tmp_path/'run', consumer)
+    try:
+        assert list(suite.execute(account, 1)['chains']) == list(public.CHAINS)
+        assert attempts == [attempts[0], dict(attempts[0], retry_create=True), dict(attempts[0], retry_create=True)]
+        assert calls.count((chain, 'bind_auth')) == calls.count((chain, 'create_export')) == 1
+        assert 'pending_native_action' not in suite.journal.data['artifacts']
+    finally:
+        suite.close()
+
+
+@pytest.mark.parametrize('state_kind', ['missing', 'uncertain', 'wrong_config'])
+def test_unknown_creation_outcome_stays_blocked(state_kind, config, tmp_path, monkeypatch):
+    calls = offline_protocol(config, tmp_path, monkeypatch)
+    original = native.process
+
+    def worker(executable, request, directory, access_token=None):
+        if request['action'] == 'create_export':
+            cfg = request['config']
+            case = Path(cfg['case_root'])
+            if state_kind != 'missing':
+                case.mkdir(mode=0o700)
+                native.atomic_write(case/'state.json', json.dumps({
+                    'config': cfg if state_kind == 'uncertain' else dict(cfg, owner_id=2),
+                    'stage': 'new' if state_kind == 'uncertain' else 'create_backend_refused',
+                    'pending': 'create_export',
+                }).encode())
+            raise native.NativeActionBlocked('native_backend_test_refusal')
+        return original(executable, request, directory, access_token=access_token)
+
+    monkeypatch.setattr(native, 'process', worker)
+    suite = native.NativeRecovery(config, tmp_path/'run', {'consumer': 'uncertain-create'})
+    account = {'tokens': {'access_token': 'unit-not-a-credential'}}
+    try:
+        with pytest.raises(native.NativeActionBlocked):
+            suite.execute(account, 1)
+        pending = deepcopy(suite.journal.data['artifacts']['pending_native_action'])
+        before = list(calls)
+        with pytest.raises(Failed, match='UNCERTAIN_RETIREMENT'):
+            suite.execute(account, 1)
+        assert calls[len(before):] == [(public.CHAINS[0], 'admit_backends')]
+        assert suite.journal.data['artifacts']['pending_native_action'] == pending
     finally:
         suite.close()
 
@@ -582,7 +582,7 @@ def test_failed_child_identity_is_durable_before_wait_and_never_contains_token(t
     executable=tmp_path/'offline-child'
     executable.write_text('#!/usr/bin/env python3\nimport sys,json,pathlib\njson.load(sys.stdin)\nroot=pathlib.Path('+repr(str(tmp_path))+')\nrows=list((root/"native-processes").glob("*.json"))\nassert rows and json.loads(rows[0].read_text())["payload_sent"]\nprint(json.dumps({"ok":False,"code":"native_unit_failure"}))\nsys.exit(2)\n')
     executable.chmod(0o700)
-    with pytest.raises(native.NativeActionBlocked) as error:
+    with pytest.raises(native.NativeActionBlocked):
         native.process(executable,{'action':'refresh_auth','config':{'unit':'offline-only'}},tmp_path,access_token='unit-token-must-not-persist')
     rows=list((tmp_path/'native-processes').glob('*.json'));assert len(rows)==1
     raw=rows[0].read_text();identity=json.loads(raw)
@@ -591,7 +591,6 @@ def test_failed_child_identity_is_durable_before_wait_and_never_contains_token(t
     assert identity['exited'] is True
     assert identity['returncode']==2
     assert identity['code']=='native_unit_failure'
-    assert error.value.process_identity == {key:identity[key] for key in ('pid','start_id','exited','returncode')}
     assert 'unit-token-must-not-persist' not in raw
     assert rows[0].stat().st_mode&0o077==0
 

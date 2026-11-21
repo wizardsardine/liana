@@ -156,6 +156,55 @@ fn vault_balance_pending(
         || ((history.full_scan_in_progress || failing) && vault_balance == Amount::ZERO)
 }
 
+/// The line under the Vault card's loading dots: why there is no balance yet.
+///
+/// A first scan through a slow or failing server can take minutes, and dots
+/// alone read as a frozen screen. `None` leaves the dots on their own.
+pub(crate) fn vault_loading_status(
+    sync_progress: f64,
+    history: &coincubed::commands::HistorySync,
+) -> Option<String> {
+    use crate::app::view::vault::overview::{format_failure_time, retry_note};
+    if let Some(failure) = history
+        .last_failure
+        .as_ref()
+        .filter(|failure| failure.consecutive >= crate::app::wallet::FAILED_POLLS_BEFORE_REPORTING)
+    {
+        let since = format_failure_time(failure.since);
+        return Some(match history.full_scan_progress() {
+            // ", retrying (x%)": a retry that is getting somewhere says so.
+            Some(progress) => coincube_ui::localized_format!(
+                "Syncing has failed since {}{}.",
+                "La sincronización falla desde {}{}.",
+                since,
+                retry_note(Some(progress)),
+            ),
+            None => coincube_ui::localized_format!(
+                "Syncing has failed since {}. Retrying.",
+                "La sincronización falla desde {}. Reintentando.",
+                since,
+            ),
+        });
+    }
+    if history.full_scan_in_progress {
+        return Some(match history.full_scan_progress() {
+            Some(progress) if history.addresses_expected > 0 => coincube_ui::localized_format!(
+                "Loading Vault history ({:.0}%)",
+                "Cargando el historial de la bóveda ({:.0}%)",
+                100.0 * progress
+            ),
+            _ => coincube_ui::locale::copy("Loading Vault history").to_owned(),
+        });
+    }
+    (0.0..1.0).contains(&sync_progress).then(|| {
+        coincube_ui::localized_format!(
+            "Syncing blockchain ({:.0}%)",
+            "Sincronizando la cadena de bloques ({:.0}%)",
+            100.0 * sync_progress
+        )
+    })
+}
+
 /// Whether the Total Balance placeholder should still be spinning.
 ///
 /// Extracted from `view` so the rule can be tested, because getting it wrong is
@@ -340,6 +389,10 @@ pub struct GlobalHome {
     /// Only populated after the imported wallet's full discovery is verified.
     pub(crate) imported_balance: Option<Amount>,
     pub(crate) imported_installed: bool,
+    /// The imported wallet's own scan report while its first discovery runs.
+    /// The App's cache stays empty until that scan is verified, so the
+    /// Vault card reads its loading status from here instead.
+    pub(crate) imported_history: Option<coincubed::commands::HistorySync>,
     /// Optional Spark backend handle. `None` when the cube has no
     /// Spark signer or the bridge subprocess failed to spawn — the
     /// Home page simply hides the Spark card in that case.
@@ -569,6 +622,7 @@ impl GlobalHome {
         Self {
             imported_balance: None,
             imported_installed: false,
+            imported_history: None,
             wallet: Some(wallet),
             spark_balance: Amount::ZERO,
             spark_btc_balance: Amount::ZERO,
@@ -646,6 +700,7 @@ impl GlobalHome {
         Self {
             imported_balance: None,
             imported_installed: false,
+            imported_history: None,
             wallet: None,
             spark_balance: Amount::ZERO,
             spark_btc_balance: Amount::ZERO,
@@ -788,6 +843,16 @@ impl GlobalHome {
             total_balance_loading,
             spark_balance_loaded: self.spark_balance_loaded,
             vault_loaded: !vault_pending,
+            vault_loading_status: if cache.has_imported_bitcoin {
+                // An imported wallet's sync progress is not seeded until its
+                // scan is verified; its Esplora/Electrum backend has no
+                // blockchain sync of its own.
+                self.imported_history
+                    .as_ref()
+                    .and_then(|history| vault_loading_status(1.0, history))
+            } else {
+                vault_loading_status(cache.sync_progress(), cache.history_sync())
+            },
             recovery_available: !vault_pending
                 && self
                     .wallet
@@ -4809,6 +4874,68 @@ mod tests {
             &failing(5),
             Amount::from_sat(1)
         ));
+    }
+
+    /// A first scan through a slow or failing server says what it is doing
+    /// under the dots, so a minutes-long load doesn't read as a frozen screen.
+    #[test]
+    fn the_vault_card_says_why_it_has_no_balance_yet() {
+        use coincubed::commands::{HistorySync, PollFailure};
+        // Nothing reported yet: the dots stand alone.
+        assert_eq!(vault_loading_status(1.0, &HistorySync::default()), None);
+
+        let mut scanning = HistorySync {
+            full_scan_in_progress: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            vault_loading_status(1.0, &scanning).as_deref(),
+            Some("Loading Vault history")
+        );
+        scanning.addresses_checked = 25;
+        scanning.addresses_expected = 100;
+        assert_eq!(
+            vault_loading_status(1.0, &scanning).as_deref(),
+            Some("Loading Vault history (25%)")
+        );
+
+        // One failed poll is a hiccup; two say the server is failing, ahead of
+        // the scan that is retrying.
+        let failing = |consecutive| HistorySync {
+            full_scan_in_progress: true,
+            addresses_checked: 10,
+            addresses_expected: 100,
+            last_failure: Some(PollFailure {
+                message: "HTTP 503".into(),
+                since: 1_795_240_283,
+                last_at: 1_795_240_349,
+                consecutive,
+            }),
+            ..Default::default()
+        };
+        assert_eq!(
+            vault_loading_status(1.0, &failing(1)).as_deref(),
+            Some("Loading Vault history (10%)")
+        );
+        let status = vault_loading_status(1.0, &failing(2)).unwrap();
+        assert!(
+            status.starts_with("Syncing has failed since "),
+            "{}",
+            status
+        );
+        assert!(status.ends_with(", retrying (10.0%)."), "{}", status);
+        let between_attempts = HistorySync {
+            full_scan_in_progress: false,
+            ..failing(3)
+        };
+        let status = vault_loading_status(1.0, &between_attempts).unwrap();
+        assert!(status.ends_with(". Retrying."), "{}", status);
+
+        // A local node still catching up says so.
+        assert_eq!(
+            vault_loading_status(0.42, &HistorySync::default()).as_deref(),
+            Some("Syncing blockchain (42%)")
+        );
     }
 
     #[test]

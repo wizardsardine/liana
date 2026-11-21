@@ -6450,6 +6450,7 @@ impl App {
                 self.cache.has_imported_bitcoin = false;
                 self.panels.global_home.imported_balance = None;
                 self.panels.global_home.imported_installed = false;
+                self.panels.global_home.imported_history = None;
                 self.panels.imported_bitcoin = None;
                 return true;
             }
@@ -6515,6 +6516,11 @@ impl App {
         if refresh_cube {
             self.refresh_imported_cube_metadata();
         }
+        self.panels.global_home.imported_history = self
+            .panels
+            .imported_bitcoin
+            .as_ref()
+            .and_then(|panel| panel.history_sync().cloned());
         let runtime = self.adopt_imported_runtime();
         Task::batch([task, runtime])
     }

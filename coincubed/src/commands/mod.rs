@@ -3153,7 +3153,7 @@ mod tests {
         Amount, OutPoint, ScriptBuf, Sequence, Transaction, Txid, Witness,
     };
     use spend::{InsufficientFunds, DUST_OUTPUT_SATS};
-    use std::{collections::BTreeMap, str::FromStr};
+    use std::{collections::BTreeMap, convert::TryFrom, str::FromStr};
 
     const DUST: u64 = DUST_OUTPUT_SATS;
 
@@ -3944,9 +3944,21 @@ mod tests {
         bitcoin::OutPoint,
         bitcoin::Address<address::NetworkUnchecked>,
     ) {
+        funded_spend(DummyBitcoind::new(), conflicts)
+    }
+
+    fn funded_spend(
+        bitcoind: DummyBitcoind,
+        conflicts: usize,
+    ) -> (
+        DummyCoincube,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        bitcoin::OutPoint,
+        bitcoin::Address<address::NetworkUnchecked>,
+    ) {
         const COIN_VALUE: u64 = 100_000;
         let (database, conflict_count) = ConflictDatabase::new(conflicts);
-        let daemon = DummyCoincube::new(DummyBitcoind::new(), database);
+        let daemon = DummyCoincube::new(bitcoind, database);
         let control = daemon.control();
         let funding = funding_tx(control, &[(0, COIN_VALUE, 13, false)]);
         let outpoint = bitcoin::OutPoint::new(funding.compute_txid(), 0);
@@ -4020,6 +4032,154 @@ mod tests {
             "locktime {} is not from the published tip",
             height
         );
+    }
+
+    /// Before the poller has published a tip, a spend must not take the backend
+    /// lock a poll is holding. It finishes with no anti-fee-sniping locktime.
+    #[test]
+    fn create_spend_does_not_wait_when_no_tip_is_published_and_the_backend_is_busy() {
+        let (daemon, _, outpoint, destination) = funded_spend(fresh_tip_backend(250_000), 0);
+        let control = daemon.control().clone();
+        let polling = control.bitcoin.lock().unwrap();
+        // A publish that already read the tip can still store it. Wait that out,
+        // then clear, while this guard keeps every later read blocked.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        control.tip_time_cache.clear();
+        assert!(
+            control.tip_time_cache.load().is_none(),
+            "the poller must not publish a tip while this test holds the backend"
+        );
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spender = control.clone();
+        std::thread::spawn(move || {
+            tx.send(spender.create_spend(
+                &HashMap::from([(destination, 10_000)]),
+                &[outpoint],
+                1,
+                None,
+            ))
+            .unwrap()
+        });
+        let result = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("create_spend must not wait for the backend lock before a tip is published")
+            .unwrap();
+        let CreateSpendResult::Success { psbt, .. } = result else {
+            panic!("expected a successful spend, got {:?}", result);
+        };
+        assert_eq!(
+            psbt.unsigned_tx.lock_time,
+            absolute::LockTime::Blocks(absolute::Height::ZERO),
+            "a busy backend before the first published tip sets no anti-fee-sniping locktime"
+        );
+        drop(polling);
+        daemon.shutdown();
+    }
+
+    /// With no published tip and a free backend, the spend still takes that
+    /// backend's tip so the locktime is not silently omitted.
+    #[test]
+    fn create_spend_uses_the_live_tip_before_the_poller_publishes_one() {
+        let (daemon, _, outpoint, destination) = funded_spend(fresh_tip_backend(250_000), 0);
+        let (control, tmp_dir) = stop_poller(daemon);
+        control.tip_time_cache.clear();
+        assert!(control.tip_time_cache.load().is_none());
+
+        let height = spend_locktime_height(&control, destination, outpoint);
+        assert!(
+            (249_900..=250_000).contains(&height),
+            "locktime {} did not come from the backend tip",
+            height
+        );
+        std::fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    /// An unreachable tip is the same degradation as a stale one: no locktime,
+    /// and no panic, even when the backend would have had a usable header time.
+    #[test]
+    fn create_spend_omits_locktime_when_the_backend_tip_cannot_be_read() {
+        let mut bitcoind = fresh_tip_backend(250_000);
+        bitcoind.chain_tip_error = Some("backend down");
+        let (daemon, _, outpoint, destination) = funded_spend(bitcoind, 0);
+        let (control, tmp_dir) = stop_poller(daemon);
+        control.tip_time_cache.clear();
+
+        let result = control
+            .create_spend(
+                &HashMap::from([(destination, 10_000)]),
+                &[outpoint],
+                1,
+                None,
+            )
+            .unwrap();
+        let CreateSpendResult::Success { psbt, .. } = result else {
+            panic!("expected a successful spend, got {:?}", result);
+        };
+        assert_eq!(
+            psbt.unsigned_tx.lock_time,
+            absolute::LockTime::Blocks(absolute::Height::ZERO)
+        );
+        std::fs::remove_dir_all(tmp_dir).unwrap();
+    }
+
+    fn fresh_tip_backend(height: i32) -> DummyBitcoind {
+        let mut bitcoind = DummyBitcoind::new();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("now is after the unix epoch")
+            .as_secs();
+        bitcoind.tip.height = height;
+        bitcoind.tip_timestamp = Some(
+            u32::try_from(now).expect("a current unix time fits the header timestamp"),
+        );
+        bitcoind
+    }
+
+    /// Stop the poller and return the still-usable control plus its datadir.
+    fn stop_poller(daemon: DummyCoincube) -> (DaemonControl, std::path::PathBuf) {
+        let control = daemon.control().clone();
+        let DummyCoincube { handle, tmp_dir } = daemon;
+        match handle {
+            crate::DaemonHandle::Controller {
+                poller_sender,
+                poller_handle,
+                scan_abort,
+                ..
+            } => {
+                scan_abort.store(true, std::sync::atomic::Ordering::Relaxed);
+                poller_sender
+                    .send(crate::bitcoin::poller::PollerMessage::Shutdown)
+                    .expect("the poller is still listening");
+                poller_handle.join().expect("the poller thread joins");
+            }
+            crate::DaemonHandle::Server { .. } => {
+                unreachable!("this unit daemon has no RPC server")
+            }
+        }
+        (control, tmp_dir)
+    }
+
+    fn spend_locktime_height(
+        control: &DaemonControl,
+        destination: bitcoin::Address<address::NetworkUnchecked>,
+        outpoint: bitcoin::OutPoint,
+    ) -> u32 {
+        let result = control
+            .create_spend(
+                &HashMap::from([(destination, 10_000)]),
+                &[outpoint],
+                1,
+                None,
+            )
+            .unwrap();
+        let CreateSpendResult::Success { psbt, .. } = result else {
+            panic!("expected a successful spend, got {:?}", result);
+        };
+        match psbt.unsigned_tx.lock_time {
+            absolute::LockTime::Blocks(height) => height.to_consensus_u32(),
+            other => panic!("expected a height locktime, got {:?}", other),
+        }
     }
 
     /// The poller publishes the backend's tip and its time, so a spend made

@@ -369,6 +369,23 @@ mod tests {
         assert_eq!(cache.load(), None);
     }
 
+    /// A tip read that fails is an outage, not a new chain. The cached tip stays
+    /// so the next spend does not drop its anti-fee-sniping locktime.
+    #[test]
+    fn an_unavailable_tip_keeps_the_cached_one() {
+        let mut bitcoind = DummyBitcoind::new();
+        bitcoind.chain_tip_error = Some("backend down");
+        let cache = cached(100, 1_000);
+        publish_tip(&bitcoind, &cache);
+        assert_eq!(
+            cache.load(),
+            Some(TipWithTime {
+                tip: tip(100),
+                time: 1_000
+            })
+        );
+    }
+
     /// A higher tip without a time keeps the older one: its locktime is lower
     /// than the chain's, which is still valid.
     #[test]

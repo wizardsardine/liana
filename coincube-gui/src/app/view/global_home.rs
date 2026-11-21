@@ -139,6 +139,8 @@ fn wallet_card<'a>(
     vault_alias: Option<&str>,
     // The Vault's stale-balance line while it isn't updating.
     stale: Option<String>,
+    // Why there is no balance yet, under the loading dots.
+    loading_status: Option<String>,
 ) -> Element<'a, Message> {
     let fiat_balance = fiat_converter.as_ref().map(|c| c.convert(*balance));
 
@@ -313,12 +315,18 @@ fn wallet_card<'a>(
                         Duration::from_millis(400),
                         |content| text(content).size(H2_SIZE).bold(),
                     ))
-                    .push(spinner::typing_text_carousel(
-                        "...",
-                        false,
-                        Duration::from_millis(400),
-                        |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-                    ))
+                    .push(match loading_status {
+                        Some(status) => {
+                            Element::from(text(status).size(P1_SIZE).style(theme::text::secondary))
+                        }
+                        None => spinner::typing_text_carousel(
+                            "...",
+                            false,
+                            Duration::from_millis(400),
+                            |content| text(content).size(P1_SIZE).style(theme::text::secondary),
+                        )
+                        .into(),
+                    })
                     .into()
             };
 
@@ -337,8 +345,10 @@ fn wallet_card<'a>(
             )
             .style(theme::button::transparent)
             .on_press(overview_action.clone());
-            // Like Spark's "Last known Spark balance · refresh failed".
-            let stale = stale.map(|line| {
+            // Like Spark's "Last known Spark balance · refresh failed". With no
+            // balance yet there is nothing "last known": the loading status
+            // under the dots says what is happening instead.
+            let stale = stale.filter(|_| loaded).map(|line| {
                 Row::new()
                     .spacing(6)
                     .align_y(Alignment::Center)
@@ -2449,6 +2459,8 @@ pub struct GlobalViewConfig<'a> {
     /// "Last known Vault balance · not updating since {time}" while the
     /// Vault's recent polls fail.
     pub vault_stale: Option<String>,
+    /// Why the Vault card has no balance yet, shown under its loading dots.
+    pub vault_loading_status: Option<String>,
     /// Global fiat-native vs. bitcoin-native display preference. Mirrored
     /// from `cache.display_mode`.
     pub display_mode: crate::app::settings::display::DisplayMode,
@@ -2765,6 +2777,7 @@ fn overview_body<'a>(
             },
             vault_alias,
             config.vault_stale.clone(),
+            config.vault_loading_status.clone(),
         )
     };
 
@@ -3584,6 +3597,7 @@ mod tests {
                 vault_loaded: true,
                 recovery_available: true,
                 vault_stale: None,
+                vault_loading_status: None,
                 display_mode: DisplayMode::FiatNative,
                 has_vault: true,
                 has_imported_bitcoin: false,
@@ -3629,6 +3643,41 @@ mod tests {
     fn directions() -> [TransferDirection; 2] {
         use TransferDirection::*;
         [VaultToSpark, SparkToVault]
+    }
+
+    /// A Vault with no balance yet says why under its dots, and never calls
+    /// a balance it has not loaded "last known".
+    #[test]
+    fn loading_vault_card_shows_its_status_not_a_last_known_balance() {
+        use crate::app::view::shared::landing::capture;
+        let fixture = ViewFixture::new();
+        let mut loading = fixture.config(0, None, None);
+        loading.vault_loaded = false;
+        loading.total_balance_loading = true;
+        loading.vault_stale = Some("Last known Vault balance · not updating".into());
+        loading.vault_loading_status = Some("Loading Vault history (25%)".into());
+        let shown = capture::inspect(
+            "hub-vault-loading",
+            overview(loading),
+            (1440, 900),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(shown.contains("Loading Vault history (25%)"));
+        assert!(!shown.contains("Last known Vault balance"));
+
+        let mut loaded = fixture.config(0, None, None);
+        loaded.vault_stale = Some("Last known Vault balance · not updating".into());
+        loaded.vault_loading_status = Some("Loading Vault history (25%)".into());
+        let shown = capture::inspect(
+            "hub-vault-stale",
+            overview(loaded),
+            (1440, 900),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(shown.contains("Last known Vault balance"));
+        assert!(!shown.contains("Loading Vault history"));
     }
 
     #[test]
@@ -5510,6 +5559,8 @@ mod tests {
         }
     }
 
+    const UNBREAKABLE_CUBE_NAME: &str = "EmmanuelsLongTermSavingsCube";
+
     /// Each route tile's "**Spark** in Cube" stays one phrase (COIN-677):
     /// on one line when it fits, else "in Cube" drops whole under the
     /// asset. It never wraps beside the asset, stranding the asset on its
@@ -5518,12 +5569,11 @@ mod tests {
     #[test]
     fn transfer_route_tiles_keep_asset_and_place_together() {
         let fixture = ViewFixture::new();
-        const UNBREAKABLE: &str = "EmmanuelsLongTermSavingsCube";
         for cube_name in [
             "Everyday",
             "Emmanuel's Cube",
             "Emmanuel's Long-Term Savings Cube",
-            UNBREAKABLE,
+            UNBREAKABLE_CUBE_NAME,
         ] {
             for direction in [
                 TransferDirection::SparkToVault,
@@ -5540,56 +5590,64 @@ mod tests {
                         "dark",
                         theme::Theme::dark(),
                     );
-                    let place_text = format!("in {}", cube_name);
-                    let mut tiles = 0;
-                    for (i, (value, place)) in shown.text.iter().enumerate() {
-                        if *value != place_text {
-                            continue;
-                        }
-                        tiles += 1;
-                        let (asset_text, asset) = &shown.text[i - 1];
-                        assert!(
-                            asset_text == "Spark" || asset_text == "Vault",
-                            "{:?} precedes {:?}",
-                            asset_text,
-                            value
-                        );
-                        let one_line =
-                            (place.y - asset.y).abs() < 0.5 && place.x >= asset.x + asset.width;
-                        let dropped = (place.x - asset.x).abs() < 0.5
-                            && place.y >= asset.y + asset.height - 0.5;
-                        assert!(
-                            one_line || dropped,
-                            "{:?} {:?} at {:?}: {} {:?} beside {} {:?}",
-                            cube_name,
-                            direction,
-                            outer,
-                            asset_text,
-                            asset,
-                            value,
-                            place
-                        );
-                        // A text node's bounds are clamped to its limits, so
-                        // overflow shows as a missing line break, not as width:
-                        // at 1024 the unbreakable name is about twice the
-                        // tile's width. Word wrapping gives two lines ("in",
-                        // then the whole name, painted past the tile); it must
-                        // break inside the name too.
-                        if cube_name == UNBREAKABLE && outer == (1024, 768) {
-                            assert!(
-                                place.height > 2.0 * asset.height + 0.5,
-                                "{:?} at {:?}: {:?} {:?} did not break inside its tile",
-                                direction,
-                                outer,
-                                value,
-                                place
-                            );
-                        }
-                    }
-                    assert_eq!(tiles, 2, "From and To: {:?}", shown.text);
+                    assert_transfer_route_tiles(&shown.text, cube_name, direction, outer);
                 }
             }
         }
+    }
+
+    fn assert_transfer_route_tiles(
+        text: &[(String, iced::Rectangle)],
+        cube_name: &str,
+        direction: TransferDirection,
+        outer: (u32, u32),
+    ) {
+        let place_text = format!("in {}", cube_name);
+        let mut tiles = 0;
+        for (i, (value, place)) in text.iter().enumerate() {
+            if *value != place_text {
+                continue;
+            }
+            tiles += 1;
+            let (asset_text, asset) = &text[i - 1];
+            assert!(
+                asset_text == "Spark" || asset_text == "Vault",
+                "{:?} precedes {:?}",
+                asset_text,
+                value
+            );
+            let one_line = (place.y - asset.y).abs() < 0.5 && place.x >= asset.x + asset.width;
+            let dropped =
+                (place.x - asset.x).abs() < 0.5 && place.y >= asset.y + asset.height - 0.5;
+            assert!(
+                one_line || dropped,
+                "{:?} {:?} at {:?}: {} {:?} beside {} {:?}",
+                cube_name,
+                direction,
+                outer,
+                asset_text,
+                asset,
+                value,
+                place
+            );
+            // A text node's bounds are clamped to its limits, so
+            // overflow shows as a missing line break, not as width:
+            // at 1024 the unbreakable name is about twice the
+            // tile's width. Word wrapping gives two lines ("in",
+            // then the whole name, painted past the tile); it must
+            // break inside the name too.
+            if cube_name == UNBREAKABLE_CUBE_NAME && outer == (1024, 768) {
+                assert!(
+                    place.height > 2.0 * asset.height + 0.5,
+                    "{:?} at {:?}: {:?} {:?} did not break inside its tile",
+                    direction,
+                    outer,
+                    value,
+                    place
+                );
+            }
+        }
+        assert_eq!(tiles, 2, "From and To: {:?}", text);
     }
 
     #[test]
