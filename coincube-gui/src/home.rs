@@ -2675,7 +2675,10 @@ impl Home {
         // The Cube list is filtered by the signed-in account, so a sign-in,
         // sign-out, account switch or profile load must re-read it.
         let task = if self.launcher_account_key() != account_before {
-            Task::batch([task, self.reload()])
+            // Other listed networks' Cubes are filtered when read, so they
+            // are re-read too, or one account's Cubes would linger there.
+            let others = self.refresh_network_catalog(true);
+            Task::batch(vec![task, self.reload()].into_iter().chain(others))
         } else {
             task
         };
@@ -4422,10 +4425,13 @@ impl Home {
         }
         self.network_catalog_unread.retain(|c| *c != chain);
         match cubes {
-            Ok(cubes) => match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
-                Some((_, list)) => *list = cubes,
-                None => self.network_catalog.push((chain, cubes)),
-            },
+            Ok(mut cubes) => {
+                cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+                match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
+                    Some((_, list)) => *list = cubes,
+                    None => self.network_catalog.push((chain, cubes)),
+                }
+            }
             // Keep whatever was last read; the menu says the
             // network is unavailable rather than showing 0 Cubes.
             Err(_) => self.network_catalog_unread.push(chain),
@@ -11211,6 +11217,24 @@ mod tests {
         };
         home.hide_foreign_cubes(&mut state);
         assert_eq!(listed_names(&state), vec!["mine", "unowned"]);
+    }
+
+    #[test]
+    fn another_networks_catalog_hides_other_accounts_cubes() {
+        let mut home = signed_in_home(); // signed in as user 7
+        home.network_catalog_generation = 1;
+        home.network_catalog_requested = vec![ChainId::Testnet4];
+        let mut mine = owned_cube("mine", Some(7));
+        let mut theirs = owned_cube("theirs", Some(9));
+        mine.network = ChainId::Testnet4;
+        theirs.network = ChainId::Testnet4;
+        drop(home.network_catalog_loaded(1, ChainId::Testnet4, Ok(vec![mine, theirs])));
+        let names: Vec<_> = home
+            .network_catalog(ChainId::Testnet4)
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, vec!["mine"]);
     }
 
     #[test]
