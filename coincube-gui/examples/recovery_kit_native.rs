@@ -1565,8 +1565,49 @@ mod native {
         Ok(lock)
     }
 
+    fn validate_creation_refusal(c: &Config, state: &State) -> Result<()> {
+        check(
+            state.config == *c
+                && state.stage == "creation_admission_refused"
+                && state.pending.is_none()
+                && state.identity.is_none()
+                && state.kit.is_none()
+                && state.restorer.is_none()
+                && state.original_manifest.is_none()
+                && state.original_files.is_none()
+                && state.original_factor.is_none()
+                && state.wipe_manifest.is_none()
+                && state.wipe_oracle.is_none()
+                && state.retirement_oracle.is_none()
+                && state.restored_factor.is_none()
+                && state.proof_sha256.is_none()
+                && !state.remote_delete_started
+                && state.canary_uuid.is_some()
+                && state.canary.is_some(),
+            "native_creation_refusal_not_proven",
+        )
+    }
+
+    type CreationCredentials = (Zeroizing<String>, Zeroizing<String>, Zeroizing<String>);
+    fn retained_creation_material(
+        state: &State,
+        mut read_qa: impl FnMut(&str) -> Result<Zeroizing<Vec<u8>>>,
+        read_factor_hash: impl FnOnce(&str) -> Result<String>,
+    ) -> Result<CreationCredentials> {
+        let pin = string(read_qa("original_pin")?)?;
+        let next = string(read_qa("restored_pin")?)?;
+        let password = string(read_qa("recovery_password")?)?;
+        let canary_id = state.canary_uuid.ok_or("native_canary_missing")?;
+        let canary = read_factor_hash(&canary_id.to_string())?;
+        check(
+            Some(canary) == state.canary && Some(hash(&read_qa("canary")?)) == state.canary,
+            "native_canary_changed",
+        )?;
+        Ok((pin, next, password))
+    }
+
     fn load_action_state(c: &Config, root: &Path, action: &str) -> Result<State> {
-        let state = if action == "create_export" {
+        let state = if action == "create_export" && absent(&root.join("state.json"))? {
             State {
                 config: c.clone(),
                 stage: "new".into(),
@@ -1609,6 +1650,10 @@ mod native {
                 "native_provenance_changed",
             )?;
         }
+        if action == "create_export" && state.stage == "creation_admission_refused" {
+            validate_creation_refusal(c, state)?;
+            return process_absent(&state.creator);
+        }
         let expected = match action {
             "create_export" => "new",
             "wipe_original" => "exported",
@@ -1650,18 +1695,52 @@ mod native {
             return Ok(());
         }
         if request.action == "create_export" {
-            check(absent(root)?, "native_run_not_fresh")?;
-            let (client, _) = auth(&c)?;
-            recovery_native::admit_backend_readiness(c.chain, &client).await?;
-            recovery_native::admit_create(c.chain, c.run_id, c.owner_id, &client).await?;
-            fs::DirBuilder::new()
-                .mode(0o700)
-                .create(root)
-                .map_err(|_| "native_run_create")?;
+            if absent(root)? {
+                let (client, _) = auth(&c)?;
+                if recovery_native::admit_backend_readiness(c.chain, &client)
+                    .await
+                    .is_err()
+                    || recovery_native::admit_create(c.chain, c.run_id, c.owner_id, &client)
+                        .await
+                        .is_err()
+                {
+                    return Err("native_creation_admission_refused");
+                }
+                fs::DirBuilder::new()
+                    .mode(0o700)
+                    .create(root)
+                    .map_err(|_| "native_run_create")?;
+            } else {
+                let previous: State = serde_json::from_slice(&private(&root.join("state.json"))?)
+                    .map_err(|_| "native_state_invalid")?;
+                validate_creation_refusal(&c, &previous)?;
+                process_absent(&previous.creator)?;
+                check(
+                    absent(&original)? && absent(&restored)?,
+                    "native_run_not_fresh",
+                )?;
+            }
         }
         let _lock = lock_action_directory(root)?;
         let mut state = load_action_state(&c, root, &request.action)?;
         validate_action_state(&c, &state, &request.action)?;
+        let creation_retry =
+            request.action == "create_export" && state.stage == "creation_admission_refused";
+        if creation_retry {
+            state.creator = this_process()?;
+            save(root, &state)?; // Bind even a repeated refusal to this child.
+            let (client, _) = auth(&c)?;
+            if recovery_native::admit_backend_readiness(c.chain, &client)
+                .await
+                .is_err()
+                || recovery_native::admit_create(c.chain, c.run_id, c.owner_id, &client)
+                    .await
+                    .is_err()
+            {
+                return Err("native_creation_admission_refused");
+            }
+            state.stage = "new".into();
+        }
         state.pending = Some(request.action.clone());
         save(root, &state)?;
         match request.action.as_str() {
@@ -1676,7 +1755,10 @@ mod native {
                 let phrase =
                     bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
                 let words = Zeroizing::new(phrase.words().map(str::to_owned).collect::<Vec<_>>());
-                let pin = Zeroizing::new(format!(
+                // No spending key was created on a proven refusal. These
+                // previously unused words may be fresh; retained factors below
+                // are reused exactly, never overwritten on a retry.
+                let mut pin = Zeroizing::new(format!(
                     "{:04}",
                     u32::from_le_bytes(
                         random(4)
@@ -1700,22 +1782,46 @@ mod native {
                         (pin.parse::<u32>().map_err(|_| "native_pin")? + 1) % 10_000
                     ));
                 }
-                let password = Zeroizing::new(hex::encode(random(32).as_slice()));
-                put(&c, "original_pin", pin.as_bytes())?;
-                put(&c, "recovery_password", password.as_bytes())?;
-                put(&c, "restored_pin", next.as_bytes())?;
-                let canary_id = uuid::Uuid::new_v4();
+                let mut password = Zeroizing::new(hex::encode(random(32).as_slice()));
+                if creation_retry {
+                    (pin, next, password) = retained_creation_material(
+                        &state,
+                        |role| load(&c, role),
+                        |id| {
+                            device_secret::load(id)
+                                .map(|value| hash(value.as_ref()))
+                                .map_err(|_| "native_canary_missing")
+                        },
+                    )?;
+                } else {
+                    put(&c, "original_pin", pin.as_bytes())?;
+                    put(&c, "recovery_password", password.as_bytes())?;
+                    put(&c, "restored_pin", next.as_bytes())?;
+                    let canary_id = uuid::Uuid::new_v4();
+                    check(
+                        device_secret::load_optional(&canary_id.to_string())
+                            .map_err(|_| "native_keychain_blocked")?
+                            .is_none(),
+                        "native_canary_exists",
+                    )?;
+                    let canary = device_secret::get_or_create(root, &canary_id.to_string())
+                        .map_err(|_| "native_canary_create")?;
+                    put(&c, "canary", canary.as_ref())?;
+                    state.canary_uuid = Some(canary_id);
+                    state.canary = Some(hash(canary.as_ref()));
+                }
                 check(
-                    device_secret::load_optional(&canary_id.to_string())
-                        .map_err(|_| "native_keychain_blocked")?
-                        .is_none(),
-                    "native_canary_exists",
+                    pin.len() == 4
+                        && next.len() == 4
+                        && *pin != *next
+                        && pin
+                            .bytes()
+                            .chain(next.bytes())
+                            .all(|byte| byte.is_ascii_digit())
+                        && password.len() == 64
+                        && password.bytes().all(|byte| byte.is_ascii_hexdigit()),
+                    "native_retained_credentials",
                 )?;
-                let canary = device_secret::get_or_create(root, &canary_id.to_string())
-                    .map_err(|_| "native_canary_create")?;
-                put(&c, "canary", canary.as_ref())?;
-                state.canary_uuid = Some(canary_id);
-                state.canary = Some(hash(canary.as_ref()));
                 save(root, &state)?;
                 let (client, jwt) = auth(&c)?;
                 check(
@@ -1727,7 +1833,7 @@ mod native {
                         == c.owner_id,
                     "native_account_changed",
                 )?;
-                let (identity, kit) = recovery_native::create_export(
+                let creation = recovery_native::create_export(
                     c.chain,
                     &CoincubeDirectory::new(original.clone()),
                     c.run_id,
@@ -1737,7 +1843,21 @@ mod native {
                     &jwt,
                     client,
                 )
-                .await?;
+                .await;
+                let (identity, kit) = match creation {
+                    Ok(value) => value,
+                    Err(recovery_native::CreationError::BeforeRegistration(_)) => {
+                        check(
+                            absent(&original)? && absent(&restored)?,
+                            "native_creation_refusal_not_proven",
+                        )?;
+                        state.pending = None;
+                        state.stage = "creation_admission_refused".into();
+                        save(root, &state)?;
+                        return Err("native_creation_admission_refused");
+                    }
+                    Err(recovery_native::CreationError::Uncertain(code)) => return Err(code),
+                };
                 check(
                     identity.owner_id == c.owner_id && kit.cube_id == identity.remote_cube_id,
                     "native_remote_binding",
@@ -2097,6 +2217,77 @@ mod native {
                 "original_manifest":"legacy-aggregate-only","wipe_manifest":null,"wipe_oracle":null,
                 "retirement_oracle":null,"original_factor":"unit-factor-hash","canary_uuid":uuid::Uuid::new_v4(),
                 "canary":"unit-canary-hash","restored_factor":null,"proof_sha256":null,"remote_delete_started":false})).unwrap()
+        }
+        fn creation_refusal_state() -> State {
+            let mut state = legacy215_state();
+            state.stage = "creation_admission_refused".into();
+            state.pending = None;
+            state.identity = None;
+            state.kit = None;
+            state.original_manifest = None;
+            state.original_factor = None;
+            state.canary = Some(hash(b"unit-only-canary"));
+            state
+        }
+        #[test]
+        fn known_creation_refusal_reuses_material_without_any_write_capability() {
+            let state = creation_refusal_state();
+            let mut roles = Vec::new();
+            let (pin, next, password) = retained_creation_material(
+                &state,
+                |role| {
+                    roles.push(role.to_string());
+                    Ok(Zeroizing::new(match role {
+                        "original_pin" => b"unit-original".to_vec(),
+                        "restored_pin" => b"unit-restored".to_vec(),
+                        "recovery_password" => b"unit-password".to_vec(),
+                        "canary" => b"unit-only-canary".to_vec(),
+                        _ => panic!("unexpected role"),
+                    }))
+                },
+                |id| {
+                    assert_eq!(id, state.canary_uuid.unwrap().to_string());
+                    Ok(hash(b"unit-only-canary"))
+                },
+            )
+            .unwrap();
+            assert_eq!(
+                (pin.as_str(), next.as_str(), password.as_str()),
+                ("unit-original", "unit-restored", "unit-password")
+            );
+            assert_eq!(
+                roles,
+                [
+                    "original_pin",
+                    "restored_pin",
+                    "recovery_password",
+                    "canary"
+                ]
+            );
+            assert!(retained_creation_material(
+                &state,
+                |_| Ok(Zeroizing::new(b"changed".to_vec())),
+                |_| Ok(hash(b"changed"))
+            )
+            .is_err());
+        }
+        #[test]
+        fn creation_refusal_rejects_unknown_registration_and_live_creator() {
+            let state = creation_refusal_state();
+            assert!(validate_creation_refusal(&state.config, &state).is_ok());
+            let mut unknown = creation_refusal_state();
+            unknown.stage = "new".into();
+            unknown.pending = Some("create_export".into());
+            assert!(validate_creation_refusal(&unknown.config, &unknown).is_err());
+            let mut registered = creation_refusal_state();
+            registered.identity = Some(fixture().1);
+            assert!(validate_creation_refusal(&registered.config, &registered).is_err());
+            let mut alive = creation_refusal_state();
+            alive.creator = this_process().unwrap();
+            assert_eq!(
+                validate_action_state(&alive.config, &alive, "create_export"),
+                Err("native_prior_process_alive")
+            );
         }
         #[test]
         fn old215_shape_preserves_exact_protected_binding_without_fabricating_rows() {

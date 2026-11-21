@@ -268,6 +268,20 @@ pub async fn admit_create(
 
 /// Drive Home's real creation/backup ceremony, then real in-Cube Vault installation
 /// and the exact full-kit encrypt/upload function shared by Settings and creation.
+#[derive(Debug)]
+pub enum CreationError {
+    /// Produced only before Home/registration is entered, never inferred from
+    /// an error message or an absent identity after an uncertain request.
+    BeforeRegistration(&'static str),
+    Uncertain(&'static str),
+}
+
+impl From<&'static str> for CreationError {
+    fn from(code: &'static str) -> Self {
+        Self::Uncertain(code)
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub async fn create_export(
     chain: ChainId,
@@ -278,9 +292,11 @@ pub async fn create_export(
     password: &Zeroizing<String>,
     jwt: &str,
     client: CoincubeClient,
-) -> Result<(Identity, RecoveryKit)> {
+) -> std::result::Result<(Identity, RecoveryKit), CreationError> {
     allowed_chain(chain)?;
-    admit_backend_readiness(chain, &client).await?;
+    admit_backend_readiness(chain, &client)
+        .await
+        .map_err(CreationError::BeforeRegistration)?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
     if chain.is_blake2b() {
         check(
@@ -324,7 +340,7 @@ pub async fn create_export(
     let master =
         match unlock_admitted(&location, chain, pin).map_err(|_| "native_original_unlock")? {
             unlock::PinOutcome::Unlock(signer) => signer,
-            _ => return Err("native_original_unlock"),
+            _ => return Err("native_original_unlock".into()),
         };
     let secp = Secp256k1::new();
     let fingerprint = master.fingerprint(&secp).to_string();
@@ -1130,7 +1146,31 @@ mod tests {
             admit_backend_readiness(ChainId::BitcoinBlake2bTestnet4, &client).await,
             Err("native_b2_backend_syncing")
         );
-        anchor.assert_hits_async(1).await;
+        let temporary = tempfile::tempdir().unwrap();
+        let fixture = temporary.path().join("not-created");
+        let outcome = create_export(
+            ChainId::BitcoinBlake2bTestnet4,
+            &CoincubeDirectory::new(fixture.clone()),
+            uuid::Uuid::new_v4(),
+            "unit-only",
+            &[],
+            &Zeroizing::new("unit-only".into()),
+            "synthetic-test-token",
+            client,
+        )
+        .await;
+        assert!(matches!(
+            outcome,
+            Err(CreationError::BeforeRegistration(
+                "native_b2_backend_syncing"
+            ))
+        ));
+        assert!(!fixture.exists());
+        assert!(matches!(
+            CreationError::from("native_installer_blocked"),
+            CreationError::Uncertain("native_installer_blocked")
+        ));
+        anchor.assert_hits_async(2).await;
     }
 
     #[test]
