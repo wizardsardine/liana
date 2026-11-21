@@ -24,6 +24,9 @@ struct ImportDraft {
     text: String,
     error: Option<String>,
     busy: bool,
+    /// The number of the import in flight for this draft. A result for any
+    /// other number belongs to a draft that was closed or replaced.
+    attempt: u64,
 }
 
 /// What the paste import says when the daemon refuses the PSBT.
@@ -52,6 +55,8 @@ pub struct PsbtsPanel {
     closed_expanded: bool,
     note: Option<ListNote>,
     import: Option<ImportDraft>,
+    /// Numbers paste imports, so a late result can't land on a newer draft.
+    import_attempts: u64,
 }
 
 impl PsbtsPanel {
@@ -66,6 +71,7 @@ impl PsbtsPanel {
             closed_expanded: false,
             note: None,
             import: None,
+            import_attempts: 0,
         }
     }
 
@@ -178,8 +184,11 @@ impl PsbtsPanel {
                     if draft.busy || draft.text.trim().is_empty() {
                         return Task::none();
                     }
+                    self.import_attempts += 1;
+                    let attempt = self.import_attempts;
                     draft.busy = true;
                     draft.error = None;
+                    draft.attempt = attempt;
                     let text = draft.text.clone();
                     return Task::perform(
                         async move {
@@ -187,7 +196,7 @@ impl PsbtsPanel {
                                 .await
                                 .map(|_| ())
                         },
-                        Message::PsbtPasted,
+                        move |res| Message::PsbtPasted(attempt, res),
                     );
                 }
             }
@@ -215,20 +224,79 @@ impl PsbtsPanel {
     fn finish_paste_import(
         &mut self,
         daemon: Arc<dyn Daemon + Sync + Send>,
+        attempt: u64,
         res: Result<(), crate::export::Error>,
     ) -> Task<Message> {
+        let current = self
+            .import
+            .as_ref()
+            .is_some_and(|draft| draft.busy && draft.attempt == attempt);
         match res {
             Ok(()) => {
-                self.import = None;
-                self.note = Some(ListNote::Imported);
-                self.reload(Some(daemon), Some(self.wallet.clone()))
+                if current {
+                    self.import = None;
+                    self.note = Some(ListNote::Imported);
+                }
+                // Stored either way: refresh the list, keeping any open detail.
+                Self::refresh_list(daemon)
             }
             Err(e) => {
-                if let Some(draft) = self.import.as_mut() {
-                    draft.busy = false;
-                    draft.error = Some(paste_import_error(&e));
+                if current {
+                    if let Some(draft) = self.import.as_mut() {
+                        draft.busy = false;
+                        draft.error = Some(paste_import_error(&e));
+                    }
                 }
                 Task::none()
+            }
+        }
+    }
+
+    /// Re-read the proposals without closing an open detail.
+    fn refresh_list(daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        Task::perform(
+            async move {
+                daemon
+                    .list_spend_transactions(None)
+                    .await
+                    .map_err(|e| e.into())
+            },
+            Message::SpendTxs,
+        )
+    }
+
+    /// A delete's result: the open detail takes it when it is still showing
+    /// that proposal; otherwise (Back, another route) the list does, so the
+    /// row doesn't linger and a refusal isn't lost.
+    fn finish_delete(
+        &mut self,
+        daemon: Arc<dyn Daemon + Sync + Send>,
+        cache: &Cache,
+        txid: coincube_core::miniscript::bitcoin::Txid,
+        res: Result<(), Error>,
+    ) -> Task<Message> {
+        if let Some(tx) = self.selected_tx.as_mut() {
+            if tx.tx.psbt.unsigned_tx.compute_txid() == txid {
+                return tx.update(daemon, cache, Message::PsbtDeleted(txid, res));
+            }
+        }
+        match res {
+            Ok(()) => {
+                let name = self
+                    .spend_txs
+                    .iter()
+                    .find(|tx| tx.psbt.unsigned_tx.compute_txid() == txid)
+                    .map(view::vault::psbts::proposal_title)
+                    .unwrap_or_else(|| format!("PSBT {}…", &txid.to_string()[..8]));
+                self.note = Some(ListNote::Deleted(name));
+                Self::refresh_list(daemon)
+            }
+            Err(e) => {
+                let err_msg = crate::user_error::report(&e);
+                Task::batch([
+                    Task::done(Message::View(view::Message::ShowError(err_msg))),
+                    Self::refresh_list(daemon),
+                ])
             }
         }
     }
@@ -305,7 +373,10 @@ impl State for PsbtsPanel {
                 return self.reload(Some(daemon), Some(self.wallet.clone()));
             }
             Message::SpendTxs(res) => return self.apply_spend_tx_refresh(daemon, res),
-            Message::PsbtPasted(res) => return self.finish_paste_import(daemon, res),
+            Message::PsbtPasted(attempt, res) => {
+                return self.finish_paste_import(daemon, attempt, res)
+            }
+            Message::PsbtDeleted(txid, res) => return self.finish_delete(daemon, cache, txid, res),
             Message::View(view::Message::Psbts(m)) => return self.update_list(daemon, m),
             Message::View(view::Message::ImportPsbt) => {
                 return self.start_psbt_import(daemon, cache, message);
@@ -621,15 +692,67 @@ pub(crate) mod tests {
         drop(panel.update(
             Some(mock_daemon()),
             &cache,
-            Message::PsbtPasted(Err(crate::export::Error::ParsePsbt)),
+            Message::PsbtPasted(1, Err(crate::export::Error::ParsePsbt)),
         ));
         let draft = panel.import.as_ref().expect("panel stays open");
         assert!(!draft.busy);
         assert_eq!(draft.error.as_deref(), Some(view::vault::psbts::NOT_A_PSBT));
 
-        drop(panel.update(Some(mock_daemon()), &cache, Message::PsbtPasted(Ok(()))));
+        // Close and start over while an earlier import is still running: its
+        // late result must not land on the new draft (Cursor review).
+        for m in [
+            view::PsbtsMessage::CloseImport,
+            view::PsbtsMessage::OpenImport,
+            view::PsbtsMessage::ImportEdited("cHNidP8 second".into()),
+            view::PsbtsMessage::SubmitImport,
+        ] {
+            drop(panel.update(Some(mock_daemon()), &cache, open(m)));
+        }
+        drop(panel.update(Some(mock_daemon()), &cache, Message::PsbtPasted(1, Ok(()))));
+        let draft = panel
+            .import
+            .as_ref()
+            .expect("a stale success keeps the new draft");
+        assert!(draft.busy);
+        assert_eq!(panel.note, None);
+        drop(panel.update(
+            Some(mock_daemon()),
+            &cache,
+            Message::PsbtPasted(1, Err(crate::export::Error::InsanePsbt)),
+        ));
+        assert!(
+            panel.import.as_ref().unwrap().error.is_none(),
+            "stale error ignored"
+        );
+
+        drop(panel.update(Some(mock_daemon()), &cache, Message::PsbtPasted(2, Ok(()))));
         assert!(panel.import.is_none());
         assert_eq!(panel.note, Some(ListNote::Imported));
+    }
+
+    /// A delete whose detail was closed while it ran still reaches the list:
+    /// the row goes and the list says so (Cursor review).
+    #[test]
+    fn a_delete_finishing_after_back_still_updates_the_list() {
+        let wallet = Arc::new(Wallet::new(CoincubeDescriptor::from_str(DESC).unwrap()));
+        let mut panel = PsbtsPanel::new(wallet);
+        let cache = Cache::default();
+        let tx = spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        panel.spend_txs = vec![tx.clone()];
+        panel.preselect(tx);
+        panel.clear_selection();
+        drop(panel.update(
+            Some(mock_daemon()),
+            &cache,
+            Message::PsbtDeleted(txid, Ok(())),
+        ));
+        assert_eq!(
+            panel.note,
+            Some(ListNote::Deleted(view::vault::psbts::proposal_title(
+                &panel.spend_txs[0]
+            )))
+        );
     }
 
     /// Delete has no modals: an inline confirmation, then the list with a
@@ -680,7 +803,10 @@ pub(crate) mod tests {
         drop(panel.update(
             Some(mock_daemon()),
             &cache,
-            Message::PsbtDeleted(Err(Error::Unexpected("refused".into()))),
+            Message::PsbtDeleted(
+                spend_tx().psbt.unsigned_tx.compute_txid(),
+                Err(Error::Unexpected("refused".into())),
+            ),
         ));
         assert_eq!(
             panel.selected_tx.as_ref().unwrap().delete,

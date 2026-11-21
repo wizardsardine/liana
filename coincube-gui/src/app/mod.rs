@@ -5879,9 +5879,28 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if self.takes_detached_psbt_delete(&message) {
+            if let Some(psbts) = self.panels.psbts.as_mut() {
+                return psbts.update(self.daemon.clone(), &self.cache, message);
+            }
+        }
         let task = self.update_connect_chrome(message);
         self.refresh_vault_alert();
         task
+    }
+
+    /// A PSBT delete reports back after its detail page may have been left
+    /// for another route (Back to Activity, the menu). Off the PSBTs and Send
+    /// pages the PSBTs panel still takes the result, so its list drops the
+    /// row and a refusal is shown.
+    fn takes_detached_psbt_delete(&self, message: &Message) -> bool {
+        matches!(message, Message::PsbtDeleted(..))
+            && !matches!(
+                self.panels.current,
+                Menu::Vault(menu::VaultSubMenu::PSBTs(_) | menu::VaultSubMenu::Send)
+            )
+            && self.daemon.is_some()
+            && self.panels.psbts.is_some()
     }
 
     /// Recomputes the Vault's alert from its sync result (C8).

@@ -1059,7 +1059,7 @@ impl PsbtState {
         let txid = self.tx.psbt.unsigned_tx.compute_txid();
         Task::perform(
             async move { daemon.delete_spend_tx(&txid).await.map_err(|e| e.into()) },
-            Message::PsbtDeleted,
+            move |res| Message::PsbtDeleted(txid, res),
         )
     }
 
@@ -1493,7 +1493,7 @@ impl PsbtState {
             Message::View(view::Message::Spend(view::SpendTxMessage::ConfirmDelete)) => {
                 return self.delete_proposal(daemon);
             }
-            Message::PsbtDeleted(res) => return self.finish_delete(res),
+            Message::PsbtDeleted(_, res) => return self.finish_delete(res),
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 return self.open_signer_picker(daemon, cache)
             }
