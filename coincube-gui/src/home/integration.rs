@@ -263,6 +263,7 @@ pub async fn create_testnet4_cube(
 
 /// Fresh native Recovery Kit fixture only. Never adopts an existing UUID/profile.
 /// Uses the same Home create/backup/persist ceremony on the two allowed chains.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_recovery_fixture_cube(
     chain: ChainId,
     root: CoincubeDirectory,
@@ -271,6 +272,7 @@ pub async fn create_recovery_fixture_cube(
     saved_words: &[String],
     server_limit: usize,
     client: CoincubeClient,
+    before_create: impl FnOnce() -> Result<(), &'static str>,
 ) -> Result<CubeSettings, &'static str> {
     if !matches!(chain, ChainId::Testnet4 | ChainId::BitcoinBlake2bTestnet4)
         || root.path().exists()
@@ -283,6 +285,7 @@ pub async fn create_recovery_fixture_cube(
     if pin.len() != 4 || !pin.bytes().all(|b| b.is_ascii_digit()) {
         return Err("recovery_desktop_pin_length");
     }
+    before_create()?;
     // Owner-authorized settings apply only to this initially absent QA profile.
     // These are normal product preference setters, never a visibility bypass.
     tokio::fs::create_dir(root.path())
