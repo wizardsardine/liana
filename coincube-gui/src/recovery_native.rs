@@ -626,17 +626,23 @@ fn oracle_runtime_config(
     persisted: &coincubed::config::Config,
     chain: ChainId,
     token: Option<&str>,
+    ordinary: OrdinaryBackend,
 ) -> Result<coincubed::config::Config> {
+    ordinary.validate(chain)?;
     let mut runtime = persisted.clone();
     check(runtime.bitcoin_config.chain == chain, "native_oracle_chain")?;
     if chain == ChainId::Testnet4 {
-        let token = token
-            .filter(|token| !token.is_empty())
-            .ok_or("native_auth_blocked")?;
         runtime.set_native_recovery_pacing(std::time::Duration::from_millis(1200))?;
-        runtime.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
-            installer::connect_esplora_config(ChainId::Testnet4, token),
-        ));
+        if ordinary.is_public() {
+            let token = token
+                .filter(|token| !token.is_empty())
+                .ok_or("native_auth_blocked")?;
+            runtime.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
+                installer::connect_esplora_config(ChainId::Testnet4, token),
+            ));
+        } else {
+            validate_backend_selection(chain, &runtime.bitcoin_backend, ordinary)?;
+        }
     }
     Ok(runtime)
 }
@@ -796,7 +802,7 @@ pub async fn require_unfunded(
     let (_, mut cfg) = saved_vault_config(root, identity)?;
     validate_backend_selection(chain, &cfg.bitcoin_backend, ordinary)?;
     cfg.bitcoin_config.poll_interval_secs = std::time::Duration::from_secs(1); // in-memory integration retry only
-    require_unfunded_config(cfg, identity, client, diagnostic).await
+    require_unfunded_config(cfg, identity, client, diagnostic, ordinary).await
 }
 
 /// New watch-only oracle: only the validated full kit's public descriptor enters
@@ -867,7 +873,7 @@ pub async fn descriptor_only_unfunded(
         descriptor,
         coincubed::datadir::DataDirectory::new(directory.to_owned()),
     );
-    require_unfunded_config(cfg, identity, client, diagnostic).await
+    require_unfunded_config(cfg, identity, client, diagnostic, ordinary).await
 }
 
 async fn require_unfunded_config(
@@ -875,6 +881,7 @@ async fn require_unfunded_config(
     identity: &Identity,
     client: CoincubeClient,
     diagnostic: &std::path::Path,
+    ordinary: OrdinaryBackend,
 ) -> Result<UnfundedProof> {
     use crate::daemon::{embedded::EmbeddedDaemon, Daemon};
     let chain = identity.cube.network;
@@ -889,7 +896,7 @@ async fn require_unfunded_config(
     )?;
     // Runtime-only credentials: never serialize/debug this clone or replace
     // the retained public-only daemon configuration.
-    let cfg = oracle_runtime_config(&cfg, chain, client.token())?;
+    let cfg = oracle_runtime_config(&cfg, chain, client.token(), ordinary)?;
     let started = chrono::Utc::now().timestamp() as u32;
     let daemon = if chain.is_blake2b() {
         EmbeddedDaemon::start_authenticated(cfg, client)
@@ -1713,7 +1720,7 @@ mod tests {
         );
     }
     #[test]
-    fn saved_wallet_config_uses_actual_restored_id_and_refuses_corruption() {
+    fn ordinary_backend_runtime_preserves_selection_and_saved_wallet_identity() {
         let temp = tempfile::tempdir().unwrap();
         let root = CoincubeDirectory::new(temp.path().to_owned());
         let (wallet, mut identity) = fixture(ChainId::Testnet4);
@@ -1761,8 +1768,13 @@ mod tests {
         let path = directory.join("daemon.toml");
         let serialized = toml::to_string_pretty(&cfg.for_persistence()).unwrap();
         assert!(!serialized.contains("never_persist_this_token"));
-        let runtime =
-            oracle_runtime_config(&cfg, ChainId::Testnet4, Some("runtime-only-token")).unwrap();
+        let runtime = oracle_runtime_config(
+            &cfg,
+            ChainId::Testnet4,
+            Some("runtime-only-token"),
+            OrdinaryBackend::Public,
+        )
+        .unwrap();
         assert_eq!(
             toml::to_string_pretty(&cfg.for_persistence()).unwrap(),
             serialized
@@ -1783,7 +1795,43 @@ mod tests {
             runtime.bitcoin_backend,
             Some(coincubed::config::BitcoinBackend::Esplora(expected))
         );
-        assert!(oracle_runtime_config(&cfg, ChainId::Testnet4, None).is_err());
+        assert!(
+            oracle_runtime_config(&cfg, ChainId::Testnet4, None, OrdinaryBackend::Public).is_err()
+        );
+        let mut loopback = cfg.clone();
+        loopback.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
+            installer::integration::recovery_esplora_config_selected(
+                ChainId::Testnet4,
+                "ignored-token",
+                OrdinaryBackend::QaLoopback31004,
+            )
+            .unwrap(),
+        ));
+        let loopback_before = toml::to_string(&loopback.for_persistence()).unwrap();
+        for token in [None, Some("must-not-enter-loopback")] {
+            let actual = oracle_runtime_config(
+                &loopback,
+                ChainId::Testnet4,
+                token,
+                OrdinaryBackend::QaLoopback31004,
+            )
+            .unwrap();
+            assert!(actual.bitcoin_backend == loopback.bitcoin_backend);
+            assert_eq!(
+                toml::to_string(&actual.for_persistence()).unwrap(),
+                loopback_before
+            );
+            assert!(!toml::to_string(&actual)
+                .unwrap()
+                .contains("must-not-enter-loopback"));
+        }
+        assert!(oracle_runtime_config(
+            &cfg,
+            ChainId::Testnet4,
+            None,
+            OrdinaryBackend::QaLoopback31004,
+        )
+        .is_err());
         let mut fork = cfg.clone();
         fork.bitcoin_config.chain = ChainId::BitcoinBlake2bTestnet4;
         fork.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
@@ -1797,6 +1845,7 @@ mod tests {
             &fork,
             ChainId::BitcoinBlake2bTestnet4,
             Some("different-token"),
+            OrdinaryBackend::Public,
         )
         .unwrap();
         assert_eq!(toml::to_string(&fork_runtime).unwrap(), fork_before);
