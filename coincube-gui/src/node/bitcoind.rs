@@ -5993,9 +5993,9 @@ mod tests {
     // endpoint) settles the conf before it tells the running node to stop: with
     // the conf lock held the start is refused as `ConfigUnavailable`, the node
     // has not been asked to stop, is still reachable, and the file is
-    // byte-identical; with the lock free the file is rewritten, the node is
-    // stopped exactly once, and the start then fails on the absent binary as
-    // the other start tests do.
+    // byte-identical; with the lock free the file is rewritten and the start
+    // fails on the absent binary as the other start tests do, without
+    // stopping the running node it had nothing to replace with.
     #[test]
     fn a_flavour_switch_settles_the_conf_before_stopping_the_running_node() {
         use crate::node::managed_conf::{with_quick_lock_bound, ManagedConfLock};
@@ -6051,18 +6051,23 @@ mod tests {
             "the running node went away on a refused start"
         );
 
-        // Lock free: the conf is settled, then the node is stopped once, then
-        // the spawn fails on the absent binary.
-        match Bitcoind::maybe_start(Network::Bitcoin, config, &root) {
+        // Lock free: the conf is settled, and with no binary to launch in its
+        // place the running node is left up rather than stopped with nothing
+        // started (the replacement is resolved before anything is stopped).
+        match Bitcoind::maybe_start(Network::Bitcoin, config.clone(), &root) {
             Err(StartInternalBitcoindError::ExecutableNotFound) => {}
             other => panic!("expected ExecutableNotFound, got {:?}", other.map(|_| ())),
         }
         let methods = node.methods();
         assert_eq!(
             methods.iter().filter(|m| *m == "stop").count(),
-            1,
+            0,
             "{:?}",
             methods
+        );
+        assert!(
+            coincubed::BitcoinD::new(&config, "liveness".to_string()).is_ok(),
+            "the running node was stopped with no replacement to start"
         );
         let rewritten = std::fs::read_to_string(&conf_path).unwrap();
         assert!(!rewritten.contains("consensusrules"), "{}", rewritten);
