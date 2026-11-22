@@ -14294,6 +14294,41 @@ pub(crate) mod shell_tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
+    /// A build's stages reach Split coins whichever panel is showing, like
+    /// its result, and the result clears the stage.
+    #[test]
+    fn a_split_build_stage_reaches_split_coins_from_another_panel() {
+        use crate::services::split_coins::BuildStage;
+        let root = std::env::temp_dir().join(format!("split-stage-{}", uuid::Uuid::new_v4()));
+        let (mut app, _) = bitcoin_app(&root);
+        let stage = |app: &App| {
+            app.panels
+                .split_hub
+                .as_ref()
+                .unwrap()
+                .build_stage_for_test()
+        };
+        app.panels
+            .split_hub
+            .as_mut()
+            .unwrap()
+            .start_building_split_for_test();
+        drop(app.set_current_panel(Menu::Vault(menu::VaultSubMenu::Overview)));
+        for next in [
+            BuildStage::CheckingKey,
+            BuildStage::CheckingCoins,
+            BuildStage::Building,
+        ] {
+            drop(app.update(Message::SplitBuildStage(next)));
+            assert_eq!(stage(&app), Some(next));
+        }
+        drop(app.update(Message::SplitPrepared(Err("Couldn't build".into()))));
+        assert_eq!(stage(&app), None, "the result clears the stage");
+        drop(app.update(Message::SplitBuildStage(BuildStage::Building)));
+        assert_eq!(stage(&app), None, "a late stage doesn't come back");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_split_result_reaches_split_coins_from_another_panel() {
         let root = std::env::temp_dir().join(format!("split-result-{}", uuid::Uuid::new_v4()));
