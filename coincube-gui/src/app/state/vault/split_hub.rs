@@ -42,6 +42,13 @@ use crate::{
 /// split coin that just arrived: about a day.
 const RECENT_BLOCKS: i32 = 144;
 
+/// Unavailable fee rates retried on their own before the review offers
+/// **Try again**: one failed Connect read shouldn't leave the user stuck.
+const FEE_AUTO_RETRIES: u8 = 3;
+
+/// The wait before each automatic fee-rate retry.
+const FEE_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// The facts the step is derived from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FlowFacts {
@@ -181,6 +188,9 @@ pub struct SplitHubPanel {
     continuing: bool,
     feerate: Option<u64>,
     fee_failed: bool,
+    /// Automatic retries spent since the last fetch the user or a visit
+    /// started.
+    fee_retries: u8,
     address: Option<String>,
     qr: Option<qr_code::Data>,
     address_error: Option<String>,
@@ -198,6 +208,7 @@ impl SplitHubPanel {
             continuing: false,
             feerate: None,
             fee_failed: false,
+            fee_retries: 0,
             address: None,
             qr: None,
             address_error: None,
@@ -436,11 +447,15 @@ impl State for SplitHubPanel {
                     self.continuing = true;
                     self.excluded.clear();
                 }
+                SplitMessage::RetryFee => {
+                    if !self.working && self.fee_failed {
+                        self.fee_retries = 0;
+                        self.fee_failed = false;
+                        return Task::done(fetch_fee());
+                    }
+                }
             },
-            Message::SplitFeeRate(rate) => {
-                self.feerate = rate;
-                self.fee_failed = rate.is_none();
-            }
+            Message::SplitFeeRate(rate) => return self.set_feerate(rate),
             Message::SplitAddress(result) => self.set_address(result),
             Message::SplitPrepared(result) => self.set_result(result),
             Message::Labels(Ok(labels)) => self.labels = labels,
@@ -458,6 +473,7 @@ impl State for SplitHubPanel {
         // kept for the panel's life so the QR code doesn't change under the
         // user. A Vault that splits with the signature never needs one, but
         // the user can switch to a split coin on the review.
+        self.fee_retries = 0;
         let fetch = Task::done(Message::SplitFetch {
             fee: true,
             address: self.address.is_none(),
@@ -482,6 +498,37 @@ impl State for SplitHubPanel {
             Message::Labels,
         );
         Task::batch([fetch, labels])
+    }
+}
+
+impl SplitHubPanel {
+    /// A fee rate, or `None` for unavailable: retried on its own a few times,
+    /// still "Getting the fee rate…" meanwhile, before the review says it's
+    /// unavailable and offers **Try again**. Never a guess.
+    fn set_feerate(&mut self, rate: Option<u64>) -> Task<Message> {
+        self.feerate = rate;
+        if rate.is_some() {
+            self.fee_failed = false;
+            self.fee_retries = 0;
+            return Task::none();
+        }
+        if self.fee_retries < FEE_AUTO_RETRIES {
+            self.fee_retries += 1;
+            self.fee_failed = false;
+            return Task::perform(async { tokio::time::sleep(FEE_RETRY_DELAY).await }, |()| {
+                fetch_fee()
+            });
+        }
+        self.fee_failed = true;
+        Task::none()
+    }
+}
+
+/// Fetch the fee rate only; the split address is kept for the panel's life.
+fn fetch_fee() -> Message {
+    Message::SplitFetch {
+        fee: true,
+        address: false,
     }
 }
 
@@ -700,6 +747,44 @@ mod tests {
             vec![a, b]
         );
         assert_eq!(flow.copy, CopyCard::Create);
+    }
+
+    /// An unavailable fee rate is retried on its own, still "Getting the fee
+    /// rate…", before the review says so and offers Try again, which starts
+    /// over. A rate clears the failure.
+    #[test]
+    fn an_unavailable_fee_rate_retries_then_offers_try_again() {
+        let (mut panel, cache, _) = fixture();
+        for _ in 0..FEE_AUTO_RETRIES {
+            let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+            assert!(task.units() > 0, "retried on its own");
+            assert!(!panel.flow(&cache).fee_failed, "still getting the fee rate");
+        }
+        let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+        assert_eq!(task.units(), 0, "no more automatic retries");
+        let flow = panel.flow(&cache);
+        assert!(flow.fee_failed);
+        assert_eq!(
+            flow.blocked(),
+            Some("Fee rate unavailable. Try again later.")
+        );
+
+        let retry = || Message::View(ViewMessage::Split(SplitMessage::RetryFee));
+        let task = panel.update(None, &cache, retry());
+        assert!(task.units() > 0, "Try again fetches the fee rate");
+        assert!(!panel.flow(&cache).fee_failed);
+        // A fresh run of automatic retries.
+        let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+        assert!(task.units() > 0);
+
+        let _ = panel.update(None, &cache, Message::SplitFeeRate(Some(4)));
+        let flow = panel.flow(&cache);
+        assert_eq!((flow.feerate, flow.fee_failed), (Some(4), false));
+        assert_eq!(
+            panel.update(None, &cache, retry()).units(),
+            0,
+            "nothing to retry with a fee rate"
+        );
     }
 
     #[test]

@@ -948,6 +948,12 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
             });
     if let Some(reason) = blocked.filter(|_| !flow.working) {
         actions = actions.push(p2_regular(localized_copy(reason)).style(theme::text::secondary));
+        if flow.fee_failed && flow.feerate.is_none() {
+            actions = actions.push(
+                button::secondary_compact(None, localized_copy("Try again"))
+                    .on_press(Message::Split(SplitMessage::RetryFee)),
+            );
+        }
     }
     column = column.push(actions);
     panel(column)
@@ -1377,6 +1383,28 @@ mod tests {
             let es = render_in(Language::Spanish, || localized_copy(reason).to_string());
             assert_ne!(es, reason, "no Spanish for {reason:?}");
         }
+    }
+
+    /// An unavailable fee rate offers Try again beside the reason; a fee rate
+    /// still on its way doesn't.
+    #[test]
+    fn an_unavailable_fee_rate_offers_try_again() {
+        let failed = SplitFlow {
+            feerate: None,
+            fee_failed: true,
+            ..flow()
+        };
+        let mounted = mount("vault-split-fee-failed", &failed, (1280, 900));
+        assert!(mounted.contains("Fee rate unavailable. Try again later."));
+        assert!(mounted.contains("Try again"));
+        let pending = SplitFlow {
+            feerate: None,
+            fee_failed: false,
+            ..flow()
+        };
+        let mounted = mount("vault-split-fee-pending", &pending, (1280, 900));
+        assert!(mounted.contains("Getting the fee rate…"));
+        assert!(!mounted.text.iter().any(|(text, _)| text == "Try again"));
     }
 
     /// Review lists the coins, the split coin as a locked row that comes
