@@ -205,6 +205,8 @@ pub enum Message {
     ImportSpend(ImportSpendMessage),
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
+    /// The Vault › PSBT proposals list.
+    Psbts(PsbtsMessage),
     Next,
     Previous,
     SelectHardwareWallet(usize),
@@ -342,9 +344,32 @@ pub enum ImportSpendMessage {
     Confirm,
 }
 
+/// Vault › PSBT proposals list: the Closed group, the paste import and the
+/// status line shown after a delete or an import.
+#[derive(Debug, Clone)]
+pub enum PsbtsMessage {
+    /// Fold or unfold the Closed group (confirmed and can't-be-spent rows).
+    ToggleClosed,
+    /// Dismiss the "Deleted …" / "PSBT imported" line.
+    DismissNote,
+    /// Open the import panel under the page heading.
+    OpenImport,
+    CloseImport,
+    ImportEdited(String),
+    /// Import the pasted PSBT.
+    SubmitImport,
+    /// Pick a `.psbt` file instead of pasting.
+    ImportFromFile,
+    /// The open proposal was deleted; carries the name the list shows.
+    Deleted(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum SpendTxMessage {
+    /// Ask to delete the open proposal (shows the inline confirmation).
     Delete,
+    /// Delete it, from the inline confirmation.
+    ConfirmDelete,
     Sign,
     /// Leave the view-only MCP review and show the ordinary save and sign controls.
     #[cfg(feature = "mcp-transactions")]

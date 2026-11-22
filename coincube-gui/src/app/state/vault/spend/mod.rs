@@ -265,6 +265,36 @@ impl CreateSpendPanel {
         }
     }
 
+    /// Whether the step on screen is the review of proposal `txid`. A delete
+    /// result for any other proposal belongs to the PSBTs list.
+    pub fn shows_psbt(&self, txid: &coincube_core::miniscript::bitcoin::Txid) -> bool {
+        self.steps
+            .get(self.current)
+            .is_some_and(|step| step.shows_psbt(txid))
+    }
+
+    /// A Send panel showing the review of `psbt`.
+    #[cfg(test)]
+    pub(crate) fn reviewing_for_test(
+        wallet: Arc<Wallet>,
+        network: Network,
+        psbt: coincube_core::miniscript::bitcoin::Psbt,
+    ) -> Self {
+        use step::Step as _;
+        let draft = step::TransactionDraft::generated_for_test(network, psbt);
+        let mut review = step::SaveSpend::new(wallet);
+        review.load(&[], 0, &draft);
+        Self {
+            draft,
+            current: 0,
+            steps: vec![Box::new(review)],
+            coins: Vec::new(),
+            tip_height: 0,
+            initial_feerate_requested: true,
+            mcp_prepared: false,
+        }
+    }
+
     fn advance_step(&mut self) -> bool {
         if let Some(step) = self.steps.get(self.current) {
             if !step.can_advance() {
