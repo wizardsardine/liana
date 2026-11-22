@@ -40,7 +40,16 @@
 //! Rewards covered before expiry keep the long depth afterwards; rewards mined
 //! after it need 100. [`coinbase_maturity`] takes that parent MTP when known.
 //! When it is not known it assumes the reward is covered, which can only make
-//! a coin wait longer than the node requires, never shorter.
+//! a coin wait longer than the node requires, never shorter. The poller does not
+//! look the MTP up yet, so after expiry new mainnet rewards would be held for
+//! the long depth rather than 100 blocks; that needs fixing before 2027-09-01.
+//!
+//! # Regtest
+//!
+//! A Knots regtest node can be started with `-coinbasematuritylong*` options
+//! that lengthen its maturity. Regtest here is the Bitcoin-family identity,
+//! so it gets 100; a test exercising BTCB2 maturity on regtest would need its
+//! own identity or configuration.
 
 use coincube_core::chain::ChainId;
 

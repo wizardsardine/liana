@@ -942,9 +942,8 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
-    /// Return unspent, non-change coins to the immature state (unconfirmed, `is_immature = 1`).
-    /// Coins that are spent or spending, and change coins (which the schema forbids from being
-    /// immature), are left unchanged.
+    /// Return unspent coins to the immature state (unconfirmed, `is_immature = 1`). Coins that
+    /// are spent or spending are left unchanged.
     pub fn mark_immature_coinbase<'a>(
         &mut self,
         outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
@@ -953,7 +952,7 @@ impl SqliteConn {
             for outpoint in outpoints {
                 db_tx.execute(
                     "UPDATE coins SET blockheight = NULL, blocktime = NULL, is_immature = 1 \
-                     WHERE txid = ?1 AND vout = ?2 AND is_change = 0 AND spend_txid IS NULL",
+                     WHERE txid = ?1 AND vout = ?2 AND spend_txid IS NULL",
                     rusqlite::params![outpoint.txid[..].to_vec(), outpoint.vout],
                 )?;
             }

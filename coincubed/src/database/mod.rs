@@ -366,10 +366,10 @@ pub trait DatabaseConnection {
     /// The txids of stored transactions that are coinbase transactions.
     fn coinbase_txids(&mut self) -> HashSet<bitcoin::Txid>;
 
-    /// Return unspent, non-change coins to the immature state: unconfirmed with `is_immature`
-    /// set, the representation an immature coinbase deposit has until it is confirmed. Used
-    /// when a coinbase deposit was confirmed (or rolled back) before the chain's coinbase
-    /// maturity was reached. Coins that are spent, spending or change are left unchanged.
+    /// Return unspent coins to the immature state: unconfirmed with `is_immature` set, the
+    /// representation an immature coinbase deposit has until it is confirmed. Used when a
+    /// coinbase deposit was confirmed (or rolled back) before the chain's coinbase maturity was
+    /// reached. Coins that are spent or spending are left unchanged.
     fn mark_immature_coinbase(&mut self, outpoints: &[bitcoin::OutPoint]);
 
     /// Store transactions in database, ignoring any that already exist.

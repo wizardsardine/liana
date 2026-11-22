@@ -753,7 +753,7 @@ impl DatabaseConnection for DummyDatabase {
         let mut db = self.db.write().unwrap();
         for op in outpoints {
             if let Some(coin) = db.coins.get_mut(op) {
-                if !coin.is_change && coin.spend_txid.is_none() {
+                if coin.spend_txid.is_none() {
                     coin.block_info = None;
                     coin.is_immature = true;
                 }

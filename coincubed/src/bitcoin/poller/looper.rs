@@ -649,8 +649,8 @@ fn rollback_depth(
 ///   blocks everywhere) and unconfirmed ones that lost their flag (a rollback leaves it unset).
 ///
 /// A deposit that already has a spender is left alone: a node accepted that spend, so the
-/// deposit was mature for it. Change coins cannot carry the immature flag (the schema forbids
-/// it); they are only kept unconfirmed.
+/// deposit was mature for it. A coinbase paying to a change address is treated like any other
+/// (the coins table has had no constraint against an immature change coin since schema v4).
 ///
 /// Whether a coin comes from a coinbase transaction is read from the transaction itself
 /// (`coinbase_txids`), not from the backend's immature flag, which follows the 100-block rule.
@@ -693,21 +693,14 @@ fn hold_immature_coinbase(
         {
             continue;
         }
-        if coin.is_change {
-            log::warn!(
-                "Immature coinbase deposit at '{}' pays to a change address.",
-                op
-            );
-        } else {
-            coin.is_immature = true;
-        }
+        coin.is_immature = true;
     }
 
     curr_coins
         .values()
         .filter(|c| {
             let op = &c.outpoint;
-            if !is_coinbase(op) || c.is_change || expired.contains(op) || has_spender(op) {
+            if !is_coinbase(op) || expired.contains(op) || has_spender(op) {
                 return false;
             }
             match c.block_info {
@@ -2161,16 +2154,36 @@ mod coinbase_maturity_tests {
         let tx = coinbase_tx(3);
         let op = outpoint(&tx);
         let coinbase: HashSet<_> = std::iter::once(op.txid).collect();
-        let mut up = updated(vec![coin(op, None, false)], vec![(op, 973_500, 1)]);
+        let mut up = updated(vec![coin(op, None, false)], vec![(op, 160_000, 1)]);
         hold_immature_coinbase(
             ChainId::BitcoinBlake2bTestnet4,
-            973_500 + 200,
+            160_000 + 200,
             &coinbase,
             &HashMap::new(),
             &mut up,
         );
         assert!(up.confirmed.is_empty());
         assert!(up.received[0].is_immature);
+    }
+
+    /// A coinbase paying to a change address is held and flagged like any other, both when
+    /// received unflagged and when an earlier build confirmed it too early.
+    #[test]
+    fn change_address_coinbase_is_held_too() {
+        let (received_tx, stored_tx) = (coinbase_tx(10), coinbase_tx(11));
+        let (received_op, stored_op) = (outpoint(&received_tx), outpoint(&stored_tx));
+        let coinbase: HashSet<_> = vec![received_op.txid, stored_op.txid].into_iter().collect();
+        let mut received = coin(received_op, None, false);
+        received.is_change = true;
+        let mut stored = coin(stored_op, Some(980_000), false);
+        stored.is_change = true;
+        let curr: HashMap<_, _> = vec![(stored_op, stored)].into_iter().collect();
+        let mut up = updated(vec![received], vec![(received_op, 980_000, 1)]);
+        let marked =
+            hold_immature_coinbase(ChainId::BitcoinBlake2b, 980_200, &coinbase, &curr, &mut up);
+        assert!(up.confirmed.is_empty());
+        assert!(up.received[0].is_immature);
+        assert_eq!(marked, vec![stored_op]);
     }
 
     /// A deposit with a spender was accepted by a node, so it is left as it is.
