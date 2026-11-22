@@ -4,7 +4,7 @@
 # desktop installer), and print the path of the extracted `bitcoind`.
 #
 #   tests/tools/fetch_knots.sh <version> [cache-dir]
-#   e.g. tests/tools/fetch_knots.sh 29.4.1.knots20260508
+#   e.g. tests/tools/fetch_knots.sh 29.5.1.knots20260508
 #
 # Nothing is extracted unless verification succeeds. The cache dir defaults to
 # tests/tools/knots/ (gitignored) and keeps the archive, the manifest and its

@@ -56,7 +56,7 @@ def test_node_builds_are_the_pinned_ones(two_chain):
         _subversion(two_chain.legacy) == "/Satoshi:29.3.0/Knots:20260507/"
     ), KNOTS_LEGACY_VERSION
     assert (
-        _subversion(two_chain.blake2b) == "/Satoshi:29.4.1/Knots:20260508/"
+        _subversion(two_chain.blake2b) == "/Satoshi:29.5.1/Knots:20260508/"
     ), KNOTS_BLAKE2B_VERSION
     assert two_chain.legacy.rpc.getblockchaininfo()["chain"] == "regtest"
     assert two_chain.blake2b.rpc.getblockchaininfo()["chain"] == "regtest"

@@ -129,9 +129,9 @@ mod tests {
     use super::*;
 
     // The real, multi-maintainer-signed manifest of the fork release, as
-    // published at bitcoinknots.org/files/29.x/29.4.1.knots20260508/.
-    const SUMS: &[u8] = include_bytes!("../tests/fixtures/29.4.1.knots20260508.SHA256SUMS");
-    const ASC: &str = include_str!("../tests/fixtures/29.4.1.knots20260508.SHA256SUMS.asc");
+    // published at bitcoinknots.org/files/29.x/29.5.1.knots20260508/.
+    const SUMS: &[u8] = include_bytes!("../tests/fixtures/29.5.1.knots20260508.SHA256SUMS");
+    const ASC: &str = include_str!("../tests/fixtures/29.5.1.knots20260508.SHA256SUMS.asc");
 
     #[test]
     fn real_manifest_verifies_against_vendored_key() {
@@ -246,8 +246,8 @@ mod tests {
     fn real_archive_names_are_listed_in_the_real_manifest() {
         let sums = String::from_utf8_lossy(SUMS);
         for name in [
-            "bitcoin-29.4.1.knots20260508-x86_64-linux-gnu.tar.gz",
-            "bitcoin-29.4.1.knots20260508-arm64-apple-darwin.tar.gz",
+            "bitcoin-29.5.1.knots20260508-x86_64-linux-gnu.tar.gz",
+            "bitcoin-29.5.1.knots20260508-arm64-apple-darwin.tar.gz",
         ] {
             assert!(
                 sums.lines().any(|l| l.ends_with(&format!("  {name}"))),

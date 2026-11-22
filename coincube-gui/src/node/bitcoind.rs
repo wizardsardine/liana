@@ -35,7 +35,7 @@ pub enum NodeFlavor {
     Knots,
     /// Bitcoin Knots for the **Bitcoin Blake2b** chain (the BLAKE2b
     /// proof-of-work hardfork), fetched from bitcoinknots.org — the
-    /// `29.4.1.knots20260508` line, which *is* the enforcing build the Bitcoin
+    /// `29.x.knots20260508` line, which *is* the enforcing build the Bitcoin
     /// flavours deliberately avoid. It serves only a
     /// [`NodeChainFamily::BitcoinBlake2b`] node, from its own directory, and is
     /// never resolved on a Bitcoin chain (see [`NodeFlavor::check_chain`]).
@@ -145,16 +145,29 @@ pub const KNOTS_VERSION: &str = KNOTS_VERSIONS[0];
 
 /// Managed Bitcoin Knots versions for the **Bitcoin Blake2b** chain, descending.
 ///
-/// `29.4.1.knots20260508` is the release that carries the BLAKE2b hardfork
-/// (mainnet `Blake2bHeight` 961,640) — the very build family the Bitcoin pin
-/// above stays *below*. Same publisher, same URL scheme and same signed
+/// `29.5.1.knots20260508` is the current release of the line that carries the
+/// BLAKE2b hardfork (mainnet `Blake2bHeight` 961,640, first shipped in
+/// `29.4.1.knots20260508`) — the very build family the Bitcoin pin above stays
+/// *below*.
+///
+/// Only the current release is listed, so an installed `29.4.1` binary no
+/// longer satisfies the flavour and is never started again. Unlike the
+/// Bitcoin flavours there is no in-app re-download yet: a Blake2b Cube whose
+/// node was provisioned with `29.4.1` fails to start it with
+/// `ExecutableNotFound` until `29.5.1` is installed under
+/// `bitcoind-blake2b/`. Refusing the old build is required, not cosmetic: `29.5.1` changes consensus on both scheduled networks — a
+/// rolling ~180-day coinbase maturity from mainnet height 979,919 (with the
+/// historical long maturity at 973,440–979,919), and on testnet4 a longer
+/// coinbase maturity window plus an RDTS expiry moved from 2026-10-13 to
+/// 2027-04-01 (`src/kernel/chainparams.cpp` at the tag) — so an older binary
+/// would follow a different chain. Same publisher, same URL scheme and same signed
 /// `SHA256SUMS` manifest (verified against [`KNOTS_SIGNING_KEY_ASC`]); the
 /// filenames and the manifest's signing identity for this release are pinned
 /// by the installer test
 /// `blake2b_release_manifest_verifies_under_the_pinned_knots_key` against a
 /// vendored copy of the upstream manifest. Deliberately disjoint from
 /// [`KNOTS_VERSIONS`]: a version string resolves to exactly one flavour.
-pub const KNOTS_BLAKE2B_VERSIONS: [&str; 1] = ["29.4.1.knots20260508"];
+pub const KNOTS_BLAKE2B_VERSIONS: [&str; 1] = ["29.5.1.knots20260508"];
 
 /// Current managed Knots version for a Bitcoin Blake2b node.
 pub const KNOTS_BLAKE2B_VERSION: &str = KNOTS_BLAKE2B_VERSIONS[0];
@@ -295,7 +308,7 @@ impl NodeFlavor {
 
     /// Infer the flavour from a managed-binary directory `version` string.
     /// Bitcoin Blake2b versions are matched exactly against
-    /// [`KNOTS_BLAKE2B_VERSIONS`] first, so `29.4.1.knots20260508` can never be
+    /// [`KNOTS_BLAKE2B_VERSIONS`] first, so `29.5.1.knots20260508` can never be
     /// mistaken for the Bitcoin Knots flavour by the substring rule below.
     /// Knots version strings embed `knots`; Core's never do.
     pub fn from_version(version: &str) -> Self {
@@ -340,7 +353,8 @@ impl NodeFlavor {
     /// #605). COINCUBE owns the Tor the node talks to (`node::tor`), so the
     /// launch is switched off: `-torexecute=0` clears the command
     /// (`TorControlThread`, `src/torcontrol.cpp:828-833` at
-    /// `v29.3.knots20260507`; the same code in `v29.4.1.knots20260508`), and
+    /// `v29.3.knots20260507`; the same handling at `src/torcontrol.cpp:863-868`
+    /// in `v29.5.1.knots20260508`), and
     /// the option is accepted even by a build without the Tor subprocess
     /// (registered as a hidden argument, `src/init.cpp:620-624`).
     ///
@@ -4574,33 +4588,33 @@ mod tests {
     // GET at the time of writing.
     #[test]
     fn blake2b_provider_release_matrix() {
-        assert_eq!(KNOTS_BLAKE2B_VERSION, "29.4.1.knots20260508");
-        let base = "https://bitcoinknots.org/files/29.x/29.4.1.knots20260508";
+        assert_eq!(KNOTS_BLAKE2B_VERSION, "29.5.1.knots20260508");
+        let base = "https://bitcoinknots.org/files/29.x/29.5.1.knots20260508";
         let expected = [
             (
                 NodeOs::MacOs,
                 NodeArch::Aarch64,
-                "bitcoin-29.4.1.knots20260508-arm64-apple-darwin.tar.gz",
+                "bitcoin-29.5.1.knots20260508-arm64-apple-darwin.tar.gz",
             ),
             (
                 NodeOs::MacOs,
                 NodeArch::X86_64,
-                "bitcoin-29.4.1.knots20260508-x86_64-apple-darwin.tar.gz",
+                "bitcoin-29.5.1.knots20260508-x86_64-apple-darwin.tar.gz",
             ),
             (
                 NodeOs::Linux,
                 NodeArch::X86_64,
-                "bitcoin-29.4.1.knots20260508-x86_64-linux-gnu.tar.gz",
+                "bitcoin-29.5.1.knots20260508-x86_64-linux-gnu.tar.gz",
             ),
             (
                 NodeOs::Linux,
                 NodeArch::Aarch64,
-                "bitcoin-29.4.1.knots20260508-aarch64-linux-gnu.tar.gz",
+                "bitcoin-29.5.1.knots20260508-aarch64-linux-gnu.tar.gz",
             ),
             (
                 NodeOs::Windows,
                 NodeArch::X86_64,
-                "bitcoin-29.4.1.knots20260508-win64-pgpverifiable.zip",
+                "bitcoin-29.5.1.knots20260508-win64-pgpverifiable.zip",
             ),
         ];
         for (os, arch, filename) in expected.iter() {
@@ -4766,7 +4780,7 @@ mod tests {
             ),
             root.path()
                 .join("bitcoind-blake2b")
-                .join("bitcoin-29.4.1.knots20260508")
+                .join("bitcoin-29.5.1.knots20260508")
                 .join("bin")
                 .join(if cfg!(target_os = "windows") {
                     "bitcoind.exe"
