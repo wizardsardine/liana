@@ -1543,19 +1543,16 @@ impl PsbtState {
             // able to reach `broadcast_spend_tx`. Same gate as the Broadcast
             // arm above; on refusal the dialog closes and the reason is shown.
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm))
-                if matches!(self.modal, Some(PsbtModal::Broadcast(_))) =>
+                if matches!(self.modal, Some(PsbtModal::Broadcast(_)))
+                    && !self.broadcast_ready(cache) =>
             {
-                if !self.broadcast_ready(cache) {
-                    return self.close_broadcast_dialog_if_not_ready(cache);
-                }
-                if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                }
+                return self.close_broadcast_dialog_if_not_ready(cache);
             }
             _ => {
-                if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                }
+                let tx = &mut self.tx;
+                return self.modal.as_mut().map_or_else(Task::none, |modal| {
+                    modal.as_mut().update(daemon.clone(), message, tx)
+                });
             }
         }
         Task::none()
