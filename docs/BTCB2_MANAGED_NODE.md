@@ -221,7 +221,9 @@ at the pinned `v29.5.1.knots20260508` (`src/rpc/blockchain.cpp`,
 the desktop's existing `reduced_data` probe assumes. `29.5.1` adds a
 `deployments.long_coinbase_maturity` entry, which the probe ignores, and omits
 `difficulty` from `getblockchaininfo`/`getblockheader` for header-v2 blocks
-(reporting `difficulty_blake2b` instead); `coincubed` reads neither.
+(reporting `difficulty_blake2b` instead); `coincubed` reads neither, and the
+launcher's local-node activity reader converts `difficulty_blake2b` to a
+difficulty multiple.
 
 ### `getdeploymentinfo`
 

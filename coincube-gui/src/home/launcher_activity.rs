@@ -634,7 +634,15 @@ pub(super) fn from_node(info: &Value, mempool: &Value, fee: &Value) -> Result<Sn
         return Err("The local node is still syncing".into());
     }
     let tip = info["blocks"].as_u64().ok_or("No block height")? as u32;
-    let difficulty = info["difficulty"].as_f64().ok_or("No difficulty")?;
+    // Knots `29.5.1.knots20260508` reports a header-v2 (post-BLAKE2b-fork) tip's
+    // work as `difficulty_blake2b`, the expected number of hashes per block,
+    // and omits `difficulty` (`PushDifficulty`, `src/rpc/blockchain.cpp`). A
+    // difficulty multiple is expected hashes / 2^32, so dividing keeps
+    // [`hashrate`]'s maths valid for both.
+    let difficulty = match info["difficulty"].as_f64() {
+        Some(difficulty) => difficulty,
+        None => info["difficulty_blake2b"].as_f64().ok_or("No difficulty")? / 4_294_967_296.0,
+    };
     // `bytes` is the sum of virtual sizes. `feerate` is BTC/kvB; Bitcoin Core
     // answers a one-block target with its two-block estimate, the closest it
     // gives to "the next block".
@@ -1167,6 +1175,20 @@ mod tests {
         // Regtest's estimatesmartfee answers with errors and no feerate.
         let no_fee = from_node(&synced, &json!({"bytes": 0}), &json!({"errors": ["x"]})).unwrap();
         assert_eq!(no_fee.next_block_fee, None);
+    }
+
+    #[test]
+    fn a_blake2b_tip_reports_its_work_as_expected_hashes() {
+        // A header-v2 tip carries `difficulty_blake2b` (expected hashes per
+        // block) and no `difficulty`; 600 TH per block is 1 TH/s.
+        let info = json!({"blocks": 977_000, "difficulty_blake2b": 6.0e14,
+            "initialblockdownload": false});
+        let snapshot = from_node(&info, &json!({"bytes": 0}), &json!({})).unwrap();
+        assert!((snapshot.difficulty * 4_294_967_296.0 - 6.0e14).abs() < 1.0);
+        assert_eq!(hashrate(snapshot.difficulty), "1.00 TH/s");
+        // Neither field: still an error, not a zero hashrate.
+        let none = json!({"blocks": 977_000, "initialblockdownload": false});
+        assert!(from_node(&none, &json!({}), &json!({})).is_err());
     }
 
     #[test]

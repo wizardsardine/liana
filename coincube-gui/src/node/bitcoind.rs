@@ -151,9 +151,11 @@ pub const KNOTS_VERSION: &str = KNOTS_VERSIONS[0];
 /// *below*.
 ///
 /// Only the current release is listed, so an installed `29.4.1` binary no
-/// longer satisfies the flavour and the new build is downloaded in its place
-/// (the same replace-on-update rule as [`KNOTS_VERSIONS`]). That is required,
-/// not cosmetic: `29.5.1` changes consensus on both scheduled networks — a
+/// longer satisfies the flavour and is never started again. Unlike the
+/// Bitcoin flavours there is no in-app re-download yet: a Blake2b Cube whose
+/// node was provisioned with `29.4.1` fails to start it with
+/// `ExecutableNotFound` until `29.5.1` is installed under
+/// `bitcoind-blake2b/`. Refusing the old build is required, not cosmetic: `29.5.1` changes consensus on both scheduled networks — a
 /// rolling ~180-day coinbase maturity from mainnet height 979,919 (with the
 /// historical long maturity at 973,440–979,919), and on testnet4 a longer
 /// coinbase maturity window plus an RDTS expiry moved from 2026-10-13 to
