@@ -7857,17 +7857,17 @@ impl App {
         Task::batch(tasks)
     }
 
-    fn route_split_fetch(&mut self, fee: bool, address: bool) -> Task<Message> {
+    fn route_split_fetch(&mut self, fee: Option<u64>, address: bool) -> Task<Message> {
         let Some(wallet) = self.wallet.as_ref() else {
             return Task::none();
         };
         let mut tasks = Vec::new();
-        if fee {
+        if let Some(generation) = fee {
             let client = self.authenticated_coincube_client();
             let chain = wallet.chain;
             tasks.push(Task::perform(
                 crate::services::split_coins::fee_rate(client, chain),
-                Message::SplitFeeRate,
+                move |rate| Message::SplitFeeRate { generation, rate },
             ));
         }
         if let (true, Some(daemon)) = (address, self.daemon.clone()) {

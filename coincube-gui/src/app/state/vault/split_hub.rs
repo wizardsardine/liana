@@ -191,6 +191,10 @@ pub struct SplitHubPanel {
     /// Automatic retries spent since the last fetch the user or a visit
     /// started.
     fee_retries: u8,
+    /// Bumped by each visit and each Try again. A fee answer, or a pending
+    /// automatic retry, from an older fetch is ignored, so it can't clear a
+    /// newer rate or stack another lookup.
+    fee_generation: u64,
     address: Option<String>,
     qr: Option<qr_code::Data>,
     address_error: Option<String>,
@@ -209,6 +213,7 @@ impl SplitHubPanel {
             feerate: None,
             fee_failed: false,
             fee_retries: 0,
+            fee_generation: 0,
             address: None,
             qr: None,
             address_error: None,
@@ -449,13 +454,13 @@ impl State for SplitHubPanel {
                 }
                 SplitMessage::RetryFee => {
                     if !self.working && self.fee_failed {
-                        self.fee_retries = 0;
-                        self.fee_failed = false;
-                        return Task::done(fetch_fee());
+                        return Task::done(fetch_fee(self.start_fee_fetch()));
                     }
                 }
             },
-            Message::SplitFeeRate(rate) => return self.set_feerate(rate),
+            Message::SplitFeeRate { generation, rate } => {
+                return self.set_feerate(generation, rate)
+            }
             Message::SplitAddress(result) => self.set_address(result),
             Message::SplitPrepared(result) => self.set_result(result),
             Message::Labels(Ok(labels)) => self.labels = labels,
@@ -473,9 +478,8 @@ impl State for SplitHubPanel {
         // kept for the panel's life so the QR code doesn't change under the
         // user. A Vault that splits with the signature never needs one, but
         // the user can switch to a split coin on the review.
-        self.fee_retries = 0;
         let fetch = Task::done(Message::SplitFetch {
-            fee: true,
+            fee: Some(self.start_fee_fetch()),
             address: self.address.is_none(),
         });
         let Some(daemon) = daemon else {
@@ -502,10 +506,24 @@ impl State for SplitHubPanel {
 }
 
 impl SplitHubPanel {
+    /// A new fee fetch, superseding any still running: its generation, with
+    /// a fresh run of automatic retries. "Getting the fee rate…" until it
+    /// answers, so Try again can't stack another lookup meanwhile.
+    fn start_fee_fetch(&mut self) -> u64 {
+        self.fee_generation += 1;
+        self.fee_retries = 0;
+        self.fee_failed = false;
+        self.fee_generation
+    }
+
     /// A fee rate, or `None` for unavailable: retried on its own a few times,
     /// still "Getting the fee rate…" meanwhile, before the review says it's
-    /// unavailable and offers **Try again**. Never a guess.
-    fn set_feerate(&mut self, rate: Option<u64>) -> Task<Message> {
+    /// unavailable and offers **Try again**. Never a guess. An answer from a
+    /// superseded fetch changes nothing.
+    fn set_feerate(&mut self, generation: u64, rate: Option<u64>) -> Task<Message> {
+        if generation != self.fee_generation {
+            return Task::none();
+        }
         self.feerate = rate;
         if rate.is_some() {
             self.fee_failed = false;
@@ -515,19 +533,21 @@ impl SplitHubPanel {
         if self.fee_retries < FEE_AUTO_RETRIES {
             self.fee_retries += 1;
             self.fee_failed = false;
-            return Task::perform(async { tokio::time::sleep(FEE_RETRY_DELAY).await }, |()| {
-                fetch_fee()
-            });
+            return Task::perform(
+                async { tokio::time::sleep(FEE_RETRY_DELAY).await },
+                move |()| fetch_fee(generation),
+            );
         }
         self.fee_failed = true;
         Task::none()
     }
 }
 
-/// Fetch the fee rate only; the split address is kept for the panel's life.
-fn fetch_fee() -> Message {
+/// Fetch the fee rate only, for `generation`; the split address is kept
+/// for the panel's life.
+fn fetch_fee(generation: u64) -> Message {
     Message::SplitFetch {
-        fee: true,
+        fee: Some(generation),
         address: false,
     }
 }
@@ -749,18 +769,33 @@ mod tests {
         assert_eq!(flow.copy, CopyCard::Create);
     }
 
+    fn fee(generation: u64, rate: Option<u64>) -> Message {
+        Message::SplitFeeRate { generation, rate }
+    }
+
+    fn retry_fee() -> Message {
+        Message::View(ViewMessage::Split(SplitMessage::RetryFee))
+    }
+
+    /// A visit's fee fetch, by its generation.
+    fn visit(panel: &mut SplitHubPanel) -> u64 {
+        let _ = panel.reload(None, None);
+        panel.fee_generation
+    }
+
     /// An unavailable fee rate is retried on its own, still "Getting the fee
     /// rate…", before the review says so and offers Try again, which starts
     /// over. A rate clears the failure.
     #[test]
     fn an_unavailable_fee_rate_retries_then_offers_try_again() {
         let (mut panel, cache, _) = fixture();
+        let first = visit(&mut panel);
         for _ in 0..FEE_AUTO_RETRIES {
-            let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+            let task = panel.update(None, &cache, fee(first, None));
             assert!(task.units() > 0, "retried on its own");
             assert!(!panel.flow(&cache).fee_failed, "still getting the fee rate");
         }
-        let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+        let task = panel.update(None, &cache, fee(first, None));
         assert_eq!(task.units(), 0, "no more automatic retries");
         let flow = panel.flow(&cache);
         assert!(flow.fee_failed);
@@ -769,22 +804,58 @@ mod tests {
             Some("Fee rate unavailable. Try again later.")
         );
 
-        let retry = || Message::View(ViewMessage::Split(SplitMessage::RetryFee));
-        let task = panel.update(None, &cache, retry());
+        let task = panel.update(None, &cache, retry_fee());
         assert!(task.units() > 0, "Try again fetches the fee rate");
         assert!(!panel.flow(&cache).fee_failed);
+        let again = panel.fee_generation;
+        assert_ne!(again, first, "Try again is a new fetch");
         // A fresh run of automatic retries.
-        let task = panel.update(None, &cache, Message::SplitFeeRate(None));
+        let task = panel.update(None, &cache, fee(again, None));
         assert!(task.units() > 0);
 
-        let _ = panel.update(None, &cache, Message::SplitFeeRate(Some(4)));
+        let _ = panel.update(None, &cache, fee(again, Some(4)));
         let flow = panel.flow(&cache);
         assert_eq!((flow.feerate, flow.fee_failed), (Some(4), false));
         assert_eq!(
-            panel.update(None, &cache, retry()).units(),
+            panel.update(None, &cache, retry_fee()).units(),
             0,
             "nothing to retry with a fee rate"
         );
+    }
+
+    /// A retry still pending from an earlier visit can't clear the rate a
+    /// later visit got, nor schedule another lookup.
+    #[test]
+    fn a_stale_fee_answer_changes_nothing() {
+        let (mut panel, cache, _) = fixture();
+        let first = visit(&mut panel);
+        assert!(panel.update(None, &cache, fee(first, None)).units() > 0);
+        let second = visit(&mut panel);
+        let _ = panel.update(None, &cache, fee(second, Some(5)));
+
+        let task = panel.update(None, &cache, fee(first, None));
+        assert_eq!(task.units(), 0, "no retry for a superseded fetch");
+        let flow = panel.flow(&cache);
+        assert_eq!((flow.feerate, flow.fee_failed), (Some(5), false));
+        assert_eq!(flow.blocked(), None, "Sign and send stays on");
+    }
+
+    /// A visit after a failure is getting the fee rate again, so Try again
+    /// is gone until that fetch answers and can't stack a second lookup.
+    #[test]
+    fn a_visit_after_a_failure_hides_try_again_while_it_fetches() {
+        let (mut panel, cache, _) = fixture();
+        let first = visit(&mut panel);
+        for _ in 0..=FEE_AUTO_RETRIES {
+            let _ = panel.update(None, &cache, fee(first, None));
+        }
+        assert!(panel.flow(&cache).fee_failed);
+
+        let _ = visit(&mut panel);
+        let flow = panel.flow(&cache);
+        assert!(!flow.fee_failed);
+        assert_eq!(flow.blocked(), Some("Getting the fee rate…"));
+        assert_eq!(panel.update(None, &cache, retry_fee()).units(), 0);
     }
 
     #[test]
@@ -798,7 +869,7 @@ mod tests {
         let sign = || Message::View(ViewMessage::Split(SplitMessage::Sign));
         let _ = panel.update(None, &cache, sign());
         assert!(!panel.working, "no fee rate yet");
-        let _ = panel.update(None, &cache, Message::SplitFeeRate(Some(4)));
+        let _ = panel.update(None, &cache, fee(0, Some(4)));
         let task = panel.update(None, &cache, sign());
         assert!(panel.working);
         assert!(task.units() > 0);
