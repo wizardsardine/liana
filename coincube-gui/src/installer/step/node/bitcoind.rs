@@ -2018,6 +2018,56 @@ pub(crate) fn provision_managed_node_in_background(
     })
 }
 
+/// Unpack into a private staging directory under `directory`, check that the
+/// release's executable is complete there, and only then move its version
+/// directory to where `executable` is looked up. An interrupted or failed
+/// unpack therefore never leaves a partial binary at the path whose presence
+/// means "installed", so the next attempt downloads again. Whatever the
+/// staging directory holds is removed on every path.
+fn install_into_staging_then_publish(
+    directory: &Path,
+    executable: &Path,
+    unpack: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let relative = executable.strip_prefix(directory).map_err(|_| {
+        format!(
+            "'{}' is outside '{}'",
+            executable.display(),
+            directory.display()
+        )
+    })?;
+    let version_dir_name = relative
+        .components()
+        .next()
+        .ok_or_else(|| format!("No version directory in '{}'", relative.display()))?;
+    let staging = directory.join(format!(".staging-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        std::fs::create_dir_all(&staging)
+            .map_err(|e| format!("Could not create '{}': {e}", staging.display()))?;
+        unpack(&staging)?;
+        let staged_executable = staging.join(relative);
+        if !std::fs::metadata(&staged_executable).is_ok_and(|m| m.is_file() && m.len() > 0) {
+            return Err(format!(
+                "The Bitcoin Blake2b archive did not contain '{}'",
+                relative.display()
+            ));
+        }
+        let published = directory.join(version_dir_name);
+        // A version directory without its executable is a leftover from an
+        // older, non-staged attempt; it is moved aside, never merged into.
+        if published.exists() {
+            let aside = directory.join(format!(".stale-{}", uuid::Uuid::new_v4()));
+            std::fs::rename(&published, &aside)
+                .map_err(|e| format!("Could not move '{}' aside: {e}", published.display()))?;
+            let _ = std::fs::remove_dir_all(&aside);
+        }
+        std::fs::rename(staging.join(version_dir_name), &published)
+            .map_err(|e| format!("Could not install '{}': {e}", published.display()))
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
 /// The pinned release's archive bytes and signed `SHA256SUMS` manifest.
 pub(crate) type PinnedRelease = (Vec<u8>, Option<(String, String)>);
 
@@ -2094,14 +2144,10 @@ where
         let verification = DownloadVerification::for_flavor(flavor, manifest)
             .ok_or_else(|| "Missing release manifest for node verification".to_string())?;
         let directory = bitcoind::internal_bitcoind_directory_for(&root, family);
-        install_bitcoind(&directory, &bytes, &verification)
-            .map_err(|e| format!("The Bitcoin Blake2b node download was refused: {e}"))?;
-        if !executable.exists() {
-            return Err(format!(
-                "The Bitcoin Blake2b archive did not contain '{}'",
-                executable.display()
-            ));
-        }
+        install_into_staging_then_publish(&directory, &executable, |staging| {
+            install_bitcoind(staging, &bytes, &verification)
+                .map_err(|e| format!("The Bitcoin Blake2b node download was refused: {e}"))
+        })?;
         drop(lifecycle);
         Ok(true)
     })
@@ -3572,7 +3618,11 @@ mod pinned_fork_binary {
         .await
         .unwrap_err();
         assert_eq!(*fetched.lock().unwrap(), Some(NodeFlavor::KnotsBlake2b));
-        assert!(error.contains("refused"), "{}", error);
+        assert!(
+            error.contains("is not in the release SHA256SUMS manifest"),
+            "{}",
+            error
+        );
         assert!(!pinned_exe(&root).exists());
         // The old release is left where it was; it is just never started.
         assert!(old.exists());
@@ -3593,7 +3643,7 @@ mod pinned_fork_binary {
         )
         .await
         .unwrap_err();
-        assert!(error.contains("refused"), "{}", error);
+        assert!(error.contains("signature did not verify"), "{}", error);
         assert!(!pinned_exe(&root).exists());
 
         // No manifest at all is never trusted.
@@ -3633,5 +3683,70 @@ mod pinned_fork_binary {
         .unwrap_err();
         assert!(!error.contains("must not be called"), "{}", error);
         assert!(!root.path().exists(), "provider check must precede all I/O");
+    }
+
+    // A failed or incomplete unpack never leaves a binary at the path whose
+    // presence means "installed", so the next open downloads again; a
+    // complete one is moved into place whole, replacing a leftover directory.
+    #[test]
+    fn the_binary_is_published_only_after_a_complete_unpack() {
+        let root = temp_root();
+        let family = NodeFlavor::KnotsBlake2b.chain_family();
+        let directory = bitcoind::internal_bitcoind_directory_for(&root, family);
+        let exe = pinned_exe(&root);
+        let relative = exe.strip_prefix(&directory).unwrap().to_path_buf();
+        let staging_left = |dir: &Path| {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().starts_with('.'))
+                })
+                .unwrap_or(false)
+        };
+
+        // The unpack fails part-way, after writing a partial binary.
+        let error = install_into_staging_then_publish(&directory, &exe, |staging| {
+            let partial = staging.join(&relative);
+            std::fs::create_dir_all(partial.parent().unwrap()).unwrap();
+            std::fs::write(&partial, b"trunc").unwrap();
+            Err("disk full".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(error, "disk full");
+        assert!(!exe.exists());
+        assert!(!staging_left(&directory));
+
+        // The unpack "succeeds" without the executable (or with an empty one).
+        for content in [None, Some(&b""[..])] {
+            let error = install_into_staging_then_publish(&directory, &exe, |staging| {
+                if let Some(content) = content {
+                    let empty = staging.join(&relative);
+                    std::fs::create_dir_all(empty.parent().unwrap()).unwrap();
+                    std::fs::write(&empty, content).unwrap();
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(error.contains("did not contain"), "{}", error);
+            assert!(!exe.exists());
+            assert!(!staging_left(&directory));
+        }
+
+        // A leftover version directory without its binary is replaced whole.
+        let leftover = directory.join(relative.components().next().unwrap());
+        std::fs::create_dir_all(leftover.join("share")).unwrap();
+        std::fs::write(leftover.join("share").join("stale"), b"x").unwrap();
+        install_into_staging_then_publish(&directory, &exe, |staging| {
+            let complete = staging.join(&relative);
+            std::fs::create_dir_all(complete.parent().unwrap()).unwrap();
+            std::fs::write(&complete, b"#!/bin/sh\n").unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"#!/bin/sh\n");
+        assert!(!leftover.join("share").exists());
+        assert!(!staging_left(&directory));
+        let _ = std::fs::remove_dir_all(root.path());
     }
 }

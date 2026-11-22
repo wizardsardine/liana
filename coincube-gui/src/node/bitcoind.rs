@@ -532,37 +532,124 @@ fn normalized_client_version(version: &str) -> Option<[u32; 3]> {
     (count >= 2).then_some(parts)
 }
 
-/// Whether a running node's `getnetworkinfo.subversion` is the build
-/// [`KNOTS_BLAKE2B_VERSION`] pins: the same client version (`29.5.1`) and the
-/// same Knots build date (`20260508`), e.g. `/Satoshi:29.5.1/Knots:20260508/`.
+/// What a running Bitcoin Blake2b node's `getnetworkinfo.subversion` says
+/// about its build, relative to [`KNOTS_BLAKE2B_VERSION`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Blake2bBuild {
+    /// The pinned build: same client version and Knots build date.
+    Pinned,
+    /// A positively identified other build (another version or date, or a
+    /// client without a Knots date).
+    Other,
+    /// Nothing identifiable: no answer, an empty string, or not the
+    /// `/Satoshi:<version>…/` shape.
+    Unreadable,
+}
+
+/// Classify a running node's subversion against the pinned Blake2b build,
+/// e.g. `/Satoshi:29.5.1/Knots:20260508/`.
 ///
 /// A Bitcoin Blake2b node's flavour cannot be read from its subversion (the
 /// Bitcoin Knots line reports the same `Knots:` shape), but its *build* can,
 /// and a pin bump is a consensus change: an older build still running on the
-/// managed RPC port follows a different chain and must not be reused. Anything
-/// unreadable is not the pinned build.
-pub fn is_pinned_blake2b_build(subversion: &str) -> bool {
+/// managed RPC port follows a different chain and must not be reused.
+///
+/// The build date is read from the explicit `Knots:<date>` field. Knots puts
+/// user-agent comments inside the client segment's parentheses, before that
+/// field, so a parenthesised `knots<date>` is used only when there is no
+/// explicit field.
+pub fn classify_blake2b_build(subversion: Option<&str>) -> Blake2bBuild {
+    let Some(subversion) = subversion else {
+        return Blake2bBuild::Unreadable;
+    };
     let Some((pin_version, pin_build)) = KNOTS_BLAKE2B_VERSION.split_once(".knots") else {
-        return false;
+        return Blake2bBuild::Unreadable;
     };
-    let Some(running_version) = subversion
-        .trim_matches('/')
-        .split('/')
-        .next()
-        .and_then(|client| client.split_once(':'))
-        .filter(|(client, _)| client.eq_ignore_ascii_case("Satoshi"))
-        .map(|(_, version)| version.split('(').next().unwrap_or(version).trim())
+    let mut segments = subversion.trim_matches('/').split('/');
+    let Some((client, version_and_comments)) =
+        segments.next().and_then(|client| client.split_once(':'))
     else {
-        return false;
+        return Blake2bBuild::Unreadable;
     };
-    match (
-        normalized_client_version(pin_version),
-        normalized_client_version(running_version),
-    ) {
-        (Some(pin), Some(running)) if pin == running => {}
-        _ => return false,
+    if !client.eq_ignore_ascii_case("Satoshi") {
+        return Blake2bBuild::Unreadable;
     }
-    knots_build_date(subversion).is_some_and(|build| pin_build.parse() == Ok(build))
+    let (version, comments) = match version_and_comments.split_once('(') {
+        Some((version, comments)) => (version.trim(), Some(comments)),
+        None => (version_and_comments.trim(), None),
+    };
+    let Some(running_version) = normalized_client_version(version) else {
+        return Blake2bBuild::Unreadable;
+    };
+    let explicit_build = segments.find_map(|segment| {
+        let (field, date) = segment.split_once(':')?;
+        field
+            .eq_ignore_ascii_case("Knots")
+            .then(|| date.trim().parse::<u32>().ok())?
+    });
+    let build = explicit_build.or_else(|| comments.and_then(knots_build_date));
+    if normalized_client_version(pin_version) == Some(running_version)
+        && build.is_some()
+        && pin_build.parse::<u32>().ok() == build
+    {
+        Blake2bBuild::Pinned
+    } else {
+        Blake2bBuild::Other
+    }
+}
+
+/// Whether a running node's subversion is the pinned Blake2b build
+/// ([`classify_blake2b_build`]).
+pub fn is_pinned_blake2b_build(subversion: &str) -> bool {
+    classify_blake2b_build(Some(subversion)) == Blake2bBuild::Pinned
+}
+
+/// How long identifying a running Blake2b node's build may take in total,
+/// while the family lifecycle lock is held.
+const BUILD_PROBE_BUDGET: time::Duration = time::Duration::from_secs(5);
+
+/// `getnetworkinfo.subversion` over a client with a short timeout, so a node
+/// that answers `echo` but stalls this call cannot hold the lifecycle lock
+/// for the regular client's long RPC timeout. `None` on any failure.
+fn probe_subversion(config: &BitcoindConfig, timeout: time::Duration) -> Option<String> {
+    use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
+    let builder = match &config.rpc_auth {
+        coincubed::config::BitcoindRpcAuth::CookieFile(path) => {
+            SimpleHttpTransport::builder().cookie_auth(std::fs::read_to_string(path).ok()?)
+        }
+        coincubed::config::BitcoindRpcAuth::UserPass(user, pass) => {
+            SimpleHttpTransport::builder().auth(user, Some(pass))
+        }
+    };
+    let client = Client::with_transport(
+        builder
+            .url(&format!("http://{}", config.addr))
+            .ok()?
+            .timeout(timeout)
+            .build(),
+    );
+    let response = client
+        .send_request(client.build_request("getnetworkinfo", None))
+        .ok()?;
+    let info: serde_json::Value = response.result().ok()?;
+    info.get("subversion")?.as_str().map(String::from)
+}
+
+/// Identify a running Blake2b node's build within [`BUILD_PROBE_BUDGET`],
+/// retrying while it stays unreadable.
+fn identify_blake2b_build(config: &BitcoindConfig) -> (Blake2bBuild, Option<String>) {
+    let deadline = time::Instant::now() + BUILD_PROBE_BUDGET;
+    loop {
+        let remaining = deadline.saturating_duration_since(time::Instant::now());
+        let subversion = probe_subversion(config, remaining.min(time::Duration::from_secs(2)));
+        let build = classify_blake2b_build(subversion.as_deref());
+        if build != Blake2bBuild::Unreadable
+            || time::Instant::now() + time::Duration::from_millis(500) >= deadline
+        {
+            return (build, subversion);
+        }
+        thread::sleep(time::Duration::from_millis(500));
+    }
 }
 
 /// What a running managed node actually *is*, as opposed to what it was
@@ -2608,44 +2695,44 @@ impl Bitcoind {
         let running = coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
             .ok()
             .map(|running| {
-                // A Blake2b node is replaced only on a build positively read
-                // as another one, so a transient `getnetworkinfo` failure is
-                // retried rather than taken as a stale build.
-                let mut subversion = running.subversion();
                 if chain.is_blake2b() {
-                    for _ in 0..3 {
-                        if subversion.is_some() {
-                            break;
-                        }
-                        thread::sleep(time::Duration::from_millis(500));
-                        subversion = running.subversion();
-                    }
+                    // Replaced only on a build positively read as another
+                    // one; identifying it is bounded, since the lifecycle
+                    // lock is held.
+                    let (build, subversion) = identify_blake2b_build(&config);
+                    return (running, configured_flavor, build, subversion);
                 }
-                let running_flavor = if chain.is_blake2b() {
-                    configured_flavor
+                let subversion = running.subversion();
+                let running_flavor = subversion
+                    .as_deref()
+                    .map(NodeFlavor::from_subversion)
+                    .unwrap_or(configured_flavor);
+                let build = if running_flavor == configured_flavor {
+                    Blake2bBuild::Pinned
                 } else {
-                    subversion
-                        .as_deref()
-                        .map(NodeFlavor::from_subversion)
-                        .unwrap_or(configured_flavor)
+                    Blake2bBuild::Other
                 };
-                let reusable = running_flavor == configured_flavor
-                    && (!chain.is_blake2b()
-                        || subversion.as_deref().is_some_and(is_pinned_blake2b_build));
-                (running, running_flavor, reusable, subversion)
+                (running, running_flavor, build, subversion)
             });
+        // For Bitcoin, `Pinned` above just means "the configured flavour".
         // Blake2b: a node whose build cannot be read is neither reused (it may
         // be a stale build) nor stopped (it may be a healthy shared node that
         // is just busy); the start is refused and can be retried.
         let running = match running {
-            Some((_, _, _, None)) if chain.is_blake2b() => {
+            Some((_, _, Blake2bBuild::Unreadable, subversion)) => {
+                warn!(
+                    "Could not identify the running Bitcoin Blake2b node's build ({:?}); \
+                     leaving it running",
+                    subversion
+                );
                 return Err(StartInternalBitcoindError::BitcoinDError(
                     "Could not read which build the running Bitcoin Blake2b node is; it was \
                      left running. Try again in a moment."
                         .into(),
                 ));
             }
-            Some((running, running_flavor, reusable, subversion)) => {
+            Some((running, running_flavor, build, subversion)) => {
+                let reusable = build == Blake2bBuild::Pinned;
                 if chain.is_blake2b() && !reusable {
                     warn!(
                         "A Bitcoin Blake2b node that is not the pinned {KNOTS_BLAKE2B_VERSION} \
@@ -3051,8 +3138,8 @@ impl NodeDatadirLock {
 /// [`StartInternalBitcoindError::PrunedRevalidationRequired`].
 ///
 /// Runs under the family's lifecycle lock and refuses while any Cube owns the
-/// node, while the node's datadir lock is held, while a node still answers on
-/// the managed RPC port recorded for the network, or when that network has no
+/// node, while the node's datadir lock is held, while anything accepts
+/// connections on the managed RPC port recorded for the network, or when that network has no
 /// managed configuration, so the data of a running node is never pulled from
 /// under it.
 /// Refuses any chain other than a Bitcoin Blake2b one: the Bitcoin node's
@@ -3084,24 +3171,26 @@ pub fn resync_managed_fork_chain_data(
             chain.label()
         )
     })?;
-    let config = BitcoindConfig {
-        addr: crate::installer::step::node::bitcoind::internal_bitcoind_address(section.rpc_port),
-        rpc_auth: coincubed::config::BitcoindRpcAuth::CookieFile(internal_bitcoind_cookie_path(
-            &datadir, &network,
-        )),
-    };
+    let rpc_addr =
+        crate::installer::step::node::bitcoind::internal_bitcoind_address(section.rpc_port);
     // The node's own datadir lock is the authority on whether it is running
     // (an orphaned node whose owner file was reconciled away, or one too busy
     // to answer RPC, still holds it). It stays held through the deletion, so
-    // a node cannot start on the datadir while it is being emptied. The RPC
-    // probe is a second check.
+    // a node cannot start on the datadir while it is being emptied. Anything
+    // accepting connections on the recorded RPC port is a second refusal; a
+    // plain TCP connect needs no cookie, so a missing cookie never makes an
+    // occupied port look idle.
     let mut net_dir = datadir.clone();
     if let Some(dir) = bitcoind_network_dir(&network) {
         net_dir.push(dir);
     }
     let _datadir_lock = NodeDatadirLock::try_acquire(&net_dir)?;
-    if coincubed::BitcoinD::new(&config, "managed_resync_probe".to_string()).is_ok() {
-        return Err("The Bitcoin Blake2b node is still running. Stop it before resyncing.".into());
+    if std::net::TcpStream::connect_timeout(&rpc_addr, time::Duration::from_secs(1)).is_ok() {
+        return Err(
+            "Something is still answering on the Bitcoin Blake2b node's RPC port. Stop the node \
+             before resyncing."
+                .into(),
+        );
     }
     for dir in managed_fork_chain_data_dirs(root, &chain.bitcoin_network()) {
         match std::fs::remove_dir_all(&dir) {
@@ -6401,6 +6490,38 @@ mod blake2b_pin_bump {
         ] {
             assert!(!is_pinned_blake2b_build(other), "{:?}", other);
         }
+        // The explicit `Knots:` field wins over a user-agent comment that
+        // carries another build date inside the client segment.
+        assert!(!is_pinned_blake2b_build(
+            "/Satoshi:29.5.1(knots20260508)/Knots:20260601/"
+        ));
+        assert!(is_pinned_blake2b_build(
+            "/Satoshi:29.5.1(knots20260601)/Knots:20260508/"
+        ));
+        // Three outcomes: nothing identifiable is not "another build".
+        assert_eq!(classify_blake2b_build(None), Blake2bBuild::Unreadable);
+        assert_eq!(classify_blake2b_build(Some("")), Blake2bBuild::Unreadable);
+        assert_eq!(classify_blake2b_build(Some("/")), Blake2bBuild::Unreadable);
+        assert_eq!(
+            classify_blake2b_build(Some("/btcd:29.5.1/")),
+            Blake2bBuild::Unreadable
+        );
+        assert_eq!(
+            classify_blake2b_build(Some("/Satoshi:abc/Knots:20260508/")),
+            Blake2bBuild::Unreadable
+        );
+        assert_eq!(
+            classify_blake2b_build(Some("/Satoshi:29.4.1/Knots:20260508/")),
+            Blake2bBuild::Other
+        );
+        assert_eq!(
+            classify_blake2b_build(Some("/Satoshi:29.5.1/")),
+            Blake2bBuild::Other
+        );
+        assert_eq!(
+            classify_blake2b_build(Some("/Satoshi:29.5.1/Knots:20260508/")),
+            Blake2bBuild::Pinned
+        );
         // The padding that makes the Bitcoin pin's `29.3` match `29.3.0`.
         assert_eq!(normalized_client_version("29.3"), Some([29, 3, 0]));
         assert_eq!(normalized_client_version("29.5.1"), Some([29, 5, 1]));
@@ -6906,6 +7027,70 @@ mod blake2b_pin_bump {
         // Released: the resync proceeds.
         resync_managed_fork_chain_data(&root, ChainId::BitcoinBlake2bTestnet4).unwrap();
         assert!(!blocks.exists());
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    // An empty subversion identifies nothing: the node is left running,
+    // exactly as when the call fails, and identifying it is time-bounded.
+    #[cfg(unix)]
+    #[test]
+    fn an_empty_subversion_is_unreadable_not_another_build() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let (base, root) = temp_root("empty-build");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let config = write_fork_conf(&root, addr.port());
+        let launches = install_pruned_failing_binary(&root);
+        let stopped = Arc::new(AtomicBool::new(false));
+        let done = Arc::new(AtomicBool::new(false));
+        let server = fake_running_node(listener, Some(""), stopped.clone(), done.clone());
+
+        let started = time::Instant::now();
+        let lifecycle =
+            ManagedNodeLifecycle::acquire(&root, NodeChainFamily::BitcoinBlake2b).unwrap();
+        let result = Bitcoind::maybe_start_for_chain_locked(
+            ChainId::BitcoinBlake2bTestnet4,
+            config,
+            &root,
+            &lifecycle,
+        );
+        drop(lifecycle);
+        done.store(true, Ordering::SeqCst);
+        let _ = std::net::TcpStream::connect(addr);
+        server.join().unwrap();
+
+        assert!(
+            matches!(&result, Err(StartInternalBitcoindError::BitcoinDError(e)) if e.contains("left running")),
+            "{:?}",
+            result
+        );
+        assert!(!stopped.load(Ordering::SeqCst));
+        assert!(!launches.exists());
+        assert!(
+            started.elapsed() < BUILD_PROBE_BUDGET + time::Duration::from_secs(10),
+            "{:?}",
+            started.elapsed()
+        );
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    // Anything accepting connections on the recorded RPC port refuses the
+    // resync, cookie or not.
+    #[test]
+    fn a_resync_is_refused_while_the_rpc_port_is_occupied() {
+        let (base, root) = temp_root("resync-port");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        write_fork_conf(&root, listener.local_addr().unwrap().port());
+        let datadir = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b);
+        std::fs::remove_file(internal_bitcoind_cookie_path(&datadir, &Network::Testnet4)).unwrap();
+        let blocks = datadir.join("testnet4").join("blocks");
+        std::fs::create_dir_all(&blocks).unwrap();
+        let refused = resync_managed_fork_chain_data(&root, ChainId::BitcoinBlake2bTestnet4)
+            .expect_err("an occupied RPC port must refuse the resync");
+        assert!(refused.contains("RPC port"), "{}", refused);
+        assert!(blocks.exists());
+        drop(listener);
         let _ = std::fs::remove_dir_all(base);
     }
 }

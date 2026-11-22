@@ -120,6 +120,8 @@ pub struct Loader {
     /// [`Message::WalletsLoaded`] into [`app::App::new`].
     pub spark_backend: Option<std::sync::Arc<app::wallets::SparkBackend>>,
     fork_session_revoked: bool,
+    /// The resync this loader started and still waits for, if any.
+    fork_resync: Option<u64>,
     fork_task: Option<iced::task::Handle>,
     fork_retry_not_before: Option<std::time::Instant>,
     step: Step,
@@ -187,8 +189,12 @@ pub enum Message {
         cube_settings: CubeSettings,
     },
     Started(StartedResult),
-    /// The Bitcoin Blake2b chain data was deleted for a resync (or why not).
-    ForkNodeResynced(Result<(), String>),
+    /// The Bitcoin Blake2b chain data was deleted for a resync (or why not),
+    /// for the resync `token` names.
+    ForkNodeResynced {
+        token: u64,
+        result: Result<(), String>,
+    },
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
     LoadingTick,
@@ -422,6 +428,7 @@ impl Loader {
                 fork_retry_not_before: (cube_settings.network.is_blake2b() && refusal.is_none())
                     .then(|| std::time::Instant::now() + Duration::from_secs(30)),
                 fork_session_revoked: false,
+                fork_resync: None,
                 fork_task,
                 datadir_path,
                 gui_config,
@@ -843,6 +850,11 @@ impl Loader {
                         let remaining =
                             deadline.saturating_duration_since(std::time::Instant::now());
                         if !remaining.is_zero() {
+                            // The resync is not held to this delay; keep its
+                            // page (and button) rather than replace it.
+                            if matches!(&self.step, Step::Error(e) if e.offers_fork_resync()) {
+                                return Task::none();
+                            }
                             self.step = Step::Error(Box::new(Error::Unexpected(format!(
                                 "Connect startup can be retried in {} seconds. Wait for the backend to be ready, then Retry.", remaining.as_secs() + 1))));
                             return Task::none();
@@ -852,44 +864,54 @@ impl Loader {
                 self.rebuild()
             }
             Message::View(ViewMessage::ResyncForkNode) => {
-                // Only from the error it recovers, and never past a revoked
+                // Only from the errors it recovers, and never past a revoked
                 // session (Retry refuses that too).
                 if !self.cube_settings.network.is_blake2b()
                     || self.fork_session_revoked
-                    || !matches!(&self.step, Step::Error(e) if e.is_pruned_revalidation())
+                    || !matches!(&self.step, Step::Error(e) if e.offers_fork_resync())
                 {
                     return Task::none();
                 }
+                // Results are bound to this loader and this resync: a result
+                // that reaches a later loader in the same tab, or an older
+                // resync's result, is dropped.
+                static NEXT_RESYNC: std::sync::atomic::AtomicU64 =
+                    std::sync::atomic::AtomicU64::new(1);
+                let token = NEXT_RESYNC.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.fork_resync = Some(token);
                 let root = self.datadir_path.clone();
                 let chain = self.cube_settings.network;
+                let wallet = self.wallet_settings.clone();
                 self.step = Step::Connecting;
                 self.set_quote_context("loading");
                 Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::node::bitcoind::resync_managed_fork_chain_data(&root, chain)
+                            resync_fork_cube(&root, chain, wallet.as_ref())
                         })
                         .await
                         .unwrap_or_else(|e| Err(e.to_string()))
                     },
-                    Message::ForkNodeResynced,
+                    move |result| Message::ForkNodeResynced { token, result },
                 )
             }
-            // A session revoked while the deletion ran keeps its refusal: the
-            // result must neither rebuild the open without auth nor replace
-            // the reopen guidance (Retry refuses the same way). Only the
-            // resync's own in-flight step is advanced.
-            Message::ForkNodeResynced(_)
-                if self.fork_session_revoked || !matches!(self.step, Step::Connecting) =>
+            Message::ForkNodeResynced { token, .. }
+                if self.fork_session_revoked || self.fork_resync != Some(token) =>
             {
                 Task::none()
             }
             // The user asked for this start by deleting the chain data, so it
             // is not held to the Connect retry delay the Retry button applies.
-            Message::ForkNodeResynced(Ok(())) => self.rebuild(),
-            Message::ForkNodeResynced(Err(e)) => {
+            Message::ForkNodeResynced { result: Ok(()), .. } => {
+                self.fork_resync = None;
+                self.rebuild()
+            }
+            // The resync stays offered: a partial deletion is finished by the
+            // next one, while Retry would start the node on half-deleted data.
+            Message::ForkNodeResynced { result: Err(e), .. } => {
+                self.fork_resync = None;
                 error!("Loader: resyncing the Bitcoin Blake2b node failed: {}", e);
-                self.step = Step::Error(Box::new(Error::Unexpected(e)));
+                self.step = Step::Error(Box::new(Error::ForkResyncFailed(e)));
                 self.set_quote_context("error");
                 Task::none()
             }
@@ -1391,7 +1413,7 @@ pub(crate) fn view_with_retry<'a>(
                                         .width(Length::Fixed(200.0))
                                         .on_press(ViewMessage::Retry),
                                 )
-                                .push(error.is_pruned_revalidation().then(|| {
+                                .push(error.offers_fork_resync().then(|| {
                                     button::primary(None, CopyText::ResyncForkNodeChainData.get())
                                         .width(Length::Fixed(260.0))
                                         .on_press(ViewMessage::ResyncForkNode)
@@ -1492,6 +1514,84 @@ impl Drop for PendingForkNode {
     }
 }
 
+/// The daemon configuration a Bitcoin Blake2b Cube must run on while its
+/// node resyncs from scratch, or `None` when the current one serves.
+///
+/// A Cube whose wallet already runs on its local node (promoted after the
+/// first sync) cannot be admitted to a node in initial block download, and
+/// would stop the node on every failed open. It goes back to the Connect
+/// configuration recorded when it was promoted, with the node as its pending
+/// backend that promotes again once synced: the reverse of
+/// `synced_bitcoind_config`. Without a recorded Connect fallback there is no
+/// backend to serve it during the resync, so it is refused before anything
+/// is deleted.
+fn fork_resync_daemon_config(
+    cfg: &Config,
+    root: &CoincubeDirectory,
+) -> Result<Option<Config>, String> {
+    if !crate::chain::is_managed_local_fork(cfg, root) {
+        return Ok(None);
+    }
+    let Some(BitcoinBackend::Bitcoind(local)) = &cfg.bitcoin_backend else {
+        return Ok(None);
+    };
+    let fallback = cfg.fallback_esplora.clone().ok_or_else(|| {
+        "this Cube's wallet runs only on its local node and has no Connect fallback to use \
+         while the node resyncs, so nothing was deleted"
+            .to_string()
+    })?;
+    let mut demoted = cfg.clone();
+    demoted.pending_bitcoind = Some(local.clone());
+    demoted.bitcoin_backend = Some(BitcoinBackend::Esplora(fallback));
+    demoted.auto_switch_to_pending = Some(true);
+    demoted.fallback_esplora = None;
+    demoted.bitcoin_config.poll_interval_secs =
+        Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
+    Ok(Some(demoted))
+}
+
+/// Resync a Bitcoin Blake2b Cube's node: decide the configuration it runs on
+/// meanwhile (refusing before any deletion when there is none), delete the
+/// node's chain data, then persist that configuration. A repeat after a
+/// partial failure finishes the job: missing directories are not an error.
+fn resync_fork_cube(
+    root: &CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    wallet: Option<&WalletSettings>,
+) -> Result<(), String> {
+    let daemon_toml = wallet.map(|wallet| {
+        root.network_directory(chain)
+            .coincubed_data_directory(&wallet.wallet_id())
+            .path()
+            .join("daemon.toml")
+    });
+    let demoted = match &daemon_toml {
+        Some(path) => {
+            let cfg = Config::from_file(Some(path.clone()))
+                .map_err(|e| format!("could not read this Cube's configuration: {e}"))?;
+            fork_resync_daemon_config(&cfg, root)?
+        }
+        None => None,
+    };
+    crate::node::bitcoind::resync_managed_fork_chain_data(root, chain)?;
+    if let (Some(path), Some(cfg)) = (daemon_toml, demoted) {
+        let content = toml::to_string(&cfg.for_persistence())
+            .map_err(|e| format!("could not encode this Cube's configuration: {e}"))?;
+        let staged = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&staged, content)
+            .and_then(|()| std::fs::rename(&staged, &path))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&staged);
+                format!(
+                    "the chain data was deleted but this Cube could not be switched to Connect \
+                     for the resync: {e}"
+                )
+            })?;
+        info!("Switched the Cube to Connect while its Bitcoin Blake2b node resyncs");
+    }
+    Ok(())
+}
+
 /// Install the pinned Bitcoin Blake2b binary when it is missing (see
 /// [`crate::installer::step::node::bitcoind::ensure_pinned_fork_binary`]).
 #[cfg(not(test))]
@@ -1582,9 +1682,15 @@ async fn start_fork_daemon(
         // Only the pinned Blake2b build is ever started, so after a pin bump an
         // existing install has no binary to start: fetch and verify the pinned
         // release first, instead of failing the open with `ExecutableNotFound`.
-        provision_pinned_fork_binary(root.clone(), chain)
+        // A failed fetch does not stop the start: a pinned node that is already
+        // running needs no binary on disk. Its reason is reported only if the
+        // start then needs the binary it could not install.
+        let provision_error = provision_pinned_fork_binary(root.clone(), chain)
             .await
-            .map_err(Error::Unexpected)?;
+            .err();
+        if let Some(e) = &provision_error {
+            warn!("Could not install the pinned Bitcoin Blake2b node: {}", e);
+        }
         let root = root.clone();
         tokio::task::spawn_blocking(move || {
             Bitcoind::preflight_for_chain(chain, &root)?;
@@ -1607,7 +1713,12 @@ async fn start_fork_daemon(
         })
         .await
         .map_err(|e| Error::Unexpected(e.to_string()))?
-        .map_err(Error::Bitcoind)?
+        .map_err(|e| match (e, provision_error) {
+            (crate::node::bitcoind::StartInternalBitcoindError::ExecutableNotFound, Some(why)) => {
+                Error::Unexpected(why)
+            }
+            (e, _) => Error::Bitcoind(e),
+        })?
     } else {
         PendingForkNode {
             node: None,
@@ -1972,17 +2083,25 @@ pub enum Error {
         cube: crate::chain::ChainId,
         config: crate::chain::ChainId,
     },
+    /// A Bitcoin Blake2b resync could not finish; it is offered again.
+    ForkResyncFailed(String),
     Unexpected(String),
 }
 
 impl Error {
     /// The Bitcoin Blake2b node cannot revalidate its chain because the blocks
-    /// it needs are pruned: the one error a resync recovers.
+    /// it needs are pruned.
     pub(crate) fn is_pruned_revalidation(&self) -> bool {
         matches!(
             self,
             Error::Bitcoind(StartInternalBitcoindError::PrunedRevalidationRequired(_))
         )
+    }
+
+    /// The errors a resync recovers: the pruned revalidation itself, and a
+    /// resync that did not finish.
+    pub(crate) fn offers_fork_resync(&self) -> bool {
+        self.is_pruned_revalidation() || matches!(self, Error::ForkResyncFailed(_))
     }
 }
 
@@ -2002,6 +2121,12 @@ impl std::fmt::Display for Error {
                  or modified; the configuration file needs to be fixed or restored.",
                 cube.label(),
                 config.label()
+            ),
+            Self::ForkResyncFailed(e) => write!(
+                f,
+                "The Bitcoin Blake2b node could not be resynced: {}. Its chain data still has to \
+                 be deleted before the node can start.",
+                e
             ),
             Self::Unexpected(e) => write!(f, "Unexpected error: {}", e),
         }
@@ -2380,6 +2505,66 @@ mod tests {
         assert!(!loader.daemon_started);
     }
 
+    // A Cube whose wallet runs on its local node goes back to its recorded
+    // Connect configuration for the resync, with the node pending and set to
+    // promote again; without a recorded fallback it is refused before any
+    // chain data is deleted; a Connect-backed Cube keeps its configuration.
+    #[test]
+    fn a_local_backend_cube_returns_to_connect_for_the_resync() {
+        use crate::node::bitcoind::{internal_bitcoind_datadir_for, NodeChainFamily};
+        let chain = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        let path = std::env::temp_dir().join(format!("fork-resync-{}", uuid::Uuid::new_v4()));
+        let root = CoincubeDirectory::new(path.clone());
+        let (cfg, wallet) = crate::chain::managed_local_fixture(&root, chain);
+        let Some(BitcoinBackend::Bitcoind(local)) = cfg.bitcoin_backend.clone() else {
+            panic!("fixture is a local backend");
+        };
+        let blocks = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b)
+            .join("testnet4")
+            .join("blocks");
+        std::fs::create_dir_all(&blocks).unwrap();
+        let daemon_toml = root
+            .network_directory(chain)
+            .coincubed_data_directory(&wallet.wallet_id())
+            .path()
+            .join("daemon.toml");
+
+        // No Connect fallback recorded: refused, nothing deleted or rewritten.
+        let before = std::fs::read(&daemon_toml).unwrap();
+        let refused = resync_fork_cube(&root, chain, Some(&wallet)).unwrap_err();
+        assert!(refused.contains("no Connect fallback"), "{}", refused);
+        assert!(blocks.exists());
+        assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
+
+        // With the fallback the promotion recorded: demoted, then deleted.
+        let fallback = crate::installer::connect_esplora_config(chain, "runtime-only-token");
+        let mut promoted = cfg.clone();
+        promoted.fallback_esplora = Some(fallback.clone());
+        std::fs::write(&daemon_toml, toml::to_string(&promoted).unwrap()).unwrap();
+        resync_fork_cube(&root, chain, Some(&wallet)).unwrap();
+        assert!(!blocks.exists());
+        let after = Config::from_file(Some(daemon_toml.clone())).unwrap();
+        assert!(matches!(&after.bitcoin_backend,
+            Some(BitcoinBackend::Esplora(e)) if e.addr == fallback.addr));
+        assert_eq!(after.pending_bitcoind.as_ref(), Some(&local));
+        assert_eq!(after.auto_switch_to_pending, Some(true));
+        assert!(after.fallback_esplora.is_none());
+        assert_eq!(
+            after.bitcoin_config.poll_interval_secs,
+            Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS)
+        );
+        // Tokens stay runtime-only.
+        assert!(!std::fs::read_to_string(&daemon_toml)
+            .unwrap()
+            .contains("runtime-only-token"));
+
+        // Already on Connect with the node pending: nothing to change.
+        let unchanged = std::fs::read(&daemon_toml).unwrap();
+        resync_fork_cube(&root, chain, Some(&wallet)).unwrap();
+        assert_eq!(std::fs::read(&daemon_toml).unwrap(), unchanged);
+        let _ = std::fs::remove_dir_all(path);
+    }
+
     fn pruned_revalidation_error() -> Error {
         Error::Bitcoind(StartInternalBitcoindError::PrunedRevalidationRequired(
             crate::chain::ChainId::BitcoinBlake2bTestnet4,
@@ -2417,15 +2602,62 @@ mod tests {
         loader.step = Step::Error(Box::new(pruned_revalidation_error()));
         let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
         assert!(matches!(loader.step, Step::Connecting));
+        let token = loader.fork_resync.expect("resync in flight");
 
-        // A refused resync is shown, with the reason.
-        let _ = loader.update(Message::ForkNodeResynced(Err("node still running".into())));
-        assert!(
-            matches!(&loader.step, Step::Error(e) if e.to_string().contains("node still running"))
-        );
-        // A late result for a step that has moved on is ignored.
-        let _ = loader.update(Message::ForkNodeResynced(Err("late".into())));
+        // Another resync's result (or one meant for another loader) is dropped.
+        let _ = loader.update(Message::ForkNodeResynced {
+            token: token + 1000,
+            result: Err("foreign".into()),
+        });
+        assert!(matches!(loader.step, Step::Connecting));
+
+        // A refused resync is shown, with the reason, and stays offered.
+        let _ = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Err("node still running".into()),
+        });
+        assert!(matches!(&loader.step, Step::Error(e)
+            if e.to_string().contains("node still running") && e.offers_fork_resync()));
+        assert!(loader.fork_resync.is_none());
+        // A late duplicate of that result is ignored.
+        let _ = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Err("late".into()),
+        });
         assert!(matches!(&loader.step, Step::Error(e) if !e.to_string().contains("late")));
+        // ... and the resync can be started again from the failure.
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(loader.step, Step::Connecting));
+    }
+
+    // A result reaching a loader that never started a resync (the tab now
+    // shows another Cube) is dropped.
+    #[test]
+    fn a_resync_result_never_reaches_a_loader_that_did_not_start_it() {
+        let mut loader = loader_without_wallet(false);
+        loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        for result in [Ok(()), Err("other Cube's failure".to_string())] {
+            let _ = loader.update(Message::ForkNodeResynced { token: 1, result });
+            assert!(matches!(loader.step, Step::Connecting));
+            assert!(loader.fork_resync.is_none());
+        }
+    }
+
+    // The Retry cooldown does not hide the resync page: the resync is not
+    // subject to it.
+    #[test]
+    fn the_retry_cooldown_keeps_the_resync_page() {
+        let mut loader = loader_without_wallet(false);
+        loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        loader.fork_retry_not_before = Some(std::time::Instant::now() + Duration::from_secs(30));
+        for error in [
+            pruned_revalidation_error(),
+            Error::ForkResyncFailed("busy".into()),
+        ] {
+            loader.step = Step::Error(Box::new(error));
+            let _ = loader.update(Message::View(ViewMessage::Retry));
+            assert!(matches!(&loader.step, Step::Error(e) if e.offers_fork_resync()));
+        }
     }
 
     // A session revoked while the chain data was being deleted stays latched:
@@ -2439,12 +2671,16 @@ mod tests {
             loader.step = Step::Error(Box::new(pruned_revalidation_error()));
             let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
             assert!(matches!(loader.step, Step::Connecting));
+            let token = loader.fork_resync.expect("resync in flight");
             loader.invalidate_fork_session();
             let shown = match &loader.step {
                 Step::Error(e) => e.to_string(),
                 _ => "not an error".to_string(),
             };
-            let _ = loader.update(Message::ForkNodeResynced(result.clone()));
+            let _ = loader.update(Message::ForkNodeResynced {
+                token,
+                result: result.clone(),
+            });
             assert!(loader.fork_session_revoked, "{:?}", result);
             assert!(loader.fork_task.is_none(), "{:?}", result);
             let after = match &loader.step {
