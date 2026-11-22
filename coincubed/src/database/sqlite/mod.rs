@@ -942,6 +942,25 @@ impl SqliteConn {
         .expect("Database must be available")
     }
 
+    /// Return unspent coins to the immature state (unconfirmed, `is_immature = 1`). Coins that
+    /// are spent or spending are left unchanged.
+    pub fn mark_immature_coinbase<'a>(
+        &mut self,
+        outpoints: impl IntoIterator<Item = &'a bitcoin::OutPoint>,
+    ) {
+        db_exec(&mut self.conn, |db_tx| {
+            for outpoint in outpoints {
+                db_tx.execute(
+                    "UPDATE coins SET blockheight = NULL, blocktime = NULL, is_immature = 1 \
+                     WHERE txid = ?1 AND vout = ?2 AND spend_txid IS NULL",
+                    rusqlite::params![outpoint.txid[..].to_vec(), outpoint.vout],
+                )?;
+            }
+            Ok(())
+        })
+        .expect("Database must be available")
+    }
+
     /// Mark a set of coins as spending.
     pub fn spend_coins<'a>(
         &mut self,
@@ -1225,6 +1244,24 @@ impl SqliteConn {
             },
         )
         .expect("Db must not fail")
+    }
+
+    /// The txids of stored coinbase transactions.
+    pub fn db_coinbase_txids(&mut self) -> HashSet<bitcoin::Txid> {
+        db_query(
+            &mut self.conn,
+            "SELECT txid FROM transactions WHERE is_coinbase = 1",
+            rusqlite::params![],
+            |row| {
+                let txid: Vec<u8> = row.get(0)?;
+                let txid: bitcoin::Txid =
+                    encode::deserialize(&txid).expect("We only store valid txids");
+                Ok(txid)
+            },
+        )
+        .expect("Db must not fail")
+        .into_iter()
+        .collect()
     }
 
     pub fn db_list_all_txids(&mut self) -> Vec<bitcoin::Txid> {
@@ -2688,6 +2725,44 @@ CREATE TABLE labels (
             conn.confirm_coins(&[(coin_imma.outpoint, height, time)]);
             let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
             assert!(!coin.is_immature);
+
+            // A coinbase deposit confirmed too early goes back to the immature state...
+            conn.mark_immature_coinbase(&[coin_imma.outpoint]);
+            let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
+            assert!(coin.is_immature && coin.block_info.is_none());
+            conn.confirm_coins(&[(coin_imma.outpoint, height, time)]);
+            // ...unless it has a spender.
+            let spend_txid = txs.first().unwrap().compute_txid();
+            conn.spend_coins(&[(coin_imma.outpoint, spend_txid)]);
+            conn.mark_immature_coinbase(&[coin_imma.outpoint]);
+            let coin = conn.db_coins(&[coin_imma.outpoint]).pop().unwrap();
+            assert!(!coin.is_immature && coin.block_info.is_some());
+
+            // Only coinbase transactions are listed as such.
+            let fixture_coinbase: HashSet<bitcoin::Txid> = txs
+                .iter()
+                .filter(|tx| tx.is_coinbase())
+                .map(|tx| tx.compute_txid())
+                .collect();
+            assert_eq!(conn.db_coinbase_txids(), fixture_coinbase);
+            let coinbase = bitcoin::Transaction {
+                version: bitcoin::transaction::Version::TWO,
+                lock_time: bitcoin::absolute::LockTime::ZERO,
+                input: vec![bitcoin::TxIn {
+                    previous_output: bitcoin::OutPoint::null(),
+                    script_sig: bitcoin::ScriptBuf::from_bytes(vec![1, 2]),
+                    sequence: bitcoin::Sequence::MAX,
+                    witness: bitcoin::Witness::new(),
+                }],
+                output: vec![bitcoin::TxOut {
+                    value: bitcoin::Amount::from_sat(1),
+                    script_pubkey: bitcoin::ScriptBuf::new(),
+                }],
+            };
+            conn.new_txs(std::slice::from_ref(&coinbase));
+            let mut expected = fixture_coinbase;
+            expected.insert(coinbase.compute_txid());
+            assert_eq!(conn.db_coinbase_txids(), expected);
         }
 
         fs::remove_dir_all(tmp_dir).unwrap();

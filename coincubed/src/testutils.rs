@@ -324,6 +324,7 @@ struct DummyDbState {
     rescan_timestamp: Option<u32>,
     last_poll_timestamp: Option<u32>,
     rollbacks: Vec<BlockChainTip>,
+    chain: coincube_core::chain::ChainId,
 }
 
 pub struct DummyDatabase {
@@ -404,8 +405,14 @@ impl DummyDatabase {
                 rescan_timestamp: None,
                 last_poll_timestamp: None,
                 rollbacks: Vec::new(),
+                chain: coincube_core::chain::ChainId::Bitcoin,
             })),
         }
+    }
+
+    /// Set the chain identity `chain()` reports (Bitcoin by default).
+    pub fn set_chain(&mut self, chain: coincube_core::chain::ChainId) {
+        self.db.write().unwrap().chain = chain;
     }
 
     /// Every tip this database was asked to roll back to, in order.
@@ -428,7 +435,11 @@ impl DummyDatabase {
 
 impl DatabaseConnection for DummyDatabase {
     fn network(&mut self) -> bitcoin::Network {
-        bitcoin::Network::Bitcoin
+        self.db.read().unwrap().chain.bitcoin_network()
+    }
+
+    fn chain(&mut self) -> coincube_core::chain::ChainId {
+        self.db.read().unwrap().chain
     }
 
     fn chain_tip(&mut self) -> Option<BlockChainTip> {
@@ -549,6 +560,8 @@ impl DatabaseConnection for DummyDatabase {
                 height: *height,
                 time: *time,
             });
+            // Like the SQLite implementation, confirming a coin marks it mature.
+            coin.is_immature = false;
         }
     }
 
@@ -723,6 +736,29 @@ impl DatabaseConnection for DummyDatabase {
 
     fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
         self.db.read().unwrap().txs.keys().cloned().collect()
+    }
+
+    fn coinbase_txids(&mut self) -> HashSet<bitcoin::Txid> {
+        self.db
+            .read()
+            .unwrap()
+            .txs
+            .iter()
+            .filter(|(_, tx)| tx.is_coinbase())
+            .map(|(txid, _)| *txid)
+            .collect()
+    }
+
+    fn mark_immature_coinbase(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        let mut db = self.db.write().unwrap();
+        for op in outpoints {
+            if let Some(coin) = db.coins.get_mut(op) {
+                if coin.spend_txid.is_none() {
+                    coin.block_info = None;
+                    coin.is_immature = true;
+                }
+            }
+        }
     }
 
     fn new_txs(&mut self, txs: &[bitcoin::Transaction]) {
