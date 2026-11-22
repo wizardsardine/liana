@@ -436,29 +436,18 @@ fn detail_head<'a>(
     use coincube_ui::component::tenshu::text as tt;
     use coincube_ui::theme::tenshu::text as tone_text;
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
-    let title: Element<'a, Message> = if let Some(outpoint) = tx.is_single_payment() {
-        let outpoint = outpoint.to_string();
-        if let Some(label) = labels_editing.get(&outpoint) {
-            label::label_editing(vec![outpoint.clone(), txid.clone()], label, 20)
-        } else if tx.labels.get(&outpoint).is_some_and(|l| !l.is_empty()) {
-            label::label_editable(
-                vec![outpoint.clone(), txid.clone()],
-                tx.labels.get(&outpoint),
-                20,
-            )
-        } else {
-            titled_label(
-                vec![outpoint.clone(), txid.clone()],
-                crate::app::view::vault::psbts::proposal_title(tx),
-            )
-        }
-    } else if let Some(label) = labels_editing.get(&txid) {
-        label::label_editing(vec![txid.clone()], label, 20)
-    } else if tx.labels.get(&txid).is_some_and(|l| !l.is_empty()) {
-        label::label_editable(vec![txid.clone()], tx.labels.get(&txid), 20)
+    let label_keys = match tx.is_single_payment() {
+        Some(outpoint) => vec![outpoint.to_string(), txid],
+        None => vec![txid],
+    };
+    let label_key = &label_keys[0];
+    let title = if let Some(label) = labels_editing.get(label_key) {
+        label::label_editing(label_keys, label, 20)
+    } else if let Some(label) = tx.labels.get(label_key).filter(|label| !label.is_empty()) {
+        label::label_editable(label_keys, Some(label), 20)
     } else {
         titled_label(
-            vec![txid.clone()],
+            label_keys,
             crate::app::view::vault::psbts::proposal_title(tx),
         )
     };
