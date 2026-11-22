@@ -102,6 +102,15 @@ impl PsbtsPanel {
         self.selected_tx.is_some()
     }
 
+    /// The name on a "Deleted …" list note, when that is the note showing.
+    #[cfg(test)]
+    pub(crate) fn deleted_list_note(&self) -> Option<&str> {
+        match &self.note {
+            Some(ListNote::Deleted(name)) => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
     /// Leave the detail page without re-reading the PSBT list.
     pub fn clear_selection(&mut self) {
         self.selected_tx = None;
@@ -921,6 +930,55 @@ pub(crate) mod tests {
         assert!(rebuilt.saved, "the refresh rebuilt the detail");
         assert!(rebuilt.back_to_activity, "label follows Back");
         assert!(panel.returns_to_activity());
+    }
+
+    /// Deleting a proposal Activity opened closes back to Activity. Sending
+    /// the user to the PSBT list would drop them on the wrong screen.
+    #[test]
+    fn a_delete_opened_from_activity_closes_instead_of_the_list() {
+        use crate::app::view::vault::psbt::DeleteState;
+        use iced::futures::StreamExt;
+
+        let mut panel = PsbtsPanel::new(spend_wallet());
+        let tx = spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        panel.preselect_from_activity(tx);
+        let task = panel.update(
+            Some(mock_daemon()),
+            &Cache::default(),
+            Message::PsbtDeleted(txid, Ok(())),
+        );
+        let messages = {
+            let Some(stream) = iced_runtime::task::into_stream(task) else {
+                panic!("a finished delete must report where to go");
+            };
+            iced::futures::executor::block_on(stream.collect::<Vec<_>>())
+        };
+        let outputs: Vec<_> = messages
+            .into_iter()
+            .filter_map(|action| match action {
+                iced_runtime::Action::Output(message) => Some(message),
+                _ => None,
+            })
+            .collect();
+        assert!(
+            outputs
+                .iter()
+                .any(|message| matches!(message, Message::View(view::Message::Close))),
+            "Activity opened this proposal, so delete closes back there"
+        );
+        assert!(
+            !outputs.iter().any(|message| matches!(
+                message,
+                Message::View(view::Message::Psbts(view::PsbtsMessage::Deleted(_)))
+            )),
+            "the PSBT list must not take an Activity-opened delete"
+        );
+        assert_eq!(panel.deleted_list_note(), None);
+        assert_eq!(
+            panel.selected_tx.as_ref().unwrap().delete,
+            DeleteState::Idle
+        );
     }
 
     // Regression: a background `SpendTxs` refresh must NOT rebuild the open

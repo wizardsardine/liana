@@ -1802,6 +1802,102 @@ mod tests {
             .any(|item| matches!(item, Progress::Psbt(imported) if imported == &unsafe_psbt)));
     }
 
+    fn daemon_for_psbt_import(
+        descriptor: &CoincubeDescriptor,
+        update: Option<Result<serde_json::Value, DaemonError>>,
+    ) -> Arc<dyn Daemon + Send + Sync> {
+        let mut requests = vec![(
+            None,
+            Ok(json!({
+                "version": "",
+                "network": "bitcoin",
+                "block_height": 0,
+                "sync": 1.0,
+                "descriptors": { "main": descriptor },
+                "receive_index": 0,
+                "change_index": 0,
+                "timestamp": 0,
+            })),
+        )];
+        if let Some(update) = update {
+            requests.push((None, update));
+        }
+        Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(requests).run(),
+        ))
+    }
+
+    /// The paste import shares `import_psbt_str` with file import. A PSBT that
+    /// spends an outpoint this wallet does not own is a specific error only
+    /// when no proposal is pinned; a signature import and a wrong txid stay
+    /// distinct, and surrounding whitespace is not part of the PSBT.
+    #[tokio::test]
+    async fn pasted_psbt_import_maps_an_unknown_outpoint_and_pins_a_txid() {
+        use crate::app::state::vault::test_support::unified::fixture;
+
+        let fixture = fixture();
+        let psbt = fixture.psbt;
+        let pasted = format!("\n  {psbt}  \n");
+        let unknown_outpoint = || {
+            Err(DaemonError::Unexpected(
+                "Unknown outpoint deadbeef:0".to_string(),
+            ))
+        };
+
+        let unknown = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, Some(unknown_outpoint())),
+            &pasted,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(unknown, Err(Error::OutpointNotOwned)),
+            "a paste of another wallet's PSBT says it is not owned, got {:?}",
+            unknown
+        );
+
+        let other = import_psbt_str(
+            daemon_for_psbt_import(
+                &fixture.descriptor,
+                Some(Err(DaemonError::Unexpected("database locked".to_string()))),
+            ),
+            &pasted,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(&other, Err(Error::Daemon(message)) if message.contains("database locked")),
+            "a different refusal stays a daemon error, got {:?}",
+            other
+        );
+
+        let pinned = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, Some(unknown_outpoint())),
+            &pasted,
+            Some(psbt.unsigned_tx.compute_txid()),
+        )
+        .await;
+        assert!(
+            matches!(&pinned, Err(Error::Daemon(message)) if message.contains("Unknown outpoint")),
+            "importing signatures onto this proposal does not rewrite the error, got {:?}",
+            pinned
+        );
+
+        let wrong = Txid::from_str(&format!("{:064x}", 9)).unwrap();
+        assert_ne!(wrong, psbt.unsigned_tx.compute_txid());
+        let mismatch = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, None),
+            &pasted,
+            Some(wrong),
+        )
+        .await;
+        assert!(
+            matches!(mismatch, Err(Error::TxidNotMatch)),
+            "a pinned import refuses a different transaction before storing it, got {:?}",
+            mismatch
+        );
+    }
+
     /// This test's own scratch directory, and `label` resolved inside it.
     ///
     /// Both are returned so cleanup can delete the root it was handed. A test
