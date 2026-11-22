@@ -699,14 +699,28 @@ pub async fn import_psbt(
     let mut file = File::open(&path)?;
     let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
-    let descr = daemon.get_info().await?.descriptors.main;
-
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
-    psbt_str = psbt_str.trim().to_string();
 
-    let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
     send_progress!(sender, Progress(50.0));
+    let psbt = import_psbt_str(daemon, &psbt_str, txid).await?;
+    send_progress!(sender, Psbt(psbt));
+
+    send_progress!(sender, Progress(100.0));
+    Ok(())
+}
+
+/// Parse a base64 PSBT, check it against this wallet's descriptor and store
+/// it (or merge its signatures into the proposal it updates). `txid` pins the
+/// proposal an "Import signatures" must match. Shared by the file import and
+/// the PSBTs page's paste import.
+pub async fn import_psbt_str(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    psbt_str: &str,
+    txid: Option<Txid>,
+) -> Result<Psbt, Error> {
+    let psbt = Psbt::from_str(psbt_str.trim()).map_err(|_| Error::ParsePsbt)?;
+    let descr = daemon.get_info().await?.descriptors.main;
     // A Vault or an imported wallet: both read the PSBT's signatures.
     coincube_core::wallet_descriptor::SpendAnalysis::spend_info(&descr, &psbt)
         .map_err(|_| Error::InsanePsbt)?;
@@ -725,10 +739,7 @@ pub async fn import_psbt(
         }
         return Err(error.into());
     }
-    send_progress!(sender, Psbt(psbt));
-
-    send_progress!(sender, Progress(100.0));
-    Ok(())
+    Ok(psbt)
 }
 
 pub async fn import_descriptor(

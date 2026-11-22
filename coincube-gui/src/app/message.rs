@@ -144,6 +144,12 @@ pub enum Message {
     CoinsTipHeight(Result<Vec<Coin>, Error>, Result<i32, Error>),
     Labels(Result<HashMap<String, String>, Error>),
     SpendTxs(Result<Vec<SpendTx>, Error>),
+    /// The PSBTs page's paste import number `.0` was stored, or refused.
+    PsbtPasted(u64, Result<(), crate::export::Error>),
+    /// The proposal `.0`, deleted from its detail page, is gone, or not.
+    /// The detail may have been closed meanwhile; the PSBTs panel then
+    /// takes the result.
+    PsbtDeleted(coincube_core::miniscript::bitcoin::Txid, Result<(), Error>),
     Psbt(Result<(Psbt, Vec<String>), Error>),
     /// Debounced trigger to run the create-spend "redraft" (coin selection)
     /// off the UI thread. Carries the redraft generation token; the handler

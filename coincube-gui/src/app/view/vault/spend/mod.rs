@@ -61,6 +61,7 @@ pub fn spend_view<'a>(
     replay: Option<psbt::ReplayPill<'a>>,
     broadcast_ready: bool,
     mcp_review: bool,
+    delete: psbt::DeleteState,
 ) -> Element<'a, Message> {
     let is_recovery = tx
         .psbt
@@ -78,47 +79,32 @@ pub fn spend_view<'a>(
         ),
         Column::new()
             .spacing(20)
-            .push(p1_regular(crate::chain::canonical_network_name(
-                cache.chain(),
-            )))
             .push_maybe(mcp_review.then(|| mcp_prepared_review(tx, network)))
-            .push(psbt::spend_header(tx, labels_editing, bitcoin_unit))
             .push_maybe(spend_review_warnings(spend_warnings, saved))
-            .push(psbt::spend_overview_view(
+            .push(psbt::proposal_sections(
                 action_scope,
+                cache,
                 tx,
+                saved,
                 desc_info,
                 key_aliases,
+                labels_editing,
+                network,
                 currently_signing,
-                saved,
+                bitcoin_unit,
                 replay,
                 broadcast_ready,
-                !mcp_review,
+                identities,
+                psbt::BodyMode::Review {
+                    allow_signing: !mcp_review,
+                },
             ))
-            .push(
-                Column::new()
-                    .spacing(20)
-                    .push(psbt::inputs_view(
-                        &tx.coins,
-                        &tx.psbt.unsigned_tx,
-                        &tx.labels,
-                        labels_editing,
-                        bitcoin_unit,
-                    ))
-                    .push(psbt::outputs_view_with_identities(
-                        &tx.psbt.unsigned_tx,
-                        network,
-                        &tx.change_indexes,
-                        &tx.labels,
-                        labels_editing,
-                        bitcoin_unit,
-                        tx.is_single_payment().is_some(),
-                        false,
-                        identities,
-                        cache.theme_mode,
-                    )),
-            )
-            .push(spend_review_actions(saved, currently_signing, mcp_review)),
+            .push(if saved {
+                psbt::delete_section(action_scope, tx, currently_signing, delete)
+            } else {
+                unsaved_spend_review_actions(action_scope, currently_signing, mcp_review).into()
+            })
+            .push(Space::new().height(10)),
     )
 }
 
@@ -1022,48 +1008,37 @@ fn coin_list_view<'a>(
         .into()
 }
 
-fn spend_review_actions<'a>(
-    saved: bool,
-    currently_signing: bool,
-    mcp_review: bool,
-) -> coincube_ui::widget::Row<'a, Message> {
-    if saved {
-        Row::new()
-            .push(
-                button::secondary(None, localized_copy("Delete"))
-                    .width(Length::Fixed(200.0))
-                    .on_press_maybe(if currently_signing {
-                        None
-                    } else {
-                        Some(Message::Spend(SpendTxMessage::Delete))
-                    }),
-            )
-            .width(Length::Fill)
-    } else {
-        unsaved_spend_review_actions(currently_signing, mcp_review)
-    }
-}
-
 fn spend_review_warnings<'a>(
     spend_warnings: &'a [String],
     saved: bool,
-) -> Option<coincube_ui::widget::Column<'a, Message>> {
+) -> Option<Element<'a, Message>> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::{text as tone_text, Tone};
     if spend_warnings.is_empty() || saved {
-        None
-    } else {
-        Some(
-            spend_warnings
-                .iter()
-                .fold(Column::new().padding(15).spacing(5), |col, warning| {
-                    col.push(
-                        Row::new()
-                            .spacing(5)
-                            .push(icon::warning_icon().style(theme::text::warning))
-                            .push(text(warning).style(theme::text::warning)),
-                    )
-                }),
-        )
+        return None;
     }
+    Some(
+        Container::new(spend_warnings.iter().fold(
+            coincube_ui::widget::Column::new().spacing(6),
+            |col, warning| {
+                col.push(
+                    coincube_ui::widget::Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(
+                            icon::warning_icon()
+                                .size(18)
+                                .style(|t: &theme::Theme| tone_text::tone(t, Tone::Warn)),
+                        )
+                        .push(tt::body(warning).width(Length::Fill)),
+                )
+            },
+        ))
+        .padding([10, 14])
+        .width(Length::Fill)
+        .style(theme::tenshu::surface::card)
+        .into(),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1552,45 +1527,49 @@ fn recipient_fiat_input<'a>(
 }
 
 fn unsaved_spend_review_actions<'a>(
+    action_scope: u64,
     currently_signing: bool,
     mcp_review: bool,
 ) -> coincube_ui::widget::Row<'a, Message> {
-    Row::new()
+    let continue_action: Element<'a, Message> = if mcp_review {
+        button::secondary_action(
+            psbt::action_id(action_scope, "review.continue"),
+            None,
+            localized_copy("Sign in COINCUBE Desktop"),
+            Message::FocusAction,
+        )
+        .width(Length::Fixed(180.0))
+        .on_press_maybe(if currently_signing {
+            None
+        } else {
+            #[cfg(feature = "mcp-transactions")]
+            {
+                Some(Message::Spend(SpendTxMessage::ContinueNativeSigning))
+            }
+            #[cfg(not(feature = "mcp-transactions"))]
+            {
+                None
+            }
+        })
+        .into()
+    } else {
+        psbt::save_proposal_action(action_scope, currently_signing)
+    };
+    coincube_ui::widget::Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
         .push(
-            button::secondary(None, "< Back")
-                .width(Length::Fixed(150.0))
-                .on_press_maybe(if currently_signing {
-                    None
-                } else {
-                    Some(Message::Previous)
-                }),
+            button::secondary_action(
+                psbt::action_id(action_scope, "review.back"),
+                None,
+                localized_copy("‹ Back"),
+                Message::FocusAction,
+            )
+            .width(Length::Fixed(150.0))
+            .on_press_maybe((!currently_signing).then_some(Message::Previous)),
         )
         .push(Space::new().width(Length::Fill))
-        .push(
-            button::secondary(
-                None,
-                if mcp_review {
-                    localized_copy("Sign in COINCUBE Desktop")
-                } else {
-                    localized_copy("Save")
-                },
-            )
-            .width(Length::Fixed(if mcp_review { 180.0 } else { 150.0 }))
-            .on_press_maybe(if currently_signing {
-                None
-            } else if mcp_review {
-                #[cfg(feature = "mcp-transactions")]
-                {
-                    Some(Message::Spend(SpendTxMessage::ContinueNativeSigning))
-                }
-                #[cfg(not(feature = "mcp-transactions"))]
-                {
-                    None
-                }
-            } else {
-                Some(Message::Spend(SpendTxMessage::Save))
-            }),
-        )
+        .push(continue_action)
         .width(Length::Fill)
 }
 
