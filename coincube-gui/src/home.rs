@@ -2121,7 +2121,8 @@ impl Home {
                 );
                 self.cube_sync_errors.remove(&cube_id);
                 let network_dir = self.datadir_path.network_directory(network);
-                // The owner was recorded on disk when the Cube was created.
+                // The owner was recorded on disk when the Cube was created
+                // (PIN, passkey or phrase restore).
                 // Whoever is active when this reply lands may be a different
                 // account (or one that signed in after a signed-out
                 // creation), so an ownerless Cube stays ownerless.
@@ -3165,6 +3166,7 @@ impl Home {
             Some(id) => id,
             None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
         };
+        let owner = self.restoring_account();
 
         Task::perform(
             async move {
@@ -3237,6 +3239,7 @@ impl Home {
                 // evidence and opens immediately.
                 cube.backed_up = true;
                 cube.creation_backup_required = true;
+                cube.connect_owner = owner;
 
                 // Save Cube settings to settings file.
                 // Idempotency: skip insert if UUID already exists.
@@ -4839,6 +4842,18 @@ impl Home {
         self.connect_account
             .authenticated_client()
             .and_then(|_| self.connect_owner())
+    }
+
+    /// The owner to stamp on a Cube restored from its phrase now. A restore is
+    /// a creation, so this is [`Self::creating_account`]; but a ghost's Cube
+    /// belongs to the account that listed it, which `ghost_still_registered`
+    /// requires to be the signed-in one. If it is not, the Cube stays
+    /// ownerless rather than going to the wrong account.
+    fn restoring_account(&self) -> Option<settings::ConnectOwner> {
+        match &self.ghost_claim {
+            Some((_, account)) if *account != self.connect_account_id() => None,
+            _ => self.creating_account(),
+        }
     }
 
     /// Whether `cube` belongs to a different Connect account than the one
@@ -14972,6 +14987,25 @@ mod tests {
             "restore must not stage a seed phrase for backup"
         );
 
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A phrase restore is a creation: the account signed in while it runs
+    /// owns the restored Cube, a restore made signed out leaves it ownerless,
+    /// and a ghost's Cube never goes to an account other than the one that
+    /// listed it. (The write itself needs the macOS data-protection keychain,
+    /// which unsigned test builds lack, so the owner choice is tested here.)
+    #[test]
+    fn a_phrase_restore_is_owned_by_the_account_signed_in_at_restore() {
+        let dir = tmp_datadir("restore-owner");
+        let mut home = signed_in_home_with_datadir(&dir);
+        assert_eq!(home.restoring_account().map(|o| o.user_id), Some(7));
+        home.ghost_claim = Some(("ghost".to_string(), Some(7)));
+        assert_eq!(home.restoring_account().map(|o| o.user_id), Some(7));
+        home.ghost_claim = Some(("ghost".to_string(), Some(8)));
+        assert_eq!(home.restoring_account(), None);
+        let signed_out = home_with_datadir(&dir);
+        assert_eq!(signed_out.restoring_account(), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -481,8 +481,8 @@ pub struct PasskeyMetadata {
 /// no owner yet — a later sync (or a Cube already marked synced before owners
 /// were tracked) must not attribute it to whoever happens to be signed in.
 /// Every sync path (catch-up, the creation's registration reply, a remote
-/// update such as a rename) now passes `None`: the creation paths record the
-/// owner on disk themselves, and an ownerless Cube was made signed out, so no
+/// update such as a rename) now passes `None`: the creation paths (PIN,
+/// passkey and phrase restore) record the owner on disk themselves, and an ownerless Cube was made signed out, so no
 /// account that signs in or acts on it later has a claim to it.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
