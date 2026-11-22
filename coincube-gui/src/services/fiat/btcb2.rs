@@ -3,7 +3,7 @@
 use serde::Deserialize;
 
 use super::{
-    api::{GetPriceResult, PriceApiError},
+    api::{is_usable_price, GetPriceResult, PriceApiError},
     Currency,
 };
 use crate::services::{
@@ -70,8 +70,7 @@ impl Btcb2Quote {
         if self.stale
             || !self.median
             || self.fiat != currency.to_string()
-            || !self.price.is_finite()
-            || self.price <= 0.0
+            || !is_usable_price(self.price)
             || !(1..=2).contains(&self.sources.len())
             || !timestamp_fresh(self.updated_at, now)
         {
@@ -79,8 +78,7 @@ impl Btcb2Quote {
         }
         if self.sources.iter().any(|source| {
             !matches!(source.name.as_str(), "nonkyc" | "neoxa")
-                || !source.price.is_finite()
-                || source.price <= 0.0
+                || !is_usable_price(source.price)
                 || !timestamp_fresh(source.at, now)
                 || !market_timestamp_fresh(source.market_at, now)
                 || source.at > source.market_at

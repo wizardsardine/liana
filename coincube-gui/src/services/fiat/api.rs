@@ -4,6 +4,11 @@ use async_trait::async_trait;
 
 use crate::services::http::NotSuccessResponseInfo;
 
+/// A quote represents a finite, strictly positive amount of fiat per coin.
+pub(super) fn is_usable_price(value: f64) -> bool {
+    value.is_finite() && value > 0.0
+}
+
 #[derive(Debug, Clone)]
 pub struct GetPriceResult {
     pub value: f64,
@@ -60,8 +65,18 @@ pub trait PriceApi {
 
 #[cfg(test)]
 mod tests {
-    use super::PriceApiError;
+    use super::{is_usable_price, PriceApiError};
     use crate::services::http::NotSuccessResponseInfo;
+
+    #[test]
+    fn usable_price_requires_a_finite_strictly_positive_value() {
+        for value in [f64::NAN, f64::NEG_INFINITY, -1.0, -0.0, 0.0, f64::INFINITY] {
+            assert!(!is_usable_price(value), "{}", value);
+        }
+        for value in [f64::MIN_POSITIVE, 0.125, f64::MAX] {
+            assert!(is_usable_price(value), "{}", value);
+        }
+    }
 
     #[test]
     fn display_renders_actionable_error_messages() {
