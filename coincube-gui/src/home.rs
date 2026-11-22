@@ -2121,10 +2121,13 @@ impl Home {
                 );
                 self.cube_sync_errors.remove(&cube_id);
                 let network_dir = self.datadir_path.network_directory(network);
-                let owner = self.connect_owner();
+                // The owner was recorded on disk when the Cube was created.
+                // Whoever is active when this reply lands may be a different
+                // account (or one that signed in after a signed-out
+                // creation), so an ownerless Cube stays ownerless.
                 Task::perform(
                     async move {
-                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                        settings::mark_cube_synced(&network_dir, &cube_id, None)
                             .await
                             .ok();
                     },
@@ -3640,19 +3643,23 @@ impl Home {
             );
             self.open_created_cube = Some(cube.id.clone());
             reload_task
-        } else if cube.connect_owner.as_ref().is_some_and(|owner| {
-            self.connect_account.user.as_ref().map(|u| u.id) != Some(owner.user_id)
-        }) {
+        } else if self.connect_account.authenticated_client().is_some()
+            && cube.connect_owner.as_ref().is_some_and(|owner| {
+                self.connect_account.user.as_ref().map(|u| u.id) != Some(owner.user_id)
+            })
+        {
             // The account signed in when the Cube was created owns it. If
             // another account (or none with a loaded profile) is active now,
             // registering here would put the Cube under the wrong account;
             // it stays unsynced for catch-up under its owner.
+            // It is hidden from this account, so it is not auto-opened
+            // either: a pending open would fire, unprompted, once its owner
+            // signs back in.
             tracing::warn!(
                 "Cube {} was created under another Connect account; \
                  not registering it with the current account",
                 cube.id
             );
-            self.open_created_cube = Some(cube.id.clone());
             reload_task
         } else if let Some(client) = self.connect_account.authenticated_client() {
             let cube_id = cube.id.clone();
@@ -15846,7 +15853,44 @@ mod tests {
             out
         );
         assert!(home.open_after_registration.is_none());
-        assert_eq!(home.open_created_cube.as_deref(), Some(cube.id.as_str()));
+        assert!(
+            home.open_created_cube.is_none(),
+            "a Cube hidden from this account must not be auto-opened later"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The reply to a creation's registration does not record whoever is
+    /// active when it lands: a Cube created signed out (or before the
+    /// profile loaded) stays ownerless even if an account signs in, or
+    /// switches, before the reply arrives.
+    #[test]
+    fn a_registration_reply_does_not_claim_an_ownerless_cube() {
+        let dir = tmp_datadir("register-reply-no-claim");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let cube = CubeSettings::new("Unowned".to_string(), Network::Bitcoin);
+        let network_dir = CoincubeDirectory::new(dir.clone()).network_directory(Network::Bitcoin);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(settings::SETTINGS_FILE_NAME),
+            serde_json::to_vec(&settings::Settings {
+                cubes: vec![cube.clone()],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let _ = drain(home.update(Message::CubeRemoteRegistered {
+            cube_id: cube.id.clone(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response(&cube.id)),
+        }));
+        let stored = cubes_on_disk(&dir);
+        let [stored] = stored.as_slice() else {
+            panic!("expected one Cube on disk, got {:?}", stored);
+        };
+        assert!(stored.remote_synced);
+        assert_eq!(stored.connect_owner, None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
