@@ -28,7 +28,7 @@ use coincube_ui::{
         amount::*,
         button, card,
         collapse::Collapse,
-        form, separation,
+        form, separation, spinner,
         text::{self, *},
     },
     icon, theme,
@@ -1554,7 +1554,8 @@ pub fn broadcast_action_with_identity_review<'a>(
                         button::primary(None, localized_copy("Broadcast"))
                             .on_press(Message::Spend(SpendTxMessage::Confirm))
                     },
-                )),
+                ))
+                .push_maybe(broadcasting.then(|| broadcast_status(chain))),
         )
         .width(Length::Fixed(if conflicting_txids.is_empty() {
             400.0
@@ -1563,6 +1564,39 @@ pub fn broadcast_action_with_identity_review<'a>(
         }))
         .into()
     }
+}
+
+/// The broadcast in flight, with moving dots: a busy network or a slow
+/// server can hold the daemon's reply for minutes, and a still dialog looks
+/// stuck.
+fn broadcast_status<'a>(chain: crate::chain::ChainId) -> Element<'a, Message> {
+    Column::new()
+        .spacing(4)
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(
+                    p2_regular(localized_format!(
+                        "Sending to {}",
+                        "Enviando a {}",
+                        crate::chain::canonical_network_name(chain)
+                    ))
+                    .style(theme::text::secondary),
+                )
+                .push(
+                    Container::new(spinner::ellipsis(|dots| {
+                        p2_regular(dots).style(theme::text::secondary)
+                    }))
+                    .width(Length::Fixed(20.0)),
+                ),
+        )
+        .push(
+            caption(localized_copy(
+                "This can take a few minutes when the network is busy. Keep this open.",
+            ))
+            .style(theme::text::secondary),
+        )
+        .into()
 }
 
 /// Repeat the output association next to the irreversible broadcast action.
@@ -4042,6 +4076,46 @@ mod tests {
             &image,
             true,
         );
+    }
+
+    /// While the daemon's broadcast is in flight the dialog says where it is
+    /// sending and that a busy network can take minutes; before and after,
+    /// it doesn't.
+    #[test]
+    fn a_broadcast_in_flight_says_it_is_sending() {
+        let quote = quote();
+        let image = image_handle();
+        let render = |name, broadcasting| {
+            capture::inspect_full_window(
+                name,
+                broadcast_action_with_identity_review(
+                    crate::chain::ChainId::BitcoinBlake2b,
+                    &HashSet::new(),
+                    false,
+                    broadcasting,
+                    None,
+                    "40,000 sats",
+                    &quote,
+                    &image,
+                    true,
+                    None,
+                    BroadcastReceipt::default(),
+                ),
+                (1200, 800),
+                "dark",
+                theme::Theme::dark(),
+            )
+        };
+        let sending = render("psbt-broadcast-sending", true);
+        assert!(sending.contains("Broadcasting…"));
+        assert!(sending.contains(&format!(
+            "Sending to {}",
+            crate::chain::canonical_network_name(crate::chain::ChainId::BitcoinBlake2b)
+        )));
+        assert!(sending
+            .contains("This can take a few minutes when the network is busy. Keep this open."));
+        let idle = render("psbt-broadcast-idle", false);
+        assert!(!idle.contains("Keep this open."));
     }
 
     #[test]

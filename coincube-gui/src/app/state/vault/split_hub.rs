@@ -185,6 +185,8 @@ pub struct SplitHubPanel {
     qr: Option<qr_code::Data>,
     address_error: Option<String>,
     working: bool,
+    /// Where the build in flight is, once it says.
+    stage: Option<split_coins::BuildStage>,
     error: Option<String>,
 }
 
@@ -202,6 +204,7 @@ impl SplitHubPanel {
             qr: None,
             address_error: None,
             working: false,
+            stage: None,
             error: None,
         }
     }
@@ -333,6 +336,7 @@ impl SplitHubPanel {
             fee_failed: self.fee_failed,
             vbytes,
             working: self.working,
+            stage: self.stage.filter(|_| self.working),
             error: self.error.clone(),
             copy,
             waiting_to_sign,
@@ -359,6 +363,7 @@ impl SplitHubPanel {
             .then(|| cache.split_keys().first().map(|(coin, _)| coin.outpoint))
             .flatten();
         self.working = true;
+        self.stage = None;
         self.error = None;
         Task::done(Message::SplitRequest {
             method: flow.method,
@@ -381,6 +386,7 @@ impl SplitHubPanel {
 
     fn set_result(&mut self, result: Result<Box<split_coins::SplitRecord>, String>) {
         self.working = false;
+        self.stage = None;
         match result {
             Ok(_) => {
                 self.excluded.clear();
@@ -443,6 +449,11 @@ impl State for SplitHubPanel {
             }
             Message::SplitAddress(result) => self.set_address(result),
             Message::SplitPrepared(result) => self.set_result(result),
+            Message::SplitBuildStage(stage) => {
+                if self.working {
+                    self.stage = Some(stage);
+                }
+            }
             Message::Labels(Ok(labels)) => self.labels = labels,
             _ => {}
         }
@@ -722,11 +733,29 @@ mod tests {
         assert!(panel.flow(&cache).coins[0].included);
         let _ = key;
 
+        // The build reports where it is; the result clears it.
+        let _ = panel.update(
+            None,
+            &cache,
+            Message::SplitBuildStage(split_coins::BuildStage::CheckingKey),
+        );
+        assert_eq!(
+            panel.flow(&cache).stage,
+            Some(split_coins::BuildStage::CheckingKey)
+        );
         let _ = panel.update(
             None,
             &cache,
             Message::SplitPrepared(Err("Couldn't build".into())),
         );
+        assert_eq!(panel.flow(&cache).stage, None);
+        // A late stage after the result doesn't bring the status back.
+        let _ = panel.update(
+            None,
+            &cache,
+            Message::SplitBuildStage(split_coins::BuildStage::Building),
+        );
+        assert_eq!(panel.flow(&cache).stage, None);
         assert_eq!(
             panel.split_progress_for_test(),
             (false, Some("Couldn't build".into()))

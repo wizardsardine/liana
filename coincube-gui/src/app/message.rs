@@ -345,6 +345,8 @@ pub enum Message {
         key: Option<coincube_core::miniscript::bitcoin::OutPoint>,
         feerate_vb: u64,
     },
+    /// A split build reached this stage, for the review's status line.
+    SplitBuildStage(crate::services::split_coins::BuildStage),
     /// The split was built and stored with the daemon, or why not.
     SplitPrepared(Result<Box<crate::services::split_coins::SplitRecord>, String>),
     /// Open Send with exactly these coins chosen.

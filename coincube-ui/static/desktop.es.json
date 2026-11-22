@@ -3469,5 +3469,11 @@
   "Pays 1 recipient": "Paga a 1 destinatario",
   "This Vault": "Este Vault",
   "Not a standard address": "No es una dirección estándar",
-  "Primary path": "Ruta principal"
+  "Primary path": "Ruta principal",
+  "Building the split": "Preparando la separación",
+  "Checking the split key on both chains": "Comprobando la clave dividida en ambas cadenas",
+  "Checking the coins": "Comprobando las monedas",
+  "Building the transaction": "Preparando la transacción",
+  "This can take a minute. Keep this open.": "Puede tardar un minuto. Mantén esto abierto.",
+  "This can take a few minutes when the network is busy. Keep this open.": "Puede tardar unos minutos si la red está ocupada. Mantén esto abierto."
 }
