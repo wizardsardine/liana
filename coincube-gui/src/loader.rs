@@ -875,6 +875,15 @@ impl Loader {
                     Message::ForkNodeResynced,
                 )
             }
+            // A session revoked while the deletion ran keeps its refusal: the
+            // result must neither rebuild the open without auth nor replace
+            // the reopen guidance (Retry refuses the same way). Only the
+            // resync's own in-flight step is advanced.
+            Message::ForkNodeResynced(_)
+                if self.fork_session_revoked || !matches!(self.step, Step::Connecting) =>
+            {
+                Task::none()
+            }
             // The user asked for this start by deleting the chain data, so it
             // is not held to the Connect retry delay the Retry button applies.
             Message::ForkNodeResynced(Ok(())) => self.rebuild(),
@@ -2414,6 +2423,36 @@ mod tests {
         assert!(
             matches!(&loader.step, Step::Error(e) if e.to_string().contains("node still running"))
         );
+        // A late result for a step that has moved on is ignored.
+        let _ = loader.update(Message::ForkNodeResynced(Err("late".into())));
+        assert!(matches!(&loader.step, Step::Error(e) if !e.to_string().contains("late")));
+    }
+
+    // A session revoked while the chain data was being deleted stays latched:
+    // the resync's result neither rebuilds the open without auth nor replaces
+    // the reopen guidance.
+    #[test]
+    fn a_resync_finishing_after_revocation_keeps_the_refusal() {
+        for result in [Ok(()), Err("deleted nothing".to_string())] {
+            let mut loader = loader_without_wallet(false);
+            loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+            loader.step = Step::Error(Box::new(pruned_revalidation_error()));
+            let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+            assert!(matches!(loader.step, Step::Connecting));
+            loader.invalidate_fork_session();
+            let shown = match &loader.step {
+                Step::Error(e) => e.to_string(),
+                _ => "not an error".to_string(),
+            };
+            let _ = loader.update(Message::ForkNodeResynced(result.clone()));
+            assert!(loader.fork_session_revoked, "{:?}", result);
+            assert!(loader.fork_task.is_none(), "{:?}", result);
+            let after = match &loader.step {
+                Step::Error(e) => e.to_string(),
+                _ => "not an error".to_string(),
+            };
+            assert_eq!(after, shown, "{:?}", result);
+        }
     }
 
     #[test]

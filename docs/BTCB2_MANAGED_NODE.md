@@ -54,8 +54,10 @@ any later pin bump.
   flavour cannot be read from its subversion, but its build can: the start
   reads `getnetworkinfo.subversion` and reuses the node only when it is the
   pinned build (`/Satoshi:29.5.1/Knots:20260508/`, `is_pinned_blake2b_build`).
-  Any other build, or a subversion that cannot be read, is stopped and the
-  pinned binary started in its place, as a Bitcoin flavour switch is. The
+  A positively read other build is stopped and the pinned binary started in
+  its place, as a Bitcoin flavour switch is. A subversion that still cannot be
+  read after a few attempts refuses the start and leaves that node running: it
+  may be a busy, healthy node another Cube shares. The
   replacement binary is resolved before anything is stopped, and the stop is
   refused while another app process owns the node. A freshly started node that
   reports another build is killed and refused.
@@ -70,7 +72,8 @@ any later pin bump.
   or 5 GB prune targets), Knots exits with "The active chain must be
   revalidated for current consensus rules, but required block data has been
   pruned". The start reads only what that launch appended to the node's
-  `debug.log`, recognises the message, stops respawning and reports
+  `debug.log` (after a startup log shrink, only what follows the last
+  startup banner), recognises the message, stops respawning and reports
   `StartInternalBitcoindError::PrunedRevalidationRequired`. The Cube's error
   page then offers **Delete chain data and resync** beside Retry. It deletes
   only `blocks/` and `chainstate/` for that network (directly under
@@ -79,11 +82,17 @@ any later pin bump.
   starts the Cube again, so the node resyncs from scratch while Connect keeps
   serving the wallet. `bitcoin.conf`, the cookie, node wallets, the log and
   the Bitcoin node's datadir are untouched. The resync is refused while any
-  Cube owns the node, while a node still answers on its RPC port, or when the
-  managed configuration cannot be read (`resync_managed_fork_chain_data`).
+  Cube owns the node, while the node's own datadir lock (`.lock`, the same
+  `fcntl`/`LockFileEx` lock `bitcoind` takes) is held by another process,
+  while a node still answers on its RPC port, or when that network has no
+  readable managed configuration (`resync_managed_fork_chain_data`). The
+  datadir lock is held through the deletion. A resync that finishes after the
+  Connect session was revoked keeps the revocation's refusal.
 
 Not covered: the background installer and Settings still drop Blake2b
 node-setup messages, so the loader is the only re-provisioning path. The
+unpack writes the binary in place, so an app killed mid-unpack can leave a
+truncated binary that a later open will not replace. The
 positive install path is only exercised against the real signed release; unit
 tests cover the skip, fetch and refusal cases with the vendored manifest.
 
