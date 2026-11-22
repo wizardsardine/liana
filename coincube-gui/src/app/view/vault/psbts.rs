@@ -562,13 +562,23 @@ pub fn proposal_subline(tx: &SpendTx, bitcoin_unit: BitcoinDisplayUnit, mask: bo
 
 /// `threshold` short bars, `signed` of them filled.
 pub fn signature_pips<'a>(signed: usize, threshold: usize) -> Element<'a, Message> {
+    sized_signature_pips(signed, threshold, 22.0, 6.0)
+}
+
+/// [`signature_pips`] at a given pip size; the detail's meter uses 32×8.
+pub fn sized_signature_pips<'a>(
+    signed: usize,
+    threshold: usize,
+    width: f32,
+    height: f32,
+) -> Element<'a, Message> {
     (0..threshold.max(1))
         .fold(Row::new().spacing(4), |row, i| {
             let on = i < signed;
             row.push(
                 Container::new(Space::new())
-                    .width(Length::Fixed(22.0))
-                    .height(Length::Fixed(6.0))
+                    .width(Length::Fixed(width))
+                    .height(Length::Fixed(height))
                     .style(move |t: &Theme| iced::widget::container::Style {
                         background: Some(Background::Color(if on {
                             t.colors.shell.good
@@ -578,7 +588,7 @@ pub fn signature_pips<'a>(signed: usize, threshold: usize) -> Element<'a, Messag
                         border: Border {
                             color: t.colors.shell.line,
                             width: if on { 0.0 } else { 1.0 },
-                            radius: 3.0.into(),
+                            radius: (height / 2.0).into(),
                         },
                         ..Default::default()
                     }),

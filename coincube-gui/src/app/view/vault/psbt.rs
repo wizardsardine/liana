@@ -259,44 +259,21 @@ pub fn proposal_sections<'a>(
         None => broadcast_ready,
         Some(pill) => pill.review.signatures_complete(),
     };
-    let inputs = if mode == BodyMode::Detail {
-        history_inputs_view(
-            &tx.coins,
-            &tx.psbt.unsigned_tx,
-            &tx.labels,
-            labels_editing,
-            bitcoin_unit,
-            mask_amounts,
-        )
-    } else {
-        inputs_view(
-            &tx.coins,
-            &tx.psbt.unsigned_tx,
-            &tx.labels,
-            labels_editing,
-            bitcoin_unit,
-        )
-    };
     let ledger = Column::new()
-        .spacing(16)
+        .spacing(12)
         .width(Length::Fill)
         .push(tt::section(localized_copy("Where the coins go")))
-        .push(inputs)
-        .push(outputs_view_with_identities_masked(
-            &tx.psbt.unsigned_tx,
+        .push(ledger_view(
+            tx,
             network,
-            &tx.change_indexes,
-            &tx.labels,
             labels_editing,
             bitcoin_unit,
-            tx.is_single_payment().is_some(),
-            false,
+            mask_amounts,
             output_identities,
             cache.theme_mode,
-            mask_amounts,
         ));
     let side = Column::new()
-        .spacing(16)
+        .spacing(14)
         .width(Length::Fixed(352.0))
         .push(signatures_card(
             tx,
@@ -305,9 +282,23 @@ pub fn proposal_sections<'a>(
             signatures_complete,
         ))
         .push_maybe(replay.as_ref().map(|pill| {
-            Container::new(replay_status_view(pill)).style(theme::tenshu::surface::card)
+            Container::new(replay_status_view(pill))
+                .padding([16, 18])
+                .width(Length::Fill)
+                .style(theme::tenshu::surface::card)
         }))
         .push(share_card(action_scope, tx, saved, currently_signing));
+    let actions = allow_signing
+        .then(|| {
+            primary_action_row(
+                action_scope,
+                tx,
+                currently_signing,
+                signatures_complete,
+                broadcast_ready,
+            )
+        })
+        .flatten();
     Column::new()
         .spacing(20)
         .push(detail_head(
@@ -317,25 +308,13 @@ pub fn proposal_sections<'a>(
             bitcoin_unit,
             mask_amounts,
             signatures_complete,
+            actions,
         ))
-        .push_maybe(
-            allow_signing
-                .then(|| {
-                    primary_action_row(
-                        action_scope,
-                        tx,
-                        currently_signing,
-                        signatures_complete,
-                        broadcast_ready,
-                    )
-                })
-                .flatten(),
-        )
         .push_maybe(detail_note(tx, signatures_complete, broadcast_ready))
         .push_maybe(identity_summary)
         .push(
             Row::new()
-                .spacing(32)
+                .spacing(40)
                 .align_y(Alignment::Start)
                 .push(ledger)
                 .push(side),
@@ -384,17 +363,14 @@ pub fn psbt_view<'a>(
         cache,
         Column::new()
             .spacing(20)
-            .push(
-                secondary_action(
-                    action_id(action_scope, "overview.back"),
-                    localized_copy(if back_to_activity {
-                        "‹ Activity"
-                    } else {
-                        "‹ All PSBTs"
-                    }),
-                )
-                .on_press(Message::Close),
-            )
+            .push(back_link(
+                action_id(action_scope, "overview.back"),
+                localized_copy(if back_to_activity {
+                    "Activity"
+                } else {
+                    "PSBT proposals"
+                }),
+            ))
             .push(proposal_sections(
                 action_scope,
                 cache,
@@ -424,7 +400,29 @@ pub fn psbt_view<'a>(
     )
 }
 
-/// Title (the editable label), status line, amount and fee.
+/// A quiet "‹ Where you came from" link above the detail.
+fn back_link<'a>(id: Id, label: &'static str) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    Row::new()
+        .push(
+            coincube_ui::widget::action::Action::new(
+                id,
+                Row::new()
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .push(icon::previous_icon().size(14))
+                    .push(tt::label(label)),
+                Message::FocusAction,
+            )
+            .padding([4, 6])
+            .style(theme::button::link)
+            .on_press(Message::Close),
+        )
+        .into()
+}
+
+/// Title (the editable label) and status line, then the amount, where it
+/// goes and the fee; the proposal's one action sits to the right.
 fn detail_head<'a>(
     cache: &'a Cache,
     tx: &'a SpendTx,
@@ -432,10 +430,12 @@ fn detail_head<'a>(
     bitcoin_unit: BitcoinDisplayUnit,
     mask_amounts: bool,
     signatures_complete: bool,
+    actions: Option<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     use coincube_ui::component::tenshu::text as tt;
     use coincube_ui::theme::tenshu::text as tone_text;
     let txid = tx.psbt.unsigned_tx.compute_txid().to_string();
+    let short_txid: String = txid.chars().take(8).collect();
     let label_keys = match tx.is_single_payment() {
         Some(outpoint) => vec![outpoint.to_string(), txid],
         None => vec![txid],
@@ -443,42 +443,41 @@ fn detail_head<'a>(
     let label_key = &label_keys[0];
     let title = if let Some(label) = labels_editing.get(label_key) {
         label::label_editing(label_keys, label, 20)
-    } else if let Some(label) = tx.labels.get(label_key).filter(|label| !label.is_empty()) {
-        label::label_editable(label_keys, Some(label), 20)
     } else {
+        let stored = tx.labels.get(label_key).filter(|label| !label.is_empty());
         titled_label(
             label_keys,
-            crate::app::view::vault::psbts::proposal_title(tx),
+            stored
+                .cloned()
+                .unwrap_or_else(|| crate::app::view::vault::psbts::proposal_title(tx)),
+            stored.cloned().unwrap_or_default(),
         )
     };
     let (status, tone) = detail_status(tx, signatures_complete);
+    let dot = || tt::body("·").style(tone_text::muted);
     let mut status_line = Row::new()
-        .spacing(6)
+        .spacing(8)
         .align_y(Alignment::Center)
         .push(tt::label(status).style(move |t: &theme::Theme| tone_text::tone(t, tone)))
-        .push(tt::body("·").style(tone_text::muted))
+        .push(dot())
+        .push(tt::body(format!("PSBT {short_txid}")).style(tone_text::muted))
+        .push(dot())
         .push(
             tt::body(crate::chain::canonical_network_name(cache.chain())).style(tone_text::muted),
         );
     if !tx.sigs.recovery_paths().is_empty() {
         status_line = status_line
-            .push(tt::body("·").style(tone_text::muted))
+            .push(dot())
             .push(tt::body(localized_copy("Recovery path available")).style(tone_text::muted));
     }
-    let amount: Element<'a, Message> = if tx.is_send_to_self() {
-        tt::title(localized_copy("Self-transfer")).size(32).into()
-    } else if mask_amounts {
-        tt::title("••••").size(32).into()
+    let (moved, to_line) = headline_amount(tx);
+    let amount: Element<'a, Message> = if mask_amounts {
+        tt::title("••••").size(34).into()
     } else {
-        amount_with_size_and_unit(&tx.spend_amount, 32, bitcoin_unit).into()
+        amount_with_size_and_unit(&moved, 34, bitcoin_unit).into()
     };
-    let fee: Element<'a, Message> = match tx.fee_amount {
-        None => tt::body(localized_copy(
-            "Missing information about transaction inputs",
-        ))
-        .style(tone_text::muted)
-        .into(),
-        Some(fee) => Row::new()
+    let fee: Option<Element<'a, Message>> = tx.fee_amount.map(|fee| {
+        Row::new()
             .spacing(6)
             .align_y(Alignment::Center)
             .push(tt::body(localized_copy("Network fee")).style(tone_text::muted))
@@ -494,16 +493,52 @@ fn detail_head<'a>(
                 tx.min_feerate_vb()
                     .map(|rate| tt::body(format!("· ~{} sat/vB", rate)).style(tone_text::muted)),
             )
-            .into(),
-    };
-    Column::new()
+            .into()
+    });
+    let text = Column::new()
         .spacing(6)
+        .width(Length::Fill)
         .push(title)
         .push(status_line)
-        .push(Space::new().height(8))
-        .push(amount)
-        .push(fee)
+        .push(Space::new().height(14))
+        .push(
+            Row::new()
+                .spacing(10)
+                .align_y(Alignment::End)
+                .push(amount)
+                .push(tt::body(to_line).style(tone_text::muted)),
+        )
+        .push(fee.unwrap_or_else(|| {
+            tt::body(localized_copy(
+                "Missing information about transaction inputs",
+            ))
+            .style(tone_text::muted)
+            .into()
+        }));
+    Row::new()
+        .spacing(24)
+        .align_y(Alignment::Start)
+        .push(text)
+        .push_maybe(actions)
         .into()
+}
+
+/// The headline amount and where it goes: what leaves the Vault for a
+/// payment, everything sent for a self-transfer.
+fn headline_amount(tx: &SpendTx) -> (coincube_core::miniscript::bitcoin::Amount, String) {
+    if tx.is_send_to_self() {
+        let total = tx.psbt.unsigned_tx.output.iter().map(|o| o.value).sum();
+        return (total, localized_copy("to this Vault").to_string());
+    }
+    let recipients = (0..tx.psbt.unsigned_tx.output.len())
+        .filter(|i| !tx.change_indexes.contains(i))
+        .count();
+    let to_line = if recipients == 1 {
+        localized_copy("to 1 recipient").to_string()
+    } else {
+        localized_format!("to {} recipients", "a {} destinatarios", recipients)
+    };
+    (tx.spend_amount, to_line)
 }
 
 /// The detail's status word. Unlike the list's progress hint, "Ready to
@@ -525,8 +560,9 @@ fn detail_status(
     }
 }
 
-/// The proposal's derived name, with the same edit affordance as a label.
-fn titled_label<'a>(items: Vec<String>, title: String) -> Element<'a, Message> {
+/// The proposal's name (its label, or a derived one) with a quiet edit
+/// pencil; `current` seeds the editor.
+fn titled_label<'a>(items: Vec<String>, title: String, current: String) -> Element<'a, Message> {
     use coincube_ui::component::tenshu::text as tt;
     Row::new()
         .spacing(8)
@@ -536,7 +572,7 @@ fn titled_label<'a>(items: Vec<String>, title: String) -> Element<'a, Message> {
             Button::new(icon::pencil_icon().size(14).style(theme::text::secondary))
                 .padding(4)
                 .style(theme::button::transparent)
-                .on_press(Message::Label(items, LabelMessage::Edited(String::new()))),
+                .on_press(Message::Label(items, LabelMessage::Edited(current))),
         )
         .into()
 }
@@ -638,6 +674,340 @@ fn note<'a>(
     .into()
 }
 
+/// "Where the coins go": the coins spent, then each payment, change and the
+/// fee, one quiet row each with the amount on the right.
+#[allow(clippy::too_many_arguments)]
+fn ledger_view<'a>(
+    tx: &'a SpendTx,
+    network: Network,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+    bitcoin_unit: BitcoinDisplayUnit,
+    mask_amounts: bool,
+    identities: &'a [(usize, crate::services::branta::LookupResult)],
+    theme_mode: coincube_ui::theme::palette::ThemeMode,
+) -> Element<'a, Message> {
+    let unsigned = &tx.psbt.unsigned_tx;
+    let txid = unsigned.compute_txid();
+    let labels = &tx.labels;
+    let value = move |amount: coincube_core::miniscript::bitcoin::Amount| -> Element<'a, Message> {
+        if mask_amounts {
+            coincube_ui::component::tenshu::text::label("••••").into()
+        } else {
+            amount_with_size_and_unit(&amount, 14, bitcoin_unit).into()
+        }
+    };
+
+    let mut column = Column::new().width(Length::Fill).push(hairline());
+
+    let coins = unsigned.input.len();
+    column = column.push(ledger_group(
+        icon::coins_icon(),
+        if coins == 1 {
+            localized_copy("Spends 1 coin").to_string()
+        } else {
+            localized_format!("Spends {} coins", "Gasta {} monedas", coins)
+        },
+        false,
+    ));
+    for input in &unsigned.input {
+        let outpoint = input.previous_output.to_string();
+        let coin = tx.coins.get(&input.previous_output);
+        let fallback = coin
+            .and_then(|c| labels.get(&c.address.to_string()))
+            .filter(|l| !l.is_empty())
+            .cloned()
+            .unwrap_or_else(|| localized_copy("Coin").to_string());
+        column = column.push(ledger_row(
+            ledger_title(
+                vec![outpoint.clone()],
+                labels.get(&outpoint),
+                fallback,
+                labels_editing.get(&outpoint),
+                true,
+                None,
+            ),
+            Some(copyable(outpoint)),
+            coin.map(|c| value(c.amount)),
+        ));
+    }
+
+    let self_transfer = tx.is_send_to_self();
+    let payments: Vec<usize> = (0..unsigned.output.len())
+        .filter(|i| self_transfer || !tx.change_indexes.contains(i))
+        .collect();
+    let single = tx.is_single_payment().is_some();
+    column = column.push(ledger_group(
+        icon::arrow_left_right_icon(),
+        if self_transfer {
+            localized_copy("Sends to this Vault").to_string()
+        } else if payments.len() == 1 {
+            localized_copy("Pays 1 recipient").to_string()
+        } else {
+            localized_format!(
+                "Pays {} recipients",
+                "Paga a {} destinatarios",
+                payments.len()
+            )
+        },
+        true,
+    ));
+    for i in payments {
+        let output = &unsigned.output[i];
+        let outpoint = OutPoint {
+            txid,
+            vout: i as u32,
+        }
+        .to_string();
+        let addr = Address::from_script(&output.script_pubkey, network)
+            .ok()
+            .map(|a| a.to_string());
+        let keys = if single {
+            vec![outpoint.clone(), txid.to_string()]
+        } else {
+            vec![outpoint.clone()]
+        };
+        let editing = labels_editing.get(&outpoint).or_else(|| {
+            single
+                .then(|| labels_editing.get(&txid.to_string()))
+                .flatten()
+        });
+        let fallback = addr
+            .as_ref()
+            .and_then(|a| labels.get(a))
+            .filter(|l| !l.is_empty())
+            .cloned()
+            .unwrap_or_else(|| {
+                localized_copy(if self_transfer {
+                    "Self-transfer"
+                } else {
+                    "Recipient"
+                })
+                .to_string()
+            });
+        column = column.push(ledger_row(
+            ledger_title(
+                keys,
+                labels.get(&outpoint),
+                fallback,
+                editing,
+                true,
+                self_transfer.then(|| localized_copy("This Vault")),
+            ),
+            Some(match addr {
+                Some(addr) => copyable(addr),
+                None => unknown_script(),
+            }),
+            Some(value(output.value)),
+        ));
+        if let Some((_, crate::services::branta::LookupResult::Identified(matches))) =
+            identities.iter().find(|(vout, _)| *vout == i)
+        {
+            for (identity_index, identity) in matches.iter().enumerate() {
+                column = column.push(
+                    Container::new(crate::app::view::shared::recipient_identity::card(
+                        identity,
+                        Message::OpenVaultRecipientIdentity(i, identity_index),
+                        theme_mode,
+                    ))
+                    .padding([8, 0]),
+                );
+            }
+        }
+    }
+
+    if !self_transfer {
+        for &i in &tx.change_indexes {
+            let Some(output) = unsigned.output.get(i) else {
+                continue;
+            };
+            let addr = Address::from_script(&output.script_pubkey, network)
+                .ok()
+                .map(|a| a.to_string());
+            column = column.push(ledger_row(
+                ledger_title(
+                    Vec::new(),
+                    None,
+                    localized_copy("Change").to_string(),
+                    None,
+                    false,
+                    Some(localized_copy("Back to this Vault")),
+                ),
+                Some(match addr {
+                    Some(addr) => copyable(addr),
+                    None => unknown_script(),
+                }),
+                Some(value(output.value)),
+            ));
+        }
+    }
+
+    if let Some(fee) = tx.fee_amount {
+        use coincube_ui::component::tenshu::text as tt;
+        use coincube_ui::theme::tenshu::text as tone_text;
+        column = column.push(ledger_row(
+            tt::label(localized_copy("Network fee")).into(),
+            tx.min_feerate_vb().map(|rate| {
+                tt::caption(format!("~{} sat/vB · {} vB", rate, tx.max_vbytes))
+                    .style(tone_text::muted)
+                    .into()
+            }),
+            Some(value(fee)),
+        ));
+    }
+    column.into()
+}
+
+/// A 1px rule in the shell's line colour.
+fn hairline<'a>() -> Element<'a, Message> {
+    Container::new(Space::new())
+        .width(Length::Fill)
+        .height(Length::Fixed(1.0))
+        .style(|t: &theme::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(t.colors.shell.line)),
+            ..Default::default()
+        })
+        .into()
+}
+
+/// The small muted heading above a group of ledger rows.
+fn ledger_group<'a>(
+    glyph: coincube_ui::widget::Text<'a>,
+    title: String,
+    spaced: bool,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    Container::new(
+        Row::new()
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .push(glyph.size(14).style(tone_text::muted))
+            .push(tt::label(title).style(tone_text::muted)),
+    )
+    .padding(iced::Padding {
+        top: if spaced { 22.0 } else { 14.0 },
+        bottom: 6.0,
+        left: 0.0,
+        right: 0.0,
+    })
+    .into()
+}
+
+/// One ledger row: who on the left (title, then a mono line), the amount on
+/// the right, a rule underneath.
+fn ledger_row<'a>(
+    title: Element<'a, Message>,
+    detail: Option<Element<'a, Message>>,
+    value: Option<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    Column::new()
+        .push(
+            Container::new(
+                Row::new()
+                    .spacing(16)
+                    .align_y(Alignment::Start)
+                    .push(
+                        Column::new()
+                            .spacing(4)
+                            .width(Length::Fill)
+                            .push(title)
+                            .push_maybe(detail),
+                    )
+                    .push_maybe(value),
+            )
+            .padding(iced::Padding {
+                top: 10.0,
+                bottom: 12.0,
+                left: 0.0,
+                right: 0.0,
+            }),
+        )
+        .push(hairline())
+        .into()
+}
+
+/// A row's title: its label (or `fallback`), an optional tag, and a quiet
+/// pencil when the label can be edited. While editing, the inline editor.
+fn ledger_title<'a>(
+    keys: Vec<String>,
+    stored: Option<&'a String>,
+    fallback: String,
+    editing: Option<&'a form::Value<String>>,
+    editable: bool,
+    tag: Option<&'static str>,
+) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    if let (true, Some(value)) = (editable, editing) {
+        return label::label_editing(keys, value, 14);
+    }
+    let stored = stored.filter(|l| !l.is_empty());
+    let current = stored.cloned().unwrap_or_default();
+    let title = stored.cloned().unwrap_or(fallback);
+    Row::new()
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .push(tt::label(title).wrapping(Wrapping::WordOrGlyph))
+        .push_maybe(tag.map(ledger_tag))
+        .push_maybe(editable.then(|| {
+            Button::new(icon::pencil_icon().size(12).style(theme::text::secondary))
+                .padding(3)
+                .style(theme::button::transparent)
+                .on_press(Message::Label(keys, LabelMessage::Edited(current)))
+        }))
+        .into()
+}
+
+fn ledger_tag<'a>(text: &'static str) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    Container::new(tt::caption(text).style(tone_text::muted))
+        .padding([1, 7])
+        .style(|t: &theme::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(t.colors.shell.hover)),
+            border: iced::Border {
+                color: t.colors.shell.line,
+                width: 1.0,
+                radius: 5.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// A muted mono value with a copy button.
+fn copyable<'a>(value: String) -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    Row::new()
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .push(
+            tt::mono(value.clone())
+                .size(12)
+                .style(tone_text::muted)
+                .wrapping(Wrapping::Glyph),
+        )
+        .push(
+            Button::new(
+                icon::clipboard_icon()
+                    .size(13)
+                    .style(theme::text::secondary),
+            )
+            .padding(4)
+            .style(theme::button::transparent)
+            .on_press(Message::Clipboard(value)),
+        )
+        .into()
+}
+
+fn unknown_script<'a>() -> Element<'a, Message> {
+    use coincube_ui::component::tenshu::text as tt;
+    use coincube_ui::theme::tenshu::text as tone_text;
+    tt::caption(localized_copy("Not a standard address"))
+        .style(tone_text::muted)
+        .into()
+}
+
 /// Each key of the reported path with Signed, Waiting or Not needed, and the
 /// other paths in one line each.
 fn signatures_card<'a>(
@@ -654,24 +1024,57 @@ fn signatures_card<'a>(
     keys.sort();
     let signed = primary_sigs.sigs_count.min(primary_sigs.threshold);
     let met = primary_sigs.sigs_count >= primary_sigs.threshold;
+    let hint = if signatures_complete {
+        localized_copy("Enough keys have signed.").to_string()
+    } else if tx.status == SpendStatus::Deprecated {
+        localized_copy("No longer collecting signatures.").to_string()
+    } else if signed == 0 {
+        localized_format!(
+            "Any {} of these {} keys can sign.",
+            "Pueden firmar {} de estas {} llaves cualesquiera.",
+            threshold,
+            keys.len()
+        )
+    } else {
+        localized_copy("Any of the waiting keys can sign.").to_string()
+    };
     let mut card = Column::new()
         .spacing(12)
         .push(
             Row::new()
                 .align_y(Alignment::Center)
                 .push(tt::section(localized_copy("Signatures")).width(Length::Fill))
-                .push(tt::caption(localized_format!(
-                    "{} of {} needed",
-                    "Se necesitan {} de {}",
-                    threshold,
-                    keys.len()
-                ))),
+                .push(tt::caption(localized_copy("Primary path")).style(tone_text::muted)),
         )
-        .push(crate::app::view::vault::psbts::signature_pips(
-            signed,
-            primary_sigs.threshold,
-        ));
-    for fg in keys {
+        .push(
+            Column::new()
+                .spacing(4)
+                .push(
+                    Row::new()
+                        .spacing(10)
+                        .align_y(Alignment::Center)
+                        .push(crate::app::view::vault::psbts::sized_signature_pips(
+                            signed,
+                            primary_sigs.threshold,
+                            32.0,
+                            8.0,
+                        ))
+                        .push(tt::label(localized_format!(
+                            "{} of {} signatures",
+                            "{} de {} firmas",
+                            signed,
+                            primary_sigs.threshold
+                        ))),
+                )
+                .push(
+                    tt::caption(hint)
+                        .style(tone_text::muted)
+                        .wrapping(Wrapping::Word),
+                ),
+        );
+    let mut rows = Column::new().push(hairline());
+    let total = keys.len();
+    for (index, fg) in keys.into_iter().enumerate() {
         let has_signed = primary_sigs.signed_pubkeys.contains_key(&fg);
         let (word, tone) = if has_signed {
             (localized_copy("Signed"), Tone::Good)
@@ -680,33 +1083,32 @@ fn signatures_card<'a>(
         } else {
             (localized_copy("Waiting"), Tone::Muted)
         };
-        let name = key_aliases
-            .get(&fg)
-            .cloned()
-            .unwrap_or_else(|| fg.to_string());
-        card = card.push(
-            Row::new()
-                .spacing(8)
-                .align_y(Alignment::Center)
-                .push(
-                    Column::new()
-                        .width(Length::Fill)
-                        .push(tt::label(name).wrapping(Wrapping::WordOrGlyph))
-                        .push(tt::caption(fg.to_string())),
-                )
-                .push(tt::caption(word).style(move |t: &theme::Theme| tone_text::tone(t, tone))),
+        let alias = key_aliases.get(&fg).filter(|a| !a.is_empty());
+        let name = Column::new()
+            .width(Length::Fill)
+            .push(
+                tt::label(alias.cloned().unwrap_or_else(|| fg.to_string()))
+                    .wrapping(Wrapping::WordOrGlyph),
+            )
+            .push_maybe(alias.map(|_| tt::mono(fg.to_string()).size(12).style(tone_text::muted)));
+        rows = rows.push(
+            Container::new(
+                Row::new()
+                    .spacing(10)
+                    .align_y(Alignment::Center)
+                    .push(icon::key_icon().size(14).style(tone_text::muted))
+                    .push(name)
+                    .push(
+                        tt::caption(word).style(move |t: &theme::Theme| tone_text::tone(t, tone)),
+                    ),
+            )
+            .padding([8, 0]),
         );
+        if index + 1 < total {
+            rows = rows.push(hairline());
+        }
     }
-    card = card.push(
-        tt::caption(if signatures_complete {
-            localized_copy("Enough keys have signed.")
-        } else if tx.status == SpendStatus::Deprecated {
-            localized_copy("No longer collecting signatures.")
-        } else {
-            localized_copy("Any of the waiting keys can sign.")
-        })
-        .wrapping(Wrapping::Word),
-    );
+    card = card.push(rows);
     for (seq, path) in desc_info.recovery_paths() {
         let (k, origins) = path.thresh_origins();
         let progress = tx
@@ -730,6 +1132,7 @@ fn signatures_card<'a>(
                 humanize_timelock(*seq),
                 progress
             ))
+            .style(tone_text::muted)
             .wrapping(Wrapping::Word),
         );
     }
@@ -811,7 +1214,10 @@ fn share_card<'a>(
             .push(
                 Column::new()
                     .width(Length::Fill)
-                    .push(tt::label("Tx ID"))
+                    .push(
+                        tt::caption(localized_copy("Transaction ID"))
+                            .style(coincube_ui::theme::tenshu::text::muted),
+                    )
                     .push(tt::mono(txid.clone()).size(12).wrapping(Wrapping::Glyph)),
             )
             .push(
@@ -3243,6 +3649,154 @@ mod tests {
             false,
         )
         .is_none());
+    }
+
+    #[test]
+    fn detail_reads_as_one_ledger_with_a_quiet_back_link() {
+        use coincube_ui::locale::{render_in, Language};
+        let fixture = crate::app::state::vault::test_support::unified::fixture();
+        let policy = fixture.descriptor.policy();
+        let mut input_coin = coin(1, 50_000, false);
+        input_coin.outpoint = fixture.psbt.unsigned_tx.input[0].previous_output;
+        let tx = SpendTx::new(
+            None,
+            fixture.psbt.clone(),
+            vec![input_coin],
+            &fixture.descriptor,
+            &coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::verification_only(),
+            Network::Signet,
+        );
+        let mut aliases = HashMap::new();
+        let (_, origins) = policy.primary_path().thresh_origins();
+        let mut keys: Vec<Fingerprint> = origins.into_keys().collect();
+        keys.sort();
+        aliases.insert(keys[0], "Ledger".to_string());
+        let labels_editing = HashMap::new();
+        let cache = Cache::default();
+        let detail = || -> Element<'_, Message> {
+            psbt_view(
+                95,
+                &cache,
+                &tx,
+                true,
+                &policy,
+                &aliases,
+                &labels_editing,
+                Network::Signet,
+                false,
+                BitcoinDisplayUnit::Sats,
+                None,
+                false,
+                &[],
+                false,
+                DeleteState::Idle,
+            )
+        };
+        let body = || -> Element<'_, Message> {
+            proposal_sections(
+                95,
+                &cache,
+                &tx,
+                true,
+                &policy,
+                &aliases,
+                &labels_editing,
+                Network::Signet,
+                false,
+                BitcoinDisplayUnit::Sats,
+                None,
+                false,
+                &[],
+                BodyMode::Detail,
+            )
+            .into()
+        };
+        for (appearance, theme) in [
+            ("dark", theme::Theme::dark()),
+            ("light", theme::Theme::light()),
+        ] {
+            let mounted = capture::inspect_wide_content(
+                "psbt-detail-ledger",
+                body(),
+                (1440, 1300),
+                appearance,
+                theme,
+                1120,
+            );
+            assert!(mounted.contains("Where the coins go"));
+            assert!(mounted.contains("Spends 1 coin"));
+            assert!(mounted.contains("Network fee"));
+            // The old per-coin cards are gone.
+            for old in [
+                "Outpoint:",
+                "Address:",
+                "Add label",
+                "coin spent",
+                "payment",
+            ] {
+                assert!(
+                    !mounted.contains(old),
+                    "{}: still shows {:?}",
+                    appearance,
+                    old
+                );
+            }
+            // A named key shows its name with the fingerprint under it; an
+            // unnamed key shows its fingerprint once, not twice.
+            assert!(mounted.contains("Ledger"));
+            let unnamed = keys[1].to_string();
+            let shown = mounted
+                .text
+                .iter()
+                .filter(|(value, _)| value == &unnamed)
+                .count();
+            assert_eq!(shown, 1, "{}: unnamed key fingerprint repeated", appearance);
+        }
+        // Drawing the dashboard chrome isn't supported by the synthetic
+        // renderer, so the back link is checked from layout only.
+        if std::env::var("R06A_CAPTURE_DIR").is_err() {
+            let page = capture::inspect_wide_content(
+                "psbt-detail-page",
+                detail(),
+                (1440, 1300),
+                "dark",
+                theme::Theme::dark(),
+                1120,
+            );
+            assert!(page.contains("PSBT proposals"));
+            assert!(!page.contains("All PSBTs"));
+        }
+        render_in(Language::Spanish, || {
+            capture::inspect_wide_content(
+                "psbt-detail-ledger-es",
+                body(),
+                (1440, 1300),
+                "dark",
+                theme::Theme::dark(),
+                1120,
+            )
+        })
+        .assert_spanish("psbt detail ledger");
+    }
+
+    #[test]
+    fn a_self_transfer_headline_is_the_amount_not_its_name() {
+        let fixture = crate::app::state::vault::test_support::unified::fixture();
+        let mut input_coin = coin(1, 50_000, false);
+        input_coin.outpoint = fixture.psbt.unsigned_tx.input[0].previous_output;
+        let mut tx = SpendTx::new(
+            None,
+            fixture.psbt.clone(),
+            vec![input_coin],
+            &fixture.descriptor,
+            &coincube_core::miniscript::bitcoin::secp256k1::Secp256k1::verification_only(),
+            Network::Signet,
+        );
+        let total: Amount = tx.psbt.unsigned_tx.output.iter().map(|o| o.value).sum();
+        tx.kind = crate::daemon::model::TransactionKind::SendToSelf;
+        let (amount, to) = headline_amount(&tx);
+        assert_eq!(amount, total);
+        assert_eq!(to, "to this Vault");
     }
 
     #[test]

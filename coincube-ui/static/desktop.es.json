@@ -3460,5 +3460,14 @@
   "Nothing was broadcast. Copies you exported still work if someone imports them.": "No se transmitió nada. Las copias que exportaste siguen sirviendo si alguien las importa.",
   "Deleting…": "Eliminando…",
   "Delete PSBT": "Eliminar PSBT",
-  "Keep it": "Conservarla"
+  "Keep it": "Conservarla",
+  "to this Vault": "a este Vault",
+  "to 1 recipient": "a 1 destinatario",
+  "Spends 1 coin": "Gasta 1 moneda",
+  "Coin": "Moneda",
+  "Sends to this Vault": "Envía a este Vault",
+  "Pays 1 recipient": "Paga a 1 destinatario",
+  "This Vault": "Este Vault",
+  "Not a standard address": "No es una dirección estándar",
+  "Primary path": "Ruta principal"
 }
