@@ -363,7 +363,7 @@ impl SplitHubPanel {
             .then(|| cache.split_keys().first().map(|(coin, _)| coin.outpoint))
             .flatten();
         self.working = true;
-        self.stage = None;
+        self.stage = Some(split_coins::BuildStage::first(flow.method));
         self.error = None;
         Task::done(Message::SplitRequest {
             method: flow.method,
@@ -728,6 +728,13 @@ mod tests {
         let task = panel.update(None, &cache, sign());
         assert!(panel.working);
         assert!(task.units() > 0);
+        // The method's first stage shows from the press, before the build
+        // reports anything.
+        let flow = panel.flow(&cache);
+        assert_eq!(
+            flow.stage,
+            Some(split_coins::BuildStage::first(flow.method))
+        );
         // Locked while building.
         let _ = panel.update(None, &cache, toggle(a));
         assert!(panel.flow(&cache).coins[0].included);
