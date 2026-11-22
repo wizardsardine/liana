@@ -871,12 +871,12 @@ impl Cache {
         }
         let mut changed = false;
         for (outpoint, entry) in results {
-            if matches!(
-                self.chain_proofs.get(&outpoint),
-                Some(ProofEntry::Verified(_))
-            ) {
+            let previous = self.chain_proofs.get(&outpoint);
+            if matches!(previous, Some(ProofEntry::Verified(_))) {
                 continue;
             }
+            // A check that couldn't finish never drops a saved path.
+            let entry = ProofEntry::after_check(previous, entry);
             self.chain_proofs.insert(outpoint, entry);
             changed = true;
         }

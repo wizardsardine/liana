@@ -249,16 +249,32 @@ pub fn extended_path(
 /// Add [`Derived::proofs`] to the cache's ancestry results. A derived path
 /// only fills a gap: it never replaces a check's own answer, verified or not,
 /// so a coin a check found no path for keeps that answer until it is due
-/// again. Returns whether anything was added.
+/// again. A check that could not finish is not an answer, so the path fills
+/// in beside it ([`ProofEntry::SavedRetry`]). Returns whether anything was
+/// added.
 pub fn merge_proofs(
     chain_proofs: &mut HashMap<OutPoint, ProofEntry>,
     derived: Vec<(OutPoint, ProofEntry)>,
 ) -> bool {
     let mut added = false;
     for (outpoint, entry) in derived {
-        if let std::collections::hash_map::Entry::Vacant(slot) = chain_proofs.entry(outpoint) {
-            slot.insert(entry);
-            added = true;
+        match chain_proofs.entry(outpoint) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(entry);
+                added = true;
+            }
+            // A check that couldn't finish is no answer: the derived path
+            // fills in and keeps the failure's retry time.
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                if let (ProofEntry::Failed { failed_at }, Some(path)) = (slot.get(), entry.path()) {
+                    let failed_at = *failed_at;
+                    slot.insert(ProofEntry::SavedRetry {
+                        path: path.clone(),
+                        failed_at,
+                    });
+                    added = true;
+                }
+            }
         }
     }
     added
@@ -1224,9 +1240,6 @@ mod tests {
             ProofEntry::NoQualifyingAncestry {
                 checked_at: UNIX_EPOCH,
             },
-            ProofEntry::Failed {
-                failed_at: UNIX_EPOCH,
-            },
         ] {
             let mut proofs: HashMap<_, _> = [(output, answer.clone())].into();
             assert!(!merge_proofs(&mut proofs, derived()));
@@ -1236,6 +1249,22 @@ mod tests {
                 "a check's own answer stays"
             );
         }
+
+        // A check that couldn't finish is no answer: the path fills in and
+        // the failure's retry time stays.
+        let mut proofs: HashMap<_, _> = [(
+            output,
+            ProofEntry::Failed {
+                failed_at: UNIX_EPOCH,
+            },
+        )]
+        .into();
+        assert!(merge_proofs(&mut proofs, derived()));
+        assert!(matches!(
+            proofs.get(&output),
+            Some(ProofEntry::SavedRetry { failed_at, .. }) if *failed_at == UNIX_EPOCH
+        ));
+        assert!(!merge_proofs(&mut proofs, derived()), "already there");
     }
 
     #[test]
