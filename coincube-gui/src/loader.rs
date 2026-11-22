@@ -938,8 +938,12 @@ impl Loader {
             Message::ForkNodeResynced { result: Ok(()), .. } => {
                 self.fork_resync = None;
                 // Moved to Connect, but the session was cleared after the
-                // move: the Cube opens again once signed in.
+                // move: the Cube opens again once signed in. Nothing here can
+                // open it without a session, so Retry is disabled like after
+                // a revocation, keeping this guidance instead of replacing it
+                // with the Connect delay and then the generic refusal.
                 if self.requires_connect() && self.connect_client.is_none() {
+                    self.fork_session_revoked = true;
                     self.step = Step::Error(Box::new(Error::Unexpected(
                         "The Bitcoin Blake2b node is resyncing and this Cube now uses Connect \
                          until it has caught up. Sign in to Connect from Home, then reopen this \
@@ -5059,8 +5063,28 @@ mod local_fork_resync_tests {
             result: Ok(()),
         });
         assert_eq!(task.units(), 0);
-        assert!(matches!(&loader.step, Step::Error(e)
-            if e.to_string().contains("Sign in to Connect from Home, then reopen this Cube")));
+        let asks_sign_in = |loader: &Loader| {
+            matches!(&loader.step, Step::Error(e)
+                if e.to_string().contains("Sign in to Connect from Home, then reopen this Cube"))
+        };
+        assert!(asks_sign_in(loader));
+
+        // Retry cannot open it without a session: it is disabled and keeps the
+        // guidance, both inside the Connect retry delay and after it.
+        assert!(!loader.can_retry());
+        loader.fork_retry_not_before = Some(std::time::Instant::now() + Duration::from_secs(30));
+        assert_eq!(loader.update(Message::View(ViewMessage::Retry)).units(), 0);
+        assert!(asks_sign_in(loader));
+        loader.fork_retry_not_before = None;
+        assert_eq!(loader.update(Message::View(ViewMessage::Retry)).units(), 0);
+        assert!(asks_sign_in(loader));
+        assert_eq!(
+            loader
+                .update(Message::View(ViewMessage::ResyncForkNode))
+                .units(),
+            0
+        );
+        assert!(asks_sign_in(loader));
     }
 
     // A sign-out once the Cube is on Connect revokes the loader like any
