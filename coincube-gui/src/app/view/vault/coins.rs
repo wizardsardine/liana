@@ -82,13 +82,15 @@ fn recovery_timing_known(coin: &Coin, tip: u32) -> bool {
 
 const AMOUNT_COLUMN_WIDTH: f32 = 160.0;
 const CONFIRMATIONS_COLUMN_WIDTH: f32 = 120.0;
-const DETAILS_COLUMN_WIDTH: f32 = 85.0;
+const DETAILS_COLUMN_WIDTH: f32 = 124.0;
+/// Horizontal padding inside the Details toggle, clear of its focus ring.
+const DETAILS_LABEL_PADDING: f32 = 10.0;
 const CHECK_COLUMN_WIDTH: f32 = 24.0;
 const CHAINS_COLUMN_WIDTH: f32 = 220.0;
 const STATUS_COLUMN_WIDTH: f32 = 200.0;
 /// Wide enough for every column's longest content on one line, the Chains
 /// badge included; narrower panes scroll the table sideways.
-const TABLE_MIN_WIDTH: f32 = 1138.0;
+const TABLE_MIN_WIDTH: f32 = 1177.0;
 pub const COIN_LABEL_INPUT_ID: &str = "vault.coin-label.input";
 
 pub fn coin_action_id(outpoint: &str, action: &str) -> iced::advanced::widget::Id {
@@ -300,6 +302,12 @@ fn coin_table_header<'a>(blake2b: bool) -> Container<'a, Message> {
                         .bold()
                         .style(theme::text::secondary),
                 )
+                .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: DETAILS_LABEL_PADDING,
+                    right: DETAILS_LABEL_PADDING,
+                })
                 .width(Length::Fixed(DETAILS_COLUMN_WIDTH)),
             ),
     )
@@ -524,11 +532,17 @@ fn coin_list_view<'a>(
                     } else {
                         localized_copy("Details ▾")
                     })
-                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(theme::text::secondary),
                     Message::FocusAction,
                 )
-                .padding([4, 0])
+                // Room around the label so the focus ring doesn't touch it.
+                .padding(iced::Padding {
+                    top: 6.0,
+                    bottom: 6.0,
+                    left: DETAILS_LABEL_PADDING,
+                    right: DETAILS_LABEL_PADDING,
+                })
                 .style(theme::button::transparent_border)
                 .on_press(Message::Select(index)),
             )
@@ -1410,6 +1424,36 @@ mod tests {
         assert!(mounted.contains("1 selected · •••••• sats"));
         assert!(!mounted.contains("98,765,432"));
         assert!(mounted.contains("Send selected"));
+    }
+
+    /// "Details ▾" and "Hide details" sit on one line inside the Details
+    /// column with the button's padding, in every language the app ships.
+    #[test]
+    fn the_details_toggle_fits_its_column_in_every_language() {
+        use coincube_ui::locale::{render_in, Language};
+        for language in [Language::English, Language::Spanish] {
+            for english in ["Details ▾", "Hide details"] {
+                let label = render_in(language, || localized_copy(english).to_string());
+                let mounted = capture::inspect_full_window(
+                    "vault-coins-details-toggle",
+                    // Unconstrained, so the label's natural width is measured.
+                    Container::<Message>::new(p2_regular(label.clone())).into(),
+                    (1280, 200),
+                    "dark",
+                    theme::Theme::dark(),
+                );
+                let (_, bounds) = mounted
+                    .text
+                    .iter()
+                    .find(|(value, _)| value == &label)
+                    .unwrap_or_else(|| panic!("{} not shown", label));
+                assert!(
+                    bounds.width + 2.0 * DETAILS_LABEL_PADDING <= DETAILS_COLUMN_WIDTH,
+                    "{} is wider than the Details column",
+                    label
+                );
+            }
+        }
     }
 
     #[test]
