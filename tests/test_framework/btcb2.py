@@ -6,7 +6,7 @@ on both chains:
 
 * node A — Bitcoin Knots ``29.3.knots20260507``, the pinned non-enforcing build
   (SHA256d forever, the "Bitcoin" side);
-* node B — Bitcoin Knots ``29.4.1.knots20260508`` with the BLAKE2b hardfork
+* node B — Bitcoin Knots ``29.5.1.knots20260508`` with the BLAKE2b hardfork
   scheduled at ``activation_height`` via ``-testactivationheight=blake2b@N`` and
   RDTS (BIP-110) scheduled with ``-rdtsexpiry`` (without it the regtest
   deployment stays unscheduled and the OP_RETURN limit is never a block rule —
@@ -49,7 +49,7 @@ from test_framework.signer import MultiSigner
 from test_framework.utils import TIMEOUT, wait_for
 
 KNOTS_LEGACY_VERSION = "29.3.knots20260507"
-KNOTS_BLAKE2B_VERSION = "29.4.1.knots20260508"
+KNOTS_BLAKE2B_VERSION = "29.5.1.knots20260508"
 # retropex/electrs, branch `mempool`, "Support BLAKE2b".
 ELECTRS_BLAKE2B_COMMIT = "4453cac61979322c0260f4b90e899379ae606206"
 

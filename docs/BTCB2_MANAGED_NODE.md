@@ -1,7 +1,7 @@
 # BTCB2 managed pruned node
 
 The authenticated Bitcoin Blake2b installer offers a pruned local Bitcoin Knots
-node, pinned to `29.4.1.knots20260508`, for mainnet and testnet4. Connect remains
+node, pinned to `29.5.1.knots20260508`, for mainnet and testnet4. Connect remains
 the wallet backend while the companion node completes initial block download;
 the app then switches automatically after exact-chain local admission. The
 installer labels the software, chain, pruning and outbound-only connectivity.
@@ -41,7 +41,7 @@ its encoding:
 |---|---|---|
 | Providers | `Core`, `Knots` | `KnotsBlake2b` only |
 | Root under the COINCUBE datadir | `bitcoind/` | `bitcoind-blake2b/` |
-| Binaries | `bitcoind/bitcoin-<version>/bin/bitcoind` | `bitcoind-blake2b/bitcoin-29.4.1.knots20260508/bin/bitcoind` |
+| Binaries | `bitcoind/bitcoin-<version>/bin/bitcoind` | `bitcoind-blake2b/bitcoin-29.5.1.knots20260508/bin/bitcoind` |
 | Node datadir, `bitcoin.conf`, cookies, chainstate | `bitcoind/datadir/…` | `bitcoind-blake2b/datadir/…` |
 | Flavour ledger | `bitcoind/managed_node_state.json` | `bitcoind-blake2b/managed_node_state.json` |
 | Lock directory | `bitcoind/` | `bitcoind-blake2b/` |
@@ -201,7 +201,7 @@ flavour ledger.
 ### Release verification
 
 The Blake2b release is published under the Knots URL scheme
-(`https://bitcoinknots.org/files/29.x/29.4.1.knots20260508/`) and signed by the
+(`https://bitcoinknots.org/files/29.x/29.5.1.knots20260508/`) and signed by the
 already-pinned Knots key (`KNOTS_SIGNING_KEY_FINGERPRINT`,
 `1A3E761F19D2CC7785C5502EA291A2C45D0C504A`). No new trust root is introduced:
 `DownloadVerification::for_flavor` builds the same `ReleaseManifest`
@@ -215,10 +215,13 @@ archive name the provider derives (`arm64-apple-darwin`, `x86_64-apple-darwin`,
 ## Daemon dependency: chain health on a Blake2b node
 
 Activating the provider needs `coincubed` to read the hardfork's status. The
-fields below are taken from Knots tag `v29.4.1.knots20260508`
-(`src/rpc/blockchain.cpp`, `src/kernel/chainparams.cpp`,
-`src/chainparamsbase.cpp`); they are **not** what the desktop's existing
-`reduced_data` probe assumes.
+fields below were taken from Knots tag `v29.4.1.knots20260508` and rechecked
+at the pinned `v29.5.1.knots20260508` (`src/rpc/blockchain.cpp`,
+`src/kernel/chainparams.cpp`, `src/chainparamsbase.cpp`); they are **not** what
+the desktop's existing `reduced_data` probe assumes. `29.5.1` adds a
+`deployments.long_coinbase_maturity` entry, which the probe ignores, and omits
+`difficulty` from `getblockchaininfo`/`getblockheader` for header-v2 blocks
+(reporting `difficulty_blake2b` instead); `coincubed` reads neither.
 
 ### `getdeploymentinfo`
 
@@ -265,7 +268,7 @@ fields below are taken from Knots tag `v29.4.1.knots20260508`
 | Network | `Blake2bHeight` | `RdtsExpiryTime` |
 |---|---|---|
 | mainnet | `961640` | `1819756800` (2027-09-01 00:00 UTC) |
-| testnet4 | `150308` | `1791903600` (2026-10-13 15:00 UTC) |
+| testnet4 | `150308` | `1806537600` (2027-04-01 00:00 UTC; `1791903600`, 2026-10-13, before `29.5.1`) |
 | regtest | unscheduled by default | unscheduled by default |
 
 Source: `src/kernel/chainparams.cpp` at the tag (mainnet `CMainParams`,
