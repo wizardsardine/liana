@@ -193,7 +193,7 @@ pub enum Message {
     /// for the resync `token` names.
     ForkNodeResynced {
         token: u64,
-        result: Result<(), String>,
+        result: Result<(), ForkResyncError>,
     },
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
@@ -890,7 +890,7 @@ impl Loader {
                             resync_fork_cube(&root, chain, wallet.as_ref())
                         })
                         .await
-                        .unwrap_or_else(|e| Err(e.to_string()))
+                        .unwrap_or_else(|e| Err(ForkResyncError::Failed(e.to_string())))
                     },
                     move |result| Message::ForkNodeResynced { token, result },
                 )
@@ -906,12 +906,20 @@ impl Loader {
                 self.fork_resync = None;
                 self.rebuild()
             }
-            // The resync stays offered: a partial deletion is finished by the
-            // next one, while Retry would start the node on half-deleted data.
+            // A failed resync stays offered: a partial deletion is finished by
+            // the next one, while Retry would start the node on half-deleted
+            // data. A refused one deleted nothing and would only be refused
+            // again, so it is not offered.
             Message::ForkNodeResynced { result: Err(e), .. } => {
                 self.fork_resync = None;
-                error!("Loader: resyncing the Bitcoin Blake2b node failed: {}", e);
-                self.step = Step::Error(Box::new(Error::ForkResyncFailed(e)));
+                error!("Loader: resyncing the Bitcoin Blake2b node failed: {:?}", e);
+                self.step = Step::Error(Box::new(match e {
+                    ForkResyncError::Failed(e) => Error::ForkResyncFailed(e),
+                    ForkResyncError::Refused(e) => Error::Unexpected(format!(
+                        "The Bitcoin Blake2b node was not resynced: {}.",
+                        e
+                    )),
+                }));
                 self.set_quote_context("error");
                 Task::none()
             }
@@ -1531,6 +1539,17 @@ fn fork_resync_refusal(cfg: &Config, root: &CoincubeDirectory) -> Option<String>
     })
 }
 
+/// Why a resync did not complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForkResyncError {
+    /// Refused for this Cube before anything was deleted; repeating it would
+    /// be refused the same way.
+    Refused(String),
+    /// Did not finish (the node is still running, a deletion failed, …); a
+    /// repeat can complete it.
+    Failed(String),
+}
+
 /// Resync a Bitcoin Blake2b Cube's node: refuse a Cube that could not reopen
 /// afterwards, then delete the node's chain data. A repeat after a partial
 /// failure finishes the job: missing directories are not an error.
@@ -1538,20 +1557,22 @@ fn resync_fork_cube(
     root: &CoincubeDirectory,
     chain: crate::chain::ChainId,
     wallet: Option<&WalletSettings>,
-) -> Result<(), String> {
+) -> Result<(), ForkResyncError> {
     if let Some(wallet) = wallet {
         let path = root
             .network_directory(chain)
             .coincubed_data_directory(&wallet.wallet_id())
             .path()
             .join("daemon.toml");
-        let cfg = Config::from_file(Some(path))
-            .map_err(|e| format!("could not read this Cube's configuration: {e}"))?;
+        let cfg = Config::from_file(Some(path)).map_err(|e| {
+            ForkResyncError::Failed(format!("could not read this Cube's configuration: {e}"))
+        })?;
         if let Some(refusal) = fork_resync_refusal(&cfg, root) {
-            return Err(refusal);
+            return Err(ForkResyncError::Refused(refusal));
         }
     }
     crate::node::bitcoind::resync_managed_fork_chain_data(root, chain)
+        .map_err(ForkResyncError::Failed)
 }
 
 /// Install the pinned Bitcoin Blake2b binary when it is missing (see
@@ -2498,7 +2519,11 @@ mod tests {
             std::fs::write(&daemon_toml, toml::to_string(&local).unwrap()).unwrap();
             let before = std::fs::read(&daemon_toml).unwrap();
             let refused = resync_fork_cube(&root, chain, Some(&wallet)).unwrap_err();
-            assert!(refused.contains("nothing was deleted"), "{}", refused);
+            assert!(
+                matches!(&refused, ForkResyncError::Refused(e) if e.contains("nothing was deleted")),
+                "{:?}",
+                refused
+            );
             assert!(blocks.exists());
             assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
         }
@@ -2566,14 +2591,14 @@ mod tests {
         // Another resync's result (or one meant for another loader) is dropped.
         let _ = loader.update(Message::ForkNodeResynced {
             token: token + 1000,
-            result: Err("foreign".into()),
+            result: Err(ForkResyncError::Failed("foreign".into())),
         });
         assert!(matches!(loader.step, Step::Connecting));
 
         // A refused resync is shown, with the reason, and stays offered.
         let _ = loader.update(Message::ForkNodeResynced {
             token,
-            result: Err("node still running".into()),
+            result: Err(ForkResyncError::Failed("node still running".into())),
         });
         assert!(matches!(&loader.step, Step::Error(e)
             if e.to_string().contains("node still running") && e.offers_fork_resync()));
@@ -2581,12 +2606,24 @@ mod tests {
         // A late duplicate of that result is ignored.
         let _ = loader.update(Message::ForkNodeResynced {
             token,
-            result: Err("late".into()),
+            result: Err(ForkResyncError::Failed("late".into())),
         });
         assert!(matches!(&loader.step, Step::Error(e) if !e.to_string().contains("late")));
         // ... and the resync can be started again from the failure.
         let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
         assert!(matches!(loader.step, Step::Connecting));
+        let token = loader.fork_resync.expect("resync in flight");
+
+        // A refusal (nothing deleted, would be refused again) is shown with
+        // its reason and no longer offers the resync.
+        let _ = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Err(ForkResyncError::Refused("runs on its local node".into())),
+        });
+        assert!(matches!(&loader.step, Step::Error(e)
+            if e.to_string().contains("runs on its local node") && !e.offers_fork_resync()));
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(&loader.step, Step::Error(_)));
     }
 
     // A result reaching a loader that never started a resync (the tab now
@@ -2595,7 +2632,10 @@ mod tests {
     fn a_resync_result_never_reaches_a_loader_that_did_not_start_it() {
         let mut loader = loader_without_wallet(false);
         loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
-        for result in [Ok(()), Err("other Cube's failure".to_string())] {
+        for result in [
+            Ok(()),
+            Err(ForkResyncError::Failed("other Cube's failure".to_string())),
+        ] {
             let _ = loader.update(Message::ForkNodeResynced { token: 1, result });
             assert!(matches!(loader.step, Step::Connecting));
             assert!(loader.fork_resync.is_none());
@@ -2624,7 +2664,10 @@ mod tests {
     // the reopen guidance.
     #[test]
     fn a_resync_finishing_after_revocation_keeps_the_refusal() {
-        for result in [Ok(()), Err("deleted nothing".to_string())] {
+        for result in [
+            Ok(()),
+            Err(ForkResyncError::Failed("deleted nothing".to_string())),
+        ] {
             let mut loader = loader_without_wallet(false);
             loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
             loader.step = Step::Error(Box::new(pruned_revalidation_error()));
