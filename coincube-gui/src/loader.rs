@@ -840,6 +840,12 @@ impl Loader {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(ViewMessage::Retry) => {
+                // After a resync that did not finish, the node's chain data
+                // is partly deleted: only finishing the resync may start it.
+                if matches!(&self.step, Step::Error(e) if matches!(**e, Error::ForkResyncFailed(_)))
+                {
+                    return Task::none();
+                }
                 if self.cube_settings.network.is_blake2b() {
                     // Reopening must establish a fresh session after revocation.
                     // Keep the specific refusal instead of rebuilding without auth.
@@ -2657,6 +2663,14 @@ mod tests {
             let _ = loader.update(Message::View(ViewMessage::Retry));
             assert!(matches!(&loader.step, Step::Error(e) if e.offers_fork_resync()));
         }
+        // Once the cooldown has passed, Retry still never starts the node on
+        // partly deleted data after a resync that did not finish.
+        loader.fork_retry_not_before = None;
+        loader.step = Step::Error(Box::new(Error::ForkResyncFailed("busy".into())));
+        let task = loader.update(Message::View(ViewMessage::Retry));
+        assert_eq!(task.units(), 0);
+        assert!(matches!(&loader.step, Step::Error(e)
+            if matches!(**e, Error::ForkResyncFailed(_))));
     }
 
     // A session revoked while the chain data was being deleted stays latched:

@@ -581,13 +581,18 @@ pub fn classify_blake2b_build(subversion: Option<&str>) -> Blake2bBuild {
     let Some(running_version) = normalized_client_version(version) else {
         return Blake2bBuild::Unreadable;
     };
-    let explicit_build = segments.find_map(|segment| {
+    // An explicit field that is present but not a date is unreadable: it
+    // must not fall back to a date found in a comment.
+    let build = match segments.find_map(|segment| {
         let (field, date) = segment.split_once(':')?;
-        field
-            .eq_ignore_ascii_case("Knots")
-            .then(|| date.trim().parse::<u32>().ok())?
-    });
-    let build = explicit_build.or_else(|| comments.and_then(knots_build_date));
+        field.eq_ignore_ascii_case("Knots").then_some(date.trim())
+    }) {
+        Some(date) => match date.parse::<u32>() {
+            Ok(date) => Some(date),
+            Err(_) => return Blake2bBuild::Unreadable,
+        },
+        None => comments.and_then(knots_build_date),
+    };
     if normalized_client_version(pin_version) == Some(running_version)
         && build.is_some()
         && pin_build.parse::<u32>().ok() == build
@@ -608,10 +613,22 @@ pub fn is_pinned_blake2b_build(subversion: &str) -> bool {
 /// while the family lifecycle lock is held.
 const BUILD_PROBE_BUDGET: time::Duration = time::Duration::from_secs(5);
 
-/// `getnetworkinfo.subversion` over a client with a short timeout, so a node
-/// that answers `echo` but stalls this call cannot hold the lifecycle lock
-/// for the regular client's long RPC timeout. `None` on any failure.
+/// `getnetworkinfo.subversion`, bounded by `timeout` as a whole: the call runs
+/// on its own thread and is abandoned when the deadline passes, since the
+/// transport's timeout applies per socket operation and a node delivering its
+/// response slowly could otherwise outlast it. An abandoned call ends on its
+/// own transport timeout. `None` on any failure or on the deadline.
 fn probe_subversion(config: &BitcoindConfig, timeout: time::Duration) -> Option<String> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let config = config.clone();
+    thread::spawn(move || {
+        let _ = tx.send(probe_subversion_once(&config, timeout));
+    });
+    rx.recv_timeout(timeout).ok().flatten()
+}
+
+/// One `getnetworkinfo` over a dedicated short-timeout client.
+fn probe_subversion_once(config: &BitcoindConfig, timeout: time::Duration) -> Option<String> {
     use jsonrpc::{client::Client, simple_http::SimpleHttpTransport};
     let builder = match &config.rpc_auth {
         coincubed::config::BitcoindRpcAuth::CookieFile(path) => {
@@ -6498,6 +6515,11 @@ mod blake2b_pin_bump {
         assert!(is_pinned_blake2b_build(
             "/Satoshi:29.5.1(knots20260601)/Knots:20260508/"
         ));
+        // An explicit field that is not a date never falls back to the comment.
+        assert_eq!(
+            classify_blake2b_build(Some("/Satoshi:29.5.1(knots20260508)/Knots:custom/")),
+            Blake2bBuild::Unreadable
+        );
         // Three outcomes: nothing identifiable is not "another build".
         assert_eq!(classify_blake2b_build(None), Blake2bBuild::Unreadable);
         assert_eq!(classify_blake2b_build(Some("")), Blake2bBuild::Unreadable);
@@ -7092,5 +7114,44 @@ mod blake2b_pin_bump {
         assert!(blocks.exists());
         drop(listener);
         let _ = std::fs::remove_dir_all(base);
+    }
+
+    // The probe's deadline bounds the whole call: a node that accepts the
+    // connection and then dribbles its response (or never answers) cannot
+    // keep the caller past it.
+    #[test]
+    fn a_slow_build_probe_is_abandoned_at_its_deadline() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let _ = stream.read(&mut [0u8; 4096]);
+            let head = b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n";
+            for byte in head.iter().chain(b"{\"result\":{\"subversion\":\"".iter()) {
+                if stream.write_all(&[*byte]).is_err() {
+                    return;
+                }
+                let _ = stream.flush();
+                std::thread::sleep(time::Duration::from_millis(300));
+            }
+        });
+        let config = BitcoindConfig {
+            addr,
+            rpc_auth: coincubed::config::BitcoindRpcAuth::UserPass("u".into(), "p".into()),
+        };
+        let started = time::Instant::now();
+        assert_eq!(
+            probe_subversion(&config, time::Duration::from_secs(1)),
+            None
+        );
+        assert!(
+            started.elapsed() < time::Duration::from_secs(3),
+            "{:?}",
+            started.elapsed()
+        );
+        drop(server);
     }
 }
