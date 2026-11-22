@@ -7921,10 +7921,15 @@ impl App {
         };
         let generation = *self.panels.session_generation.borrow();
         let live = self.panels.session_generation.subscribe();
-        Task::perform(
-            crate::services::split_coins::prepare(
-                daemon, wallet, method, coins, key, feerate_vb, client, generation, live,
-            ),
+        Task::sip(
+            iced::task::sipper(async move |progress| {
+                crate::services::split_coins::prepare(
+                    daemon, wallet, method, coins, key, feerate_vb, client, generation, live,
+                    progress,
+                )
+                .await
+            }),
+            Message::SplitBuildStage,
             |result| Message::SplitPrepared(result.map(|prepared| Box::new(prepared.record))),
         )
     }
@@ -8886,6 +8891,17 @@ impl App {
             }
             Message::SplitPrepared(result) => {
                 return self.route_split_prepared(result);
+            }
+            // To Split coins whichever panel is showing, like the result.
+            Message::SplitBuildStage(stage) => {
+                if let Some(panel) = self.panels.split_hub.as_mut() {
+                    return panel.update(
+                        self.daemon.clone(),
+                        &self.cache,
+                        Message::SplitBuildStage(stage),
+                    );
+                }
+                return Task::none();
             }
             Message::View(view::Message::CreateBlake2bCopy) => {
                 return self.route_create_blake2b_copy();

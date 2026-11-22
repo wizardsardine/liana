@@ -8,7 +8,7 @@ use coincube_ui::locale::copy as localized_copy;
 use coincube_ui::locale::Text as CopyText;
 use coincube_ui::localized_format;
 use coincube_ui::{
-    component::{amount::*, button, text::*},
+    component::{amount::*, button, spinner, text::*},
     icon, theme,
     widget::{Column, Container, Element, Row},
 };
@@ -23,7 +23,10 @@ use crate::{
         view::message::{CoinControlMessage, Message, SplitMessage},
     },
     chain::ChainId,
-    services::{chain_status::SPLIT_CONFIRMATIONS, split_coins::Method},
+    services::{
+        chain_status::SPLIT_CONFIRMATIONS,
+        split_coins::{BuildStage, Method},
+    },
 };
 
 /// The smallest split coin worth sending; anything smaller is mostly fee.
@@ -297,6 +300,8 @@ pub struct SplitFlow {
     /// Estimated virtual size of the split, for the fee line.
     pub vbytes: Option<u64>,
     pub working: bool,
+    /// Where the build in flight is, once it says.
+    pub stage: Option<BuildStage>,
     pub error: Option<String>,
     pub copy: CopyCard,
     /// Another split waiting to be signed, while the flow goes on with the
@@ -950,7 +955,35 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
         actions = actions.push(p2_regular(localized_copy(reason)).style(theme::text::secondary));
     }
     column = column.push(actions);
+    if flow.working {
+        column = column.push(build_status(flow.stage));
+    }
     panel(column)
+}
+
+/// What the build in flight is doing, with moving dots so a slow step
+/// doesn't look stuck. Checking the split key asks about both chains and is
+/// the slow one.
+fn build_status<'a>(stage: Option<BuildStage>) -> Element<'a, Message> {
+    let label = stage.map_or("Building the split", BuildStage::label);
+    let mut status = Column::new().spacing(4).push(
+        Row::new()
+            .align_y(Alignment::Center)
+            .push(p2_regular(localized_copy(label)).style(theme::text::secondary))
+            .push(
+                Container::new(spinner::ellipsis(|dots| {
+                    p2_regular(dots).style(theme::text::secondary)
+                }))
+                .width(Length::Fixed(20.0)),
+            ),
+    );
+    if stage == Some(BuildStage::CheckingKey) {
+        status = status.push(
+            caption(localized_copy("This can take a minute. Keep this open."))
+                .style(theme::text::secondary),
+        );
+    }
+    status.into()
 }
 
 /// Another split is built and waiting to be signed; the flow goes on with
@@ -1303,6 +1336,7 @@ mod tests {
             fee_failed: false,
             vbytes: Some(300),
             working: false,
+            stage: None,
             error: None,
             copy: CopyCard::Create,
             waiting_to_sign: None,
@@ -1319,6 +1353,43 @@ mod tests {
             "dark",
             coincube_ui::theme::Theme::dark(),
         )
+    }
+
+    /// A build in flight names its stage with moving dots; the slow split
+    /// key check also says it can take a minute.
+    #[test]
+    fn a_build_in_flight_shows_its_stage() {
+        let started = SplitFlow {
+            working: true,
+            stage: None,
+            ..flow()
+        };
+        assert!(mount("vault-split-building", &started, (1280, 900)).contains("Building the split"));
+        let key = SplitFlow {
+            stage: Some(BuildStage::CheckingKey),
+            ..started.clone()
+        };
+        let mounted = mount("vault-split-checking-key", &key, (1280, 900));
+        assert!(mounted.contains("Checking the split key on both chains"));
+        assert!(mounted.contains("This can take a minute. Keep this open."));
+        let building = SplitFlow {
+            stage: Some(BuildStage::Building),
+            ..started
+        };
+        let mounted = mount("vault-split-building-tx", &building, (1280, 900));
+        assert!(mounted.contains("Building the transaction"));
+        assert!(!mounted.contains("This can take a minute."));
+        // Every stage has its Spanish.
+        for stage in [
+            BuildStage::CheckingKey,
+            BuildStage::CheckingCoins,
+            BuildStage::Building,
+        ] {
+            let es = render_in(Language::Spanish, || {
+                localized_copy(stage.label()).to_string()
+            });
+            assert_ne!(es, stage.label());
+        }
     }
 
     #[test]

@@ -156,6 +156,18 @@ where
     }
 }
 
+/// Animated trailing dots ("", ".", "..", "...") for a status line, so a
+/// long wait visibly isn't stuck. Put it in a fixed-width container: the
+/// dots change width as they cycle.
+pub fn ellipsis<'a, Message, Theme>(
+    text_builder: impl Fn(&'a str) -> iced::widget::Text<'a, Theme, Renderer>,
+) -> Carousel<'a, Message, Theme>
+where
+    Theme: 'a + iced::widget::text::Catalog,
+{
+    typing_text_carousel("...", true, Duration::from_millis(400), text_builder)
+}
+
 /// Create a `Carousel` that types out the given `content` one character
 /// at a time.
 ///

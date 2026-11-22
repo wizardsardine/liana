@@ -704,6 +704,26 @@ fn spent_by(raw: &[u8], txid: Txid) -> Option<HashSet<OutPoint>> {
         .then(|| tx.input.iter().map(|input| input.previous_output).collect())
 }
 
+/// Where a split build is, for the review's status line while it runs.
+/// Checking the split key asks Connect about both chains and can take a
+/// while; the user should see which part is slow.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildStage {
+    CheckingKey,
+    CheckingCoins,
+    Building,
+}
+
+impl BuildStage {
+    pub fn label(self) -> &'static str {
+        match self {
+            BuildStage::CheckingKey => "Checking the split key on both chains",
+            BuildStage::CheckingCoins => "Checking the coins",
+            BuildStage::Building => "Building the transaction",
+        }
+    }
+}
+
 /// Build the split, store it with the daemon, and return it for the PSBT
 /// screen. The caller records it in the journal. For [`Method::SplitKey`]
 /// the key is re-qualified against both chains first; nothing is built if
@@ -719,6 +739,7 @@ pub async fn prepare(
     client: crate::services::coincube::CoincubeClient,
     generation: u64,
     live: tokio::sync::watch::Receiver<u64>,
+    mut progress: iced_runtime::task::Sender<BuildStage>,
 ) -> Result<Prepared, String> {
     let chain = wallet.chain;
     if !crate::services::chain_status::checks_enabled(chain) {
@@ -736,6 +757,7 @@ pub async fn prepare(
         (Method::Signature, _) => None,
     };
     if let Some(key) = &key {
+        progress.send(BuildStage::CheckingKey).await;
         requalify(&client, chain, key, generation, live.clone()).await?;
     }
     let mut requested: BTreeSet<OutPoint> = coins.iter().copied().collect();
@@ -748,6 +770,7 @@ pub async fn prepare(
         }
     }
     let requested: Vec<OutPoint> = requested.into_iter().collect();
+    progress.send(BuildStage::CheckingCoins).await;
     let mut fresh = daemon
         .list_coins(&[CoinStatus::Confirmed], &requested)
         .await
@@ -769,6 +792,7 @@ pub async fn prepare(
     if !crate::services::claim_observation::session_current(&live, generation) {
         return Err("The session changed. Try again.".into());
     }
+    progress.send(BuildStage::Building).await;
     let psbt = match daemon
         .create_spend_tx(&requested, &HashMap::new(), feerate_vb, None)
         .await
