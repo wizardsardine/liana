@@ -1514,82 +1514,44 @@ impl Drop for PendingForkNode {
     }
 }
 
-/// The daemon configuration a Bitcoin Blake2b Cube must run on while its
-/// node resyncs from scratch, or `None` when the current one serves.
+/// Why a Bitcoin Blake2b Cube cannot be resynced from its loader, if so.
 ///
 /// A Cube whose wallet already runs on its local node (promoted after the
-/// first sync) cannot be admitted to a node in initial block download, and
-/// would stop the node on every failed open. It goes back to the Connect
-/// configuration recorded when it was promoted, with the node as its pending
-/// backend that promotes again once synced: the reverse of
-/// `synced_bitcoind_config`. Without a recorded Connect fallback there is no
-/// backend to serve it during the resync, so it is refused before anything
-/// is deleted.
-fn fork_resync_daemon_config(
-    cfg: &Config,
-    root: &CoincubeDirectory,
-) -> Result<Option<Config>, String> {
-    if !crate::chain::is_managed_local_fork(cfg, root) {
-        return Ok(None);
-    }
-    let Some(BitcoinBackend::Bitcoind(local)) = &cfg.bitcoin_backend else {
-        return Ok(None);
-    };
-    let fallback = cfg.fallback_esplora.clone().ok_or_else(|| {
-        "this Cube's wallet runs only on its local node and has no Connect fallback to use \
-         while the node resyncs, so nothing was deleted"
+/// first sync) cannot be admitted to a node in initial block download, so
+/// after a resync from scratch every open would fail and stop the node again.
+/// Moving it back to Connect for the resync needs a Connect session, which a
+/// local-backend Cube's loader never holds, so it would not reopen either.
+/// Until that is solved, such a Cube is refused before anything is deleted.
+fn fork_resync_refusal(cfg: &Config, root: &CoincubeDirectory) -> Option<String> {
+    crate::chain::is_managed_local_fork(cfg, root).then(|| {
+        "this Cube's wallet runs on its local node, which could not admit the wallet again \
+         until a resync finished, so nothing was deleted. Switching this Cube back to Connect \
+         before resyncing is not available from here yet"
             .to_string()
-    })?;
-    let mut demoted = cfg.clone();
-    demoted.pending_bitcoind = Some(local.clone());
-    demoted.bitcoin_backend = Some(BitcoinBackend::Esplora(fallback));
-    demoted.auto_switch_to_pending = Some(true);
-    demoted.fallback_esplora = None;
-    demoted.bitcoin_config.poll_interval_secs =
-        Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
-    Ok(Some(demoted))
+    })
 }
 
-/// Resync a Bitcoin Blake2b Cube's node: decide the configuration it runs on
-/// meanwhile (refusing before any deletion when there is none), delete the
-/// node's chain data, then persist that configuration. A repeat after a
-/// partial failure finishes the job: missing directories are not an error.
+/// Resync a Bitcoin Blake2b Cube's node: refuse a Cube that could not reopen
+/// afterwards, then delete the node's chain data. A repeat after a partial
+/// failure finishes the job: missing directories are not an error.
 fn resync_fork_cube(
     root: &CoincubeDirectory,
     chain: crate::chain::ChainId,
     wallet: Option<&WalletSettings>,
 ) -> Result<(), String> {
-    let daemon_toml = wallet.map(|wallet| {
-        root.network_directory(chain)
+    if let Some(wallet) = wallet {
+        let path = root
+            .network_directory(chain)
             .coincubed_data_directory(&wallet.wallet_id())
             .path()
-            .join("daemon.toml")
-    });
-    let demoted = match &daemon_toml {
-        Some(path) => {
-            let cfg = Config::from_file(Some(path.clone()))
-                .map_err(|e| format!("could not read this Cube's configuration: {e}"))?;
-            fork_resync_daemon_config(&cfg, root)?
+            .join("daemon.toml");
+        let cfg = Config::from_file(Some(path))
+            .map_err(|e| format!("could not read this Cube's configuration: {e}"))?;
+        if let Some(refusal) = fork_resync_refusal(&cfg, root) {
+            return Err(refusal);
         }
-        None => None,
-    };
-    crate::node::bitcoind::resync_managed_fork_chain_data(root, chain)?;
-    if let (Some(path), Some(cfg)) = (daemon_toml, demoted) {
-        let content = toml::to_string(&cfg.for_persistence())
-            .map_err(|e| format!("could not encode this Cube's configuration: {e}"))?;
-        let staged = path.with_extension(format!("toml.{}.tmp", uuid::Uuid::new_v4()));
-        std::fs::write(&staged, content)
-            .and_then(|()| std::fs::rename(&staged, &path))
-            .map_err(|e| {
-                let _ = std::fs::remove_file(&staged);
-                format!(
-                    "the chain data was deleted but this Cube could not be switched to Connect \
-                     for the resync: {e}"
-                )
-            })?;
-        info!("Switched the Cube to Connect while its Bitcoin Blake2b node resyncs");
     }
-    Ok(())
+    crate::node::bitcoind::resync_managed_fork_chain_data(root, chain)
 }
 
 /// Install the pinned Bitcoin Blake2b binary when it is missing (see
@@ -2505,20 +2467,17 @@ mod tests {
         assert!(!loader.daemon_started);
     }
 
-    // A Cube whose wallet runs on its local node goes back to its recorded
-    // Connect configuration for the resync, with the node pending and set to
-    // promote again; without a recorded fallback it is refused before any
-    // chain data is deleted; a Connect-backed Cube keeps its configuration.
+    // A Cube whose wallet runs on its local node is refused before any
+    // chain data is deleted or its configuration touched: after a resync it
+    // could not be admitted, and its loader holds no Connect session to fall
+    // back on. A Cube on Connect with the node pending is resynced.
     #[test]
-    fn a_local_backend_cube_returns_to_connect_for_the_resync() {
+    fn a_local_backend_cube_is_refused_before_anything_is_deleted() {
         use crate::node::bitcoind::{internal_bitcoind_datadir_for, NodeChainFamily};
         let chain = crate::chain::ChainId::BitcoinBlake2bTestnet4;
         let path = std::env::temp_dir().join(format!("fork-resync-{}", uuid::Uuid::new_v4()));
         let root = CoincubeDirectory::new(path.clone());
         let (cfg, wallet) = crate::chain::managed_local_fixture(&root, chain);
-        let Some(BitcoinBackend::Bitcoind(local)) = cfg.bitcoin_backend.clone() else {
-            panic!("fixture is a local backend");
-        };
         let blocks = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b)
             .join("testnet4")
             .join("blocks");
@@ -2529,39 +2488,39 @@ mod tests {
             .path()
             .join("daemon.toml");
 
-        // No Connect fallback recorded: refused, nothing deleted or rewritten.
-        let before = std::fs::read(&daemon_toml).unwrap();
-        let refused = resync_fork_cube(&root, chain, Some(&wallet)).unwrap_err();
-        assert!(refused.contains("no Connect fallback"), "{}", refused);
-        assert!(blocks.exists());
-        assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
-
-        // With the fallback the promotion recorded: demoted, then deleted.
-        let fallback = crate::installer::connect_esplora_config(chain, "runtime-only-token");
+        // Even with a recorded Connect fallback.
         let mut promoted = cfg.clone();
-        promoted.fallback_esplora = Some(fallback.clone());
-        std::fs::write(&daemon_toml, toml::to_string(&promoted).unwrap()).unwrap();
+        promoted.fallback_esplora = Some(crate::installer::connect_esplora_config(
+            chain,
+            "runtime-only-token",
+        ));
+        for local in [cfg.clone(), promoted] {
+            std::fs::write(&daemon_toml, toml::to_string(&local).unwrap()).unwrap();
+            let before = std::fs::read(&daemon_toml).unwrap();
+            let refused = resync_fork_cube(&root, chain, Some(&wallet)).unwrap_err();
+            assert!(refused.contains("nothing was deleted"), "{}", refused);
+            assert!(blocks.exists());
+            assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
+        }
+
+        // On Connect with the node pending: resynced, configuration untouched.
+        let Some(BitcoinBackend::Bitcoind(local)) = cfg.bitcoin_backend.clone() else {
+            panic!("fixture is a local backend");
+        };
+        let mut pending = cfg.clone();
+        pending.pending_bitcoind = Some(local);
+        pending.bitcoin_backend = Some(BitcoinBackend::Esplora(
+            crate::installer::connect_esplora_config(chain, "runtime-only-token"),
+        ));
+        std::fs::write(
+            &daemon_toml,
+            toml::to_string(&pending.for_persistence()).unwrap(),
+        )
+        .unwrap();
+        let before = std::fs::read(&daemon_toml).unwrap();
         resync_fork_cube(&root, chain, Some(&wallet)).unwrap();
         assert!(!blocks.exists());
-        let after = Config::from_file(Some(daemon_toml.clone())).unwrap();
-        assert!(matches!(&after.bitcoin_backend,
-            Some(BitcoinBackend::Esplora(e)) if e.addr == fallback.addr));
-        assert_eq!(after.pending_bitcoind.as_ref(), Some(&local));
-        assert_eq!(after.auto_switch_to_pending, Some(true));
-        assert!(after.fallback_esplora.is_none());
-        assert_eq!(
-            after.bitcoin_config.poll_interval_secs,
-            Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS)
-        );
-        // Tokens stay runtime-only.
-        assert!(!std::fs::read_to_string(&daemon_toml)
-            .unwrap()
-            .contains("runtime-only-token"));
-
-        // Already on Connect with the node pending: nothing to change.
-        let unchanged = std::fs::read(&daemon_toml).unwrap();
-        resync_fork_cube(&root, chain, Some(&wallet)).unwrap();
-        assert_eq!(std::fs::read(&daemon_toml).unwrap(), unchanged);
+        assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
         let _ = std::fs::remove_dir_all(path);
     }
 

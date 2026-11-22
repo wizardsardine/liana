@@ -98,17 +98,15 @@ any later pin bump.
   started.
   - **Which backend serves the wallet during the resync.** A Cube still on
     Connect with the node pending keeps that configuration: once the
-    replacement node starts, Connect serves the wallet while the node
-    downloads the chain, and the Cube switches to the node when it has synced,
-    as after installation. A Cube whose wallet already runs on its local node
-    cannot be admitted to a node in initial block download, so the resync
-    returns it to the Connect configuration recorded when it was promoted
-    (`fallback_esplora`), with the node pending and set to promote again
-    (`fork_resync_daemon_config`, the reverse of the promotion). Opening it
-    then needs a Connect session, like a Connect-backed Cube. A local-backend
-    Cube with no recorded Connect fallback is refused before anything is
-    deleted.
-  - **Refusals.** The resync is refused while any Cube owns the node, while
+    replacement node starts, Connect serves the wallet (with a Connect
+    session) while the node downloads the chain, and the Cube switches to the
+    node when it has synced, as after installation. A Cube whose wallet
+    already runs on its local node is **refused before anything is deleted**:
+    a node in initial block download cannot admit the wallet, so every open
+    would fail and stop the node, and that Cube's loader holds no Connect
+    session to move it back to Connect for the resync. Recovering such a Cube
+    is not covered yet.
+  - **Refusals.** Besides the local-backend case, the resync is refused while any Cube owns the node, while
     the node's own datadir lock (`.lock`, the same `fcntl`/`LockFileEx` lock
     `bitcoind` takes) is held by another process, while anything accepts
     connections on the recorded RPC port (a plain TCP connect, so a missing
@@ -126,7 +124,10 @@ node-setup messages, so the loader is the only re-provisioning path. The
 positive install path is only exercised against the real signed release; unit
 tests cover the skip, fetch, refusal and staged-publish cases with the
 vendored manifest. The resync is one click with no confirmation, and an
-owner on either Blake2b network blocks it.
+owner on either Blake2b network blocks it. A pruned local-backend Cube
+(wallet already on its node) cannot be recovered in-app yet: the resync
+refuses it, since afterwards it could neither be admitted to the syncing node
+nor fall back to Connect from its loader.
 
 ## What is isolated, and where
 
