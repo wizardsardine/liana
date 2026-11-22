@@ -41,14 +41,18 @@ build has shipped the Blake2b node, so this affects internal installs only.
   `29.5.1` release at
   `<coincube datadir>/bitcoind-blake2b/bitcoin-29.5.1.knots20260508/bin/bitcoind`.
 - **First start rewinds the chainstate.** `29.4.1` wrote no
-  chainstate-revalidation markers, so `29.5.1` rewinds to each deployment's
-  start height before reconnecting: mainnet `973440`; testnet4 `151549` and
-  `152963`. Headless `bitcoind` does not prompt. If the block or undo data it
+  chainstate-revalidation markers, so `29.5.1` rewinds once to just below the
+  earliest revalidation deployment's start and reconnects from there: mainnet
+  from `973440` (tip `973439`), testnet4 from `151550` (tip `151549`; the RDTS
+  extension range from `152963` is covered by the same rewind). Headless
+  `bitcoind` does not prompt. If the block or undo data it
   needs has been pruned, it exits with "The active chain must be revalidated
   for current consensus rules, but required block data has been pruned". With
   the 550 MB or 5 GB prune targets this is likely. Recover by deleting the
-  chain data under `bitcoind-blake2b/datadir/<network>/` (`blocks/`,
-  `chainstate/`) and letting the node resync.
+  chain data and letting the node resync: on mainnet `blocks/` and
+  `chainstate/` sit directly under `bitcoind-blake2b/datadir/` (Knots keeps
+  mainnet in the datadir root); on testnet4 they are under
+  `bitcoind-blake2b/datadir/testnet4/`.
 - **A still-running `29.4.1` process is reused.** A Blake2b node's flavour is
   not read from its subversion, so stop any orphaned `29.4.1` process on the
   managed RPC port before upgrading.
