@@ -14169,6 +14169,54 @@ pub(crate) mod shell_tests {
         assert!(!app.takes_detached_psbt_delete(&Message::CubeKeys(Ok(vec![]))));
     }
 
+    /// `update` actually hands a late delete to the PSBTs list, and a Recovery
+    /// review of that same proposal keeps it. The predicate alone would still
+    /// pass if the early return in `App::update` were removed.
+    #[test]
+    fn a_late_psbt_delete_updates_the_list_unless_recovery_is_reviewing_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = {
+            let _guard = crate::app::session::test_guard();
+            bitcoin_app(root.path())
+        };
+        let tx = state::vault::psbts::tests::spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        let other =
+            coincube_core::miniscript::bitcoin::Txid::from_str(&format!("{:064x}", 7)).unwrap();
+        let deleted = |id| Message::PsbtDeleted(id, Ok(()));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        app.panels.recovery = Some(CreateSpendPanel::reviewing_for_test(
+            state::vault::psbts::tests::spend_wallet(),
+            coincube_core::miniscript::bitcoin::Network::Signet,
+            tx.psbt.clone(),
+        ));
+        assert!(
+            !app.takes_detached_psbt_delete(&deleted(txid)),
+            "the Recovery review of this proposal keeps the result"
+        );
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(other)),
+            "another proposal still goes to the list"
+        );
+        drop(app.update(deleted(txid)));
+        assert_eq!(
+            app.panels.psbts.as_ref().unwrap().deleted_list_note(),
+            None,
+            "the list must not record a delete the Recovery review still shows"
+        );
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        app.panels.create_spend = None;
+        drop(app.update(deleted(txid)));
+        let expected = format!("PSBT {}…", &txid.to_string()[..8]);
+        assert_eq!(
+            app.panels.psbts.as_ref().unwrap().deleted_list_note(),
+            Some(expected.as_str()),
+            "Send without that review records the delete on the list"
+        );
+    }
+
     #[test]
     fn create_copy_starts_the_installer_only_while_no_copy_is_on_disk() {
         let root = std::env::temp_dir().join(format!("create-copy-{}", uuid::Uuid::new_v4()));
