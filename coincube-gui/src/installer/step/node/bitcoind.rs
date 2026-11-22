@@ -2018,6 +2018,97 @@ pub(crate) fn provision_managed_node_in_background(
     })
 }
 
+/// The pinned release's archive bytes and signed `SHA256SUMS` manifest.
+pub(crate) type PinnedRelease = (Vec<u8>, Option<(String, String)>);
+
+/// Make sure the Bitcoin Blake2b managed node's **pinned** binary
+/// ([`bitcoind::KNOTS_BLAKE2B_VERSION`]) is installed, re-provisioning it when
+/// it is not — the state an install is left in after a pin bump, since only the
+/// pinned version is ever searched or started. Returns whether it installed.
+///
+/// The download is verified exactly as the installer verifies it
+/// ([`DownloadVerification::for_flavor`]: the signed `SHA256SUMS` under the
+/// pinned Knots key, then the archive's checksum in it) before anything is
+/// unpacked; a failed verification installs nothing. Unpacking runs under the
+/// family's lifecycle lock and is skipped if another start installed the
+/// binary meanwhile, or refused while another app process owns the node.
+/// Older versions' directories are left in place.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) async fn ensure_pinned_fork_binary(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+) -> Result<bool, String> {
+    ensure_pinned_fork_binary_with(root, chain, |flavor| async move {
+        let bytes = download::fetch_managed_node_bytes(flavor.download_url())
+            .await
+            .map_err(|e| e.to_string())?;
+        let manifest = download::fetch_release_manifest(flavor)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((bytes, manifest))
+    })
+    .await
+}
+
+/// [`ensure_pinned_fork_binary`] with the release fetch injected, so the
+/// decision and the verification can be tested without the network.
+pub(crate) async fn ensure_pinned_fork_binary_with<F, Fut>(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    fetch: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(NodeFlavor) -> Fut,
+    Fut: std::future::Future<Output = Result<PinnedRelease, String>>,
+{
+    let flavor = NodeFlavor::KnotsBlake2b;
+    flavor.check_chain(chain).map_err(|e| e.to_string())?;
+    let family = flavor.chain_family();
+    let executable = bitcoind::internal_bitcoind_exe_path_for(&root, family, flavor.version());
+    if executable.exists() {
+        return Ok(false);
+    }
+    info!(
+        "The pinned Bitcoin Blake2b node {} is not installed; downloading it",
+        flavor.version()
+    );
+    let (bytes, manifest) = fetch(flavor)
+        .await
+        .map_err(|e| format!("Could not download the Bitcoin Blake2b node: {e}"))?;
+    tokio::task::spawn_blocking(move || {
+        let lifecycle = crate::node::bitcoind::ManagedNodeLifecycle::acquire(&root, family)
+            .map_err(|e| e.to_string())?;
+        if executable.exists() {
+            return Ok(false);
+        }
+        if lifecycle
+            .try_has_foreign_owners()
+            .map_err(|e| format!("Could not enumerate managed-node owners: {e}"))?
+        {
+            return Err(
+                "Another app process owns the Bitcoin Blake2b node. Close it before \
+                        updating the node here."
+                    .to_string(),
+            );
+        }
+        let verification = DownloadVerification::for_flavor(flavor, manifest)
+            .ok_or_else(|| "Missing release manifest for node verification".to_string())?;
+        let directory = bitcoind::internal_bitcoind_directory_for(&root, family);
+        install_bitcoind(&directory, &bytes, &verification)
+            .map_err(|e| format!("The Bitcoin Blake2b node download was refused: {e}"))?;
+        if !executable.exists() {
+            return Err(format!(
+                "The Bitcoin Blake2b archive did not contain '{}'",
+                executable.display()
+            ));
+        }
+        drop(lifecycle);
+        Ok(true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn start_background_managed_node(
     root: CoincubeDirectory,
     chain: crate::chain::ChainId,
@@ -3404,5 +3495,143 @@ mod tests {
         ));
         assert_eq!(step.manifest, manifest);
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+/// Re-provisioning the pinned Bitcoin Blake2b binary after a pin bump.
+#[cfg(test)]
+mod pinned_fork_binary {
+    use super::*;
+    use crate::chain::ChainId;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const REAL_BLAKE2B_SUMS: &str = include_str!("test_fixtures/knots_blake2b_sha256sums");
+    const REAL_BLAKE2B_ASC: &str = include_str!("test_fixtures/knots_blake2b_sha256sums.asc");
+
+    fn temp_root() -> CoincubeDirectory {
+        CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("btcb2-reprovision-{}", uuid::Uuid::new_v4())),
+        )
+    }
+
+    fn pinned_exe(root: &CoincubeDirectory) -> PathBuf {
+        bitcoind::internal_bitcoind_exe_path_for(
+            root,
+            NodeFlavor::KnotsBlake2b.chain_family(),
+            bitcoind::KNOTS_BLAKE2B_VERSION,
+        )
+    }
+
+    // An install that already has the pinned binary downloads nothing.
+    #[tokio::test]
+    async fn an_installed_pinned_binary_is_not_downloaded_again() {
+        let root = temp_root();
+        let exe = pinned_exe(&root);
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"#!/bin/sh\n").unwrap();
+        let fetches = AtomicU32::new(0);
+        let installed = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Err::<PinnedRelease, _>("must not be called".to_string())
+            },
+        )
+        .await;
+        assert_eq!(installed, Ok(false));
+        assert_eq!(fetches.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(root.path());
+    }
+
+    // After a pin bump only the previous release is on disk: the pinned one
+    // is fetched, for the Blake2b provider, and a download that does not
+    // verify against the signed manifest installs nothing.
+    #[tokio::test]
+    async fn a_missing_pinned_binary_is_fetched_and_verified_before_install() {
+        let root = temp_root();
+        let family = NodeFlavor::KnotsBlake2b.chain_family();
+        let old = bitcoind::internal_bitcoind_exe_path_for(&root, family, "29.4.1.knots20260508");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"#!/bin/sh\n").unwrap();
+
+        let fetched = std::sync::Mutex::new(None);
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |flavor| {
+                *fetched.lock().unwrap() = Some(flavor);
+                async {
+                    Ok((
+                        b"not the release archive".to_vec(),
+                        Some((REAL_BLAKE2B_SUMS.to_string(), REAL_BLAKE2B_ASC.to_string())),
+                    ))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(*fetched.lock().unwrap(), Some(NodeFlavor::KnotsBlake2b));
+        assert!(error.contains("refused"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+        // The old release is left where it was; it is just never started.
+        assert!(old.exists());
+
+        // A tampered manifest (signature no longer matches) is refused too.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async {
+                Ok((
+                    b"not the release archive".to_vec(),
+                    Some((
+                        format!("{}\n00 extra", REAL_BLAKE2B_SUMS),
+                        REAL_BLAKE2B_ASC.to_string(),
+                    )),
+                ))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("refused"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+
+        // No manifest at all is never trusted.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async { Ok((b"x".to_vec(), None)) },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("manifest"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+
+        // A failed download is reported and installs nothing.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async { Err::<PinnedRelease, _>("offline".to_string()) },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("offline"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+        let _ = std::fs::remove_dir_all(root.path());
+    }
+
+    // The Bitcoin chains never fetch a Blake2b binary.
+    #[tokio::test]
+    async fn a_bitcoin_chain_never_provisions_the_blake2b_binary() {
+        let root = temp_root();
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::from(Network::Bitcoin),
+            |_| async { Err::<PinnedRelease, _>("must not be called".to_string()) },
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.contains("must not be called"), "{}", error);
+        assert!(!root.path().exists(), "provider check must precede all I/O");
     }
 }

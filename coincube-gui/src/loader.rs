@@ -187,6 +187,8 @@ pub enum Message {
         cube_settings: CubeSettings,
     },
     Started(StartedResult),
+    /// The Bitcoin Blake2b chain data was deleted for a resync (or why not).
+    ForkNodeResynced(Result<(), String>),
     Loaded(Result<(Arc<dyn Daemon + Sync + Send>, GetInfoResult), Error>),
     BitcoindLog(Option<String>),
     LoadingTick,
@@ -809,6 +811,25 @@ impl Loader {
         self.step = Step::Error(Box::new(error));
     }
 
+    /// Start over with the same Cube: a fresh Loader and its initial task.
+    fn rebuild(&mut self) -> Task<Message> {
+        let (loader, cmd) = Self::build(
+            self.datadir_path.clone(),
+            self.gui_config.clone(),
+            self.network,
+            self.internal_bitcoind.clone(),
+            self.backup.clone(),
+            self.wallet_settings.clone(),
+            self.cube_settings.clone(),
+            self.cube_signer.clone(),
+            self.spark_backend.clone(),
+            self.connect_client.clone(),
+            self.cube_encryption_key.clone(),
+        );
+        *self = loader;
+        cmd
+    }
+
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::View(ViewMessage::Retry) => {
@@ -828,21 +849,40 @@ impl Loader {
                         }
                     }
                 }
-                let (loader, cmd) = Self::build(
-                    self.datadir_path.clone(),
-                    self.gui_config.clone(),
-                    self.network,
-                    self.internal_bitcoind.clone(),
-                    self.backup.clone(),
-                    self.wallet_settings.clone(),
-                    self.cube_settings.clone(),
-                    self.cube_signer.clone(),
-                    self.spark_backend.clone(),
-                    self.connect_client.clone(),
-                    self.cube_encryption_key.clone(),
-                );
-                *self = loader;
-                cmd
+                self.rebuild()
+            }
+            Message::View(ViewMessage::ResyncForkNode) => {
+                // Only from the error it recovers, and never past a revoked
+                // session (Retry refuses that too).
+                if !self.cube_settings.network.is_blake2b()
+                    || self.fork_session_revoked
+                    || !matches!(&self.step, Step::Error(e) if e.is_pruned_revalidation())
+                {
+                    return Task::none();
+                }
+                let root = self.datadir_path.clone();
+                let chain = self.cube_settings.network;
+                self.step = Step::Connecting;
+                self.set_quote_context("loading");
+                Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            crate::node::bitcoind::resync_managed_fork_chain_data(&root, chain)
+                        })
+                        .await
+                        .unwrap_or_else(|e| Err(e.to_string()))
+                    },
+                    Message::ForkNodeResynced,
+                )
+            }
+            // The user asked for this start by deleting the chain data, so it
+            // is not held to the Connect retry delay the Retry button applies.
+            Message::ForkNodeResynced(Ok(())) => self.rebuild(),
+            Message::ForkNodeResynced(Err(e)) => {
+                error!("Loader: resyncing the Bitcoin Blake2b node failed: {}", e);
+                self.step = Step::Error(Box::new(Error::Unexpected(e)));
+                self.set_quote_context("error");
+                Task::none()
             }
             Message::Started(res) => self.on_start(res),
             Message::Loaded(res) => self.on_load(res),
@@ -1203,6 +1243,9 @@ pub async fn load_application(
 #[derive(Clone, Debug)]
 pub enum ViewMessage {
     Retry,
+    /// Delete the Bitcoin Blake2b node's chain data and start again, offered
+    /// only for [`StartInternalBitcoindError::PrunedRevalidationRequired`].
+    ResyncForkNode,
     SwitchNetwork,
     SetupVault,
 }
@@ -1333,11 +1376,17 @@ pub(crate) fn view_with_retry<'a>(
                                 .on_press(ViewMessage::SwitchNetwork),
                         );
                         if allow_retry {
-                            actions.push(
-                                button::secondary(None, CopyText::Retry.get())
-                                    .width(Length::Fixed(200.0))
-                                    .on_press(ViewMessage::Retry),
-                            )
+                            actions
+                                .push(
+                                    button::secondary(None, CopyText::Retry.get())
+                                        .width(Length::Fixed(200.0))
+                                        .on_press(ViewMessage::Retry),
+                                )
+                                .push(error.is_pruned_revalidation().then(|| {
+                                    button::primary(None, CopyText::ResyncForkNodeChainData.get())
+                                        .width(Length::Fixed(260.0))
+                                        .on_press(ViewMessage::ResyncForkNode)
+                                }))
                         } else {
                             actions
                         }
@@ -1434,6 +1483,27 @@ impl Drop for PendingForkNode {
     }
 }
 
+/// Install the pinned Bitcoin Blake2b binary when it is missing (see
+/// [`crate::installer::step::node::bitcoind::ensure_pinned_fork_binary`]).
+#[cfg(not(test))]
+async fn provision_pinned_fork_binary(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+) -> Result<bool, String> {
+    crate::installer::step::node::bitcoind::ensure_pinned_fork_binary(root, chain).await
+}
+
+/// Unit tests never reach the network: the provisioning decision and its
+/// verification are tested through `ensure_pinned_fork_binary_with`, and the
+/// loader's start paths keep reporting an absent binary as they always did.
+#[cfg(test)]
+async fn provision_pinned_fork_binary(
+    _root: CoincubeDirectory,
+    _chain: crate::chain::ChainId,
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 async fn start_fork_daemon(
     root: CoincubeDirectory,
     chain: crate::chain::ChainId,
@@ -1500,6 +1570,12 @@ async fn start_fork_daemon(
             .map_err(Error::Unexpected)?;
     }
     let internal = if let Some(node) = local {
+        // Only the pinned Blake2b build is ever started, so after a pin bump an
+        // existing install has no binary to start: fetch and verify the pinned
+        // release first, instead of failing the open with `ExecutableNotFound`.
+        provision_pinned_fork_binary(root.clone(), chain)
+            .await
+            .map_err(Error::Unexpected)?;
         let root = root.clone();
         tokio::task::spawn_blocking(move || {
             Bitcoind::preflight_for_chain(chain, &root)?;
@@ -1888,6 +1964,17 @@ pub enum Error {
         config: crate::chain::ChainId,
     },
     Unexpected(String),
+}
+
+impl Error {
+    /// The Bitcoin Blake2b node cannot revalidate its chain because the blocks
+    /// it needs are pruned: the one error a resync recovers.
+    pub(crate) fn is_pruned_revalidation(&self) -> bool {
+        matches!(
+            self,
+            Error::Bitcoind(StartInternalBitcoindError::PrunedRevalidationRequired(_))
+        )
+    }
 }
 
 impl std::fmt::Display for Error {
@@ -2282,6 +2369,81 @@ mod tests {
         );
         assert!(loader.fork_task.is_none());
         assert!(!loader.daemon_started);
+    }
+
+    fn pruned_revalidation_error() -> Error {
+        Error::Bitcoind(StartInternalBitcoindError::PrunedRevalidationRequired(
+            crate::chain::ChainId::BitcoinBlake2bTestnet4,
+        ))
+    }
+
+    // The resync is offered for, and acts on, the pruned-revalidation error
+    // of a Bitcoin Blake2b Cube only.
+    #[test]
+    fn resync_acts_only_on_a_pruned_revalidation_of_a_fork_cube() {
+        // Any other error: the message is ignored.
+        let mut loader = loader_without_wallet(false);
+        loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        loader.step = Step::Error(Box::new(Error::Unexpected("other".into())));
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(&loader.step, Step::Error(e) if !e.is_pruned_revalidation()));
+
+        // A Bitcoin Cube never resyncs through this path.
+        let mut loader = loader_without_wallet(false);
+        loader.step = Step::Error(Box::new(pruned_revalidation_error()));
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(&loader.step, Step::Error(e) if e.is_pruned_revalidation()));
+
+        // A revoked session keeps its refusal, as Retry does.
+        let mut loader = loader_without_wallet(false);
+        loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        loader.fork_session_revoked = true;
+        loader.step = Step::Error(Box::new(pruned_revalidation_error()));
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(&loader.step, Step::Error(e) if e.is_pruned_revalidation()));
+
+        // The fork Cube's pruned error starts the resync.
+        let mut loader = loader_without_wallet(false);
+        loader.cube_settings.network = crate::chain::ChainId::BitcoinBlake2bTestnet4;
+        loader.step = Step::Error(Box::new(pruned_revalidation_error()));
+        let _ = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(matches!(loader.step, Step::Connecting));
+
+        // A refused resync is shown, with the reason.
+        let _ = loader.update(Message::ForkNodeResynced(Err("node still running".into())));
+        assert!(
+            matches!(&loader.step, Step::Error(e) if e.to_string().contains("node still running"))
+        );
+    }
+
+    #[test]
+    fn the_pruned_revalidation_page_offers_the_resync() {
+        use crate::app::view::shared::landing::capture;
+        let mut quote_provider = QuoteProvider::new();
+        let quote = quote_provider.select("error");
+        let image = quote_display::image_handle_for_context("error");
+        let label = CopyText::ResyncForkNodeChainData.get();
+
+        let step = Step::Error(Box::new(pruned_revalidation_error()));
+        let shown = capture::inspect(
+            "loader-pruned-revalidation",
+            view(&step, &quote, &image),
+            (1024, 768),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(shown.contains(label));
+        assert!(shown.contains("block data it needs has been pruned"));
+
+        let step = Step::Error(Box::new(Error::Unexpected("other".into())));
+        let shown = capture::inspect(
+            "loader-other-error",
+            view(&step, &quote, &image),
+            (1024, 768),
+            "dark",
+            theme::Theme::dark(),
+        );
+        assert!(!shown.contains(label));
     }
 
     #[test]
