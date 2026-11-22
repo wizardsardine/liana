@@ -117,6 +117,27 @@ fn pending_deposit_amount(
     }
 }
 
+fn wallet_loading_header<'a>(loading_status: Option<String>) -> Element<'a, Message> {
+    Column::new()
+        .spacing(4)
+        .push(spinner::typing_text_carousel(
+            "...",
+            false,
+            Duration::from_millis(400),
+            |content| text(content).size(H2_SIZE).bold(),
+        ))
+        .push(match loading_status {
+            Some(status) => Element::from(text(status).size(P1_SIZE).style(theme::text::secondary)),
+            None => {
+                spinner::typing_text_carousel("...", false, Duration::from_millis(400), |content| {
+                    text(content).size(P1_SIZE).style(theme::text::secondary)
+                })
+                .into()
+            }
+        })
+        .into()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn wallet_card<'a>(
     wallet_type: WalletType,
@@ -307,27 +328,7 @@ fn wallet_card<'a>(
                 })
                 .into()
             } else {
-                Column::new()
-                    .spacing(4)
-                    .push(spinner::typing_text_carousel(
-                        "...",
-                        false,
-                        Duration::from_millis(400),
-                        |content| text(content).size(H2_SIZE).bold(),
-                    ))
-                    .push(match loading_status {
-                        Some(status) => {
-                            Element::from(text(status).size(P1_SIZE).style(theme::text::secondary))
-                        }
-                        None => spinner::typing_text_carousel(
-                            "...",
-                            false,
-                            Duration::from_millis(400),
-                            |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-                        )
-                        .into(),
-                    })
-                    .into()
+                wallet_loading_header(loading_status)
             };
 
             let title_label = wallet_card_title(wallet_type, title, vault_alias);
