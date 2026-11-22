@@ -29,6 +29,8 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+pub use crate::installer::integration::OrdinaryBackend;
+
 type Result<T> = std::result::Result<T, &'static str>;
 
 pub fn allowed_chain(chain: ChainId) -> Result<()> {
@@ -75,6 +77,15 @@ pub(crate) async fn require_backend_feature(
 
 /// Read-only backend admission: no preferences, Keychain, wallet or remote Cube writes.
 pub async fn admit_backend_readiness(chain: ChainId, client: &CoincubeClient) -> Result<()> {
+    admit_backend_readiness_with_backend(chain, client, OrdinaryBackend::Public).await
+}
+
+pub async fn admit_backend_readiness_with_backend(
+    chain: ChainId,
+    client: &CoincubeClient,
+    ordinary: OrdinaryBackend,
+) -> Result<()> {
+    ordinary.validate(chain)?;
     allowed_chain(chain)?;
     if chain.is_blake2b() {
         check(
@@ -98,7 +109,7 @@ pub async fn admit_backend_readiness(chain: ChainId, client: &CoincubeClient) ->
         session.invalidate();
         return Ok(());
     }
-    let config = installer::integration::recovery_esplora_config(chain, "");
+    let config = installer::integration::recovery_esplora_config_selected(chain, "", ordinary)?;
     tokio::task::spawn_blocking(move || {
         let expected =
             bitcoin::blockdata::constants::genesis_block(chain.bitcoin_network()).block_hash();
@@ -174,7 +185,9 @@ async fn install(
     client: CoincubeClient,
     restored: Option<(&recovery::SeedBlob, &recovery::DescriptorBlob)>,
     pin: &str,
+    ordinary: OrdinaryBackend,
 ) -> Result<()> {
+    ordinary.validate(cube.network)?;
     let chain = cube.network;
     let mut ctx = Context::new_for_chain(chain, root.clone(), Some(cube), Some(client));
     ctx.descriptor = Some(descriptor.clone());
@@ -182,7 +195,7 @@ async fn install(
     ctx.cube_pin = Some(Zeroizing::new(pin.into()));
     ctx.use_coincube_connect = true;
     ctx.bitcoin_backend = Some(coincubed::config::BitcoinBackend::Esplora(
-        installer::integration::recovery_esplora_config(chain, jwt),
+        installer::integration::recovery_esplora_config_selected(chain, jwt, ordinary)?,
     ));
     if let Some((seed, desc)) = restored {
         ctx.restore_pin = Some(Zeroizing::new(pin.into()));
@@ -281,7 +294,9 @@ pub async fn create_export(
     jwt: &str,
     client: CoincubeClient,
     before_create: impl FnOnce() -> Result<()>,
+    ordinary: OrdinaryBackend,
 ) -> Result<(Identity, RecoveryKit)> {
+    ordinary.validate(chain)?;
     allowed_chain(chain)?;
     let user = client.get_user().await.map_err(|_| "native_auth_blocked")?;
     if chain.is_blake2b() {
@@ -375,6 +390,7 @@ pub async fn create_export(
         client.clone(),
         None,
         pin,
+        ordinary,
     )
     .await?;
     let settings = settings::Settings::from_file(&root.network_directory(chain))
@@ -468,6 +484,7 @@ pub fn validate_kit(
 
 /// Restore receives only authenticated ciphertext and its recovery password,
 /// not the original phrase/factor/PIN. Product staging derives the restored key.
+#[allow(clippy::too_many_arguments)]
 pub async fn restore(
     root: &CoincubeDirectory,
     identity: &Identity,
@@ -476,7 +493,9 @@ pub async fn restore(
     new_pin: &str,
     jwt: &str,
     client: CoincubeClient,
+    ordinary: OrdinaryBackend,
 ) -> Result<()> {
+    ordinary.validate(identity.cube.network)?;
     allowed_chain(identity.cube.network)?;
     check(
         !root.path().exists()
@@ -527,6 +546,7 @@ pub async fn restore(
         client,
         Some((&seed, &desc)),
         new_pin,
+        ordinary,
     )
     .await?;
     Ok(())
@@ -701,6 +721,23 @@ fn oracle_ready(
             .is_some_and(|t| t >= started))
 }
 
+fn validate_backend_selection(
+    chain: ChainId,
+    backend: &Option<coincubed::config::BitcoinBackend>,
+    ordinary: OrdinaryBackend,
+) -> Result<()> {
+    ordinary.validate(chain)?;
+    if !chain.is_blake2b() {
+        let expected =
+            installer::integration::recovery_esplora_config_selected(chain, "", ordinary)?;
+        check(
+            matches!(backend, Some(coincubed::config::BitcoinBackend::Esplora(actual)) if actual == &expected),
+            "native_ordinary_backend_config_changed",
+        )?;
+    }
+    Ok(())
+}
+
 fn saved_vault_config(
     root: &CoincubeDirectory,
     identity: &Identity,
@@ -742,7 +779,9 @@ pub async fn require_unfunded(
     identity: &Identity,
     client: CoincubeClient,
     diagnostic: &std::path::Path,
+    ordinary: OrdinaryBackend,
 ) -> Result<UnfundedProof> {
+    ordinary.validate(identity.cube.network)?;
     let chain = identity.cube.network;
     allowed_chain(chain)?;
     check(
@@ -755,12 +794,14 @@ pub async fn require_unfunded(
         "native_account_changed",
     )?;
     let (_, mut cfg) = saved_vault_config(root, identity)?;
+    validate_backend_selection(chain, &cfg.bitcoin_backend, ordinary)?;
     cfg.bitcoin_config.poll_interval_secs = std::time::Duration::from_secs(1); // in-memory integration retry only
     require_unfunded_config(cfg, identity, client, diagnostic).await
 }
 
 /// New watch-only oracle: only the validated full kit's public descriptor enters
 /// this initially absent data directory. No old database, seed or factor is used.
+#[allow(clippy::too_many_arguments)]
 pub async fn descriptor_only_unfunded(
     directory: &std::path::Path,
     identity: &Identity,
@@ -769,7 +810,9 @@ pub async fn descriptor_only_unfunded(
     client: CoincubeClient,
     jwt: &str,
     diagnostic: &std::path::Path,
+    ordinary: OrdinaryBackend,
 ) -> Result<UnfundedProof> {
+    ordinary.validate(identity.cube.network)?;
     check(
         identity.cube.network == ChainId::Testnet4
             && tokio::fs::symlink_metadata(directory)
@@ -814,7 +857,11 @@ pub async fn descriptor_only_unfunded(
             std::time::Duration::from_secs(1),
         ),
         Some(coincubed::config::BitcoinBackend::Esplora(
-            installer::integration::recovery_esplora_config(identity.cube.network, jwt),
+            installer::integration::recovery_esplora_config_selected(
+                identity.cube.network,
+                jwt,
+                ordinary,
+            )?,
         )),
         log::LevelFilter::Off,
         descriptor,
@@ -990,12 +1037,15 @@ pub async fn cold_load(
     new_pin: &str,
     wrong_pin: &str,
     client: CoincubeClient,
+    ordinary: OrdinaryBackend,
 ) -> Result<Wallet> {
+    ordinary.validate(identity.cube.network)?;
     check(new_pin != wrong_pin, "native_wrong_pin_equal")?;
     let chain = identity.cube.network;
     allowed_chain(chain)?;
     check(!crate::app::session::is_open(), "native_session_not_cold")?;
     let (cube, cfg) = saved_vault_config(root, identity)?;
+    validate_backend_selection(chain, &cfg.bitcoin_backend, ordinary)?;
     check(
         client
             .get_user()
@@ -1116,6 +1166,57 @@ pub fn sign_unfunded(wallet: &Wallet) -> Result<bitcoin::psbt::Psbt> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn ordinary_backend_saved_route_and_credentials_cannot_drift() {
+        use coincubed::config::BitcoinBackend;
+        for ordinary in [OrdinaryBackend::Public, OrdinaryBackend::QaLoopback31004] {
+            let expected = installer::integration::recovery_esplora_config_selected(
+                ChainId::Testnet4,
+                "synthetic-test-token",
+                ordinary,
+            )
+            .unwrap();
+            let good = Some(BitcoinBackend::Esplora(expected.clone()));
+            assert_eq!(
+                validate_backend_selection(ChainId::Testnet4, &good, ordinary),
+                Ok(())
+            );
+            let other = if ordinary.is_public() {
+                OrdinaryBackend::QaLoopback31004
+            } else {
+                OrdinaryBackend::Public
+            };
+            assert_eq!(
+                validate_backend_selection(ChainId::Testnet4, &good, other),
+                Err("native_ordinary_backend_config_changed")
+            );
+            let mut token = expected;
+            token.token = Some("synthetic-test-token".into());
+            assert_eq!(
+                validate_backend_selection(
+                    ChainId::Testnet4,
+                    &Some(BitcoinBackend::Esplora(token)),
+                    ordinary
+                ),
+                Err("native_ordinary_backend_config_changed")
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn ordinary_loopback_wrong_scope_refuses_before_network_or_fixture() {
+        let client = CoincubeClient::for_test("http://127.0.0.1:1");
+        assert_eq!(
+            admit_backend_readiness_with_backend(
+                ChainId::BitcoinBlake2bTestnet4,
+                &client,
+                OrdinaryBackend::QaLoopback31004
+            )
+            .await,
+            Err("native_ordinary_backend_scope")
+        );
+    }
     use super::*;
 
     #[tokio::test]
@@ -1160,6 +1261,7 @@ mod tests {
             "synthetic-test-token",
             CoincubeClient::for_test(server.base_url()),
             || panic!("capacity refusal must not consume the retry checkpoint"),
+            OrdinaryBackend::Public,
         )
         .await;
         assert_eq!(result.err(), Some("native_capacity_blocked"));
@@ -1446,7 +1548,15 @@ mod tests {
         let root = CoincubeDirectory::new(temp.path().to_owned());
         let (_, identity) = fixture(ChainId::Testnet4);
         assert!(matches!(
-            cold_load(&root, &identity, "1234", "0000", CoincubeClient::new()).await,
+            cold_load(
+                &root,
+                &identity,
+                "1234",
+                "0000",
+                CoincubeClient::new(),
+                OrdinaryBackend::Public,
+            )
+            .await,
             Err("native_settings_read")
         ));
         // No fabricated descriptor supplied by the expected-identity record can

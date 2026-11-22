@@ -36,6 +36,110 @@ pub mod integration {
         Ok(())
     }
 
+    /// Integration-only ordinary backend selection, bound into signed QA config.
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+    pub enum OrdinaryBackend {
+        #[default]
+        #[serde(rename = "public")]
+        Public,
+        #[serde(rename = "qa_loopback_31004")]
+        QaLoopback31004,
+    }
+
+    impl OrdinaryBackend {
+        pub fn is_public(&self) -> bool {
+            *self == Self::Public
+        }
+
+        pub fn validate(self, chain: crate::chain::ChainId) -> Result<(), &'static str> {
+            if !self.is_public() && chain != crate::chain::ChainId::Testnet4 {
+                return Err("native_ordinary_backend_scope");
+            }
+            Ok(())
+        }
+    }
+
+    /// No caller URL, environment override, bearer or public fallback is allowed.
+    pub fn recovery_esplora_config_selected(
+        chain: crate::chain::ChainId,
+        jwt: &str,
+        ordinary: OrdinaryBackend,
+    ) -> Result<coincubed::config::EsploraConfig, &'static str> {
+        ordinary.validate(chain)?;
+        if ordinary.is_public() {
+            return Ok(recovery_esplora_config(chain, jwt));
+        }
+        Ok(coincubed::config::EsploraConfig {
+            addr: "http://127.0.0.1:31004".to_owned(),
+            token: None,
+            fallback_addr: None,
+            fallback_token: None,
+            secondary_fallback_addr: None,
+            secondary_fallback_token: None,
+        })
+    }
+
+    #[cfg(test)]
+    mod ordinary_backend_tests {
+        use super::*;
+        use crate::chain::ChainId;
+
+        #[test]
+        fn ordinary_loopback_is_fixed_and_never_persists_auth_or_fallbacks() {
+            let config = recovery_esplora_config_selected(
+                ChainId::Testnet4,
+                "synthetic-test-token",
+                OrdinaryBackend::QaLoopback31004,
+            )
+            .unwrap();
+            assert_eq!(config.addr, "http://127.0.0.1:31004");
+            assert!(
+                config.token.is_none()
+                    && config.fallback_addr.is_none()
+                    && config.fallback_token.is_none()
+                    && config.secondary_fallback_addr.is_none()
+                    && config.secondary_fallback_token.is_none()
+            );
+            let saved = toml::to_string(&config).unwrap();
+            assert!(
+                !saved.contains("synthetic-test-token")
+                    && !saved.contains("token")
+                    && !saved.contains("fallback")
+            );
+            for chain in [ChainId::Bitcoin, ChainId::BitcoinBlake2bTestnet4] {
+                assert_eq!(
+                    recovery_esplora_config_selected(
+                        chain,
+                        "synthetic-test-token",
+                        OrdinaryBackend::QaLoopback31004
+                    )
+                    .err(),
+                    Some("native_ordinary_backend_scope")
+                );
+            }
+        }
+
+        #[test]
+        fn public_and_blake2b_defaults_are_unchanged() {
+            for chain in [
+                ChainId::Bitcoin,
+                ChainId::Testnet4,
+                ChainId::BitcoinBlake2bTestnet4,
+            ] {
+                assert!(
+                    recovery_esplora_config_selected(
+                        chain,
+                        "synthetic-test-token",
+                        OrdinaryBackend::Public
+                    )
+                    .unwrap()
+                        == recovery_esplora_config(chain, "synthetic-test-token")
+                );
+            }
+            assert!(serde_json::from_str::<OrdinaryBackend>("\"http://127.0.0.1:31004\"").is_err());
+        }
+    }
+
     pub fn recovery_esplora_config(
         chain: crate::chain::ChainId,
         jwt: &str,

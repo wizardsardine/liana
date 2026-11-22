@@ -114,6 +114,11 @@ mod native {
         auth_account: String,
         owner_id: u32,
         source_head: String,
+        #[serde(
+            default,
+            skip_serializing_if = "recovery_native::OrdinaryBackend::is_public"
+        )]
+        ordinary_backend: recovery_native::OrdinaryBackend,
     }
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -378,6 +383,7 @@ mod native {
             "native_config",
         )?;
         recovery_native::allowed_chain(c.chain)?;
+        c.ordinary_backend.validate(c.chain)?;
         check(
             std::env::var("COINCUBE_API_URL")
                 .ok()
@@ -734,6 +740,7 @@ mod native {
                 &identity,
                 client.clone(),
                 &c.case_root.join("oracle-retirement.jsonl"),
+                c.ordinary_backend,
             )
             .await?,
         );
@@ -1469,6 +1476,7 @@ mod native {
             client.clone(),
             &input.access_token,
             &root.join("oracle.jsonl"),
+            input.config.ordinary_backend,
         )
         .await?;
         if state.phase == "new" {
@@ -1806,7 +1814,12 @@ mod native {
                 let pin = string(load(&c, "original_pin")?)?;
                 let password = string(load(&c, "recovery_password")?)?;
                 let _restored_pin = load(&c, "restored_pin")?;
-                let admission = recovery_native::admit_backend_readiness(c.chain, &client).await;
+                let admission = recovery_native::admit_backend_readiness_with_backend(
+                    c.chain,
+                    &client,
+                    c.ordinary_backend,
+                )
+                .await;
                 record_backend_refusal(root, &mut state, admission)?;
                 let entropy = random(16);
                 let phrase =
@@ -1822,6 +1835,7 @@ mod native {
                     &jwt,
                     client,
                     || begin_create(root, &mut state),
+                    c.ordinary_backend,
                 )
                 .await?;
                 check(
@@ -1870,6 +1884,7 @@ mod native {
                         identity,
                         oracle_client,
                         &root.join("oracle-wipe.jsonl"),
+                        c.ordinary_backend,
                     )
                     .await?,
                 );
@@ -1932,6 +1947,7 @@ mod native {
                     &pin,
                     &jwt,
                     client,
+                    c.ordinary_backend,
                 )
                 .await?;
                 let factor =
@@ -1974,6 +1990,7 @@ mod native {
                     &pin,
                     wrong,
                     client,
+                    c.ordinary_backend,
                 )
                 .await?;
                 let psbt = recovery_native::sign_unfunded(&wallet)?;
@@ -2061,7 +2078,15 @@ mod native {
             check(user.id == request.config.owner_id, "native_account_changed")?;
             if mode.as_deref() == Some("--admit-backends") {
                 for chain in [ChainId::Testnet4, ChainId::BitcoinBlake2bTestnet4] {
-                    runtime.block_on(recovery_native::admit_backend_readiness(chain, &client))?;
+                    runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
+                        chain,
+                        &client,
+                        if chain == ChainId::Testnet4 {
+                            request.config.ordinary_backend
+                        } else {
+                            recovery_native::OrdinaryBackend::Public
+                        },
+                    ))?;
                 }
             } else if mode.as_deref() == Some("--begin-cleanup") {
                 runtime.block_on(observe_before_create(
@@ -2085,9 +2110,10 @@ mod native {
                     &client,
                 ))?;
             } else if mode.as_deref() == Some("--admit-create") {
-                runtime.block_on(recovery_native::admit_backend_readiness(
+                runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
                     request.config.chain,
                     &client,
+                    request.config.ordinary_backend,
                 ))?;
                 runtime.block_on(observe_before_create(
                     &request.config,
@@ -2127,6 +2153,46 @@ mod native {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        #[test]
+        fn ordinary_backend_is_explicit_scope_bound_and_part_of_config_digest() {
+            let (mut config, _, _) = fixture();
+            let public = serde_json::to_value(&config).unwrap();
+            assert!(public.get("ordinary_backend").is_none());
+            let legacy: Config = serde_json::from_value(public.clone()).unwrap();
+            assert!(legacy.ordinary_backend.is_public());
+            config.ordinary_backend = recovery_native::OrdinaryBackend::QaLoopback31004;
+            let selected = serde_json::to_value(&config).unwrap();
+            assert_eq!(selected["ordinary_backend"], "qa_loopback_31004");
+            assert_ne!(
+                hash(&serde_json::to_vec(&public).unwrap()),
+                hash(&serde_json::to_vec(&selected).unwrap())
+            );
+            config.chain = ChainId::BitcoinBlake2bTestnet4;
+            assert_eq!(preflight(&config), Err("native_ordinary_backend_scope"));
+            for value in [
+                "http://127.0.0.1:31004",
+                "qa_loopback_31005",
+                "public_with_token",
+            ] {
+                let mut bad = selected.clone();
+                bad["ordinary_backend"] = serde_json::json!(value);
+                assert!(serde_json::from_value::<Config>(bad).is_err());
+            }
+        }
+
+        #[test]
+        fn ordinary_backend_selection_drift_rejects_existing_state() {
+            let mut state = legacy215_state();
+            state.pending = None;
+            state.stage = "exported".into();
+            let mut changed = state.config.clone();
+            changed.ordinary_backend = recovery_native::OrdinaryBackend::QaLoopback31004;
+            assert_eq!(
+                validate_action_state(&changed, &state, "wipe_original"),
+                Err("native_uncertain_action")
+            );
+        }
 
         #[test]
         fn create_backend_refusal_is_durable_and_consumed_before_creation() {
@@ -2195,6 +2261,7 @@ mod native {
                 auth_account: String::new(),
                 owner_id: 1,
                 source_head: "a".repeat(40),
+                ordinary_backend: recovery_native::OrdinaryBackend::Public,
             };
             config.auth_account = account(&config, "auth");
             let cube = coincube_gui::app::settings::CubeSettings::new_with_raw_id(
