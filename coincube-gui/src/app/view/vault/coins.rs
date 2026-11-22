@@ -82,13 +82,13 @@ fn recovery_timing_known(coin: &Coin, tip: u32) -> bool {
 
 const AMOUNT_COLUMN_WIDTH: f32 = 160.0;
 const CONFIRMATIONS_COLUMN_WIDTH: f32 = 120.0;
-const DETAILS_COLUMN_WIDTH: f32 = 85.0;
+const DETAILS_COLUMN_WIDTH: f32 = 112.0;
 const CHECK_COLUMN_WIDTH: f32 = 24.0;
 const CHAINS_COLUMN_WIDTH: f32 = 220.0;
 const STATUS_COLUMN_WIDTH: f32 = 200.0;
 /// Wide enough for every column's longest content on one line, the Chains
 /// badge included; narrower panes scroll the table sideways.
-const TABLE_MIN_WIDTH: f32 = 1138.0;
+const TABLE_MIN_WIDTH: f32 = 1165.0;
 pub const COIN_LABEL_INPUT_ID: &str = "vault.coin-label.input";
 
 pub fn coin_action_id(outpoint: &str, action: &str) -> iced::advanced::widget::Id {
@@ -300,6 +300,7 @@ fn coin_table_header<'a>(blake2b: bool) -> Container<'a, Message> {
                         .bold()
                         .style(theme::text::secondary),
                 )
+                .padding([0, 10])
                 .width(Length::Fixed(DETAILS_COLUMN_WIDTH)),
             ),
     )
@@ -524,11 +525,12 @@ fn coin_list_view<'a>(
                     } else {
                         localized_copy("Details ▾")
                     })
-                    .width(Length::Fill)
+                    .wrapping(iced::widget::text::Wrapping::None)
                     .style(theme::text::secondary),
                     Message::FocusAction,
                 )
-                .padding([4, 0])
+                // Room around the label so the focus ring doesn't touch it.
+                .padding([6, 10])
                 .style(theme::button::transparent_border)
                 .on_press(Message::Select(index)),
             )
