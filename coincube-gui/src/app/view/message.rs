@@ -134,6 +134,8 @@ pub enum SplitMessage {
     Sign,
     /// After an earlier split: split the coins still on both chains.
     SplitRest,
+    /// Ask Connect for the fee rate again after it was unavailable.
+    RetryFee,
 }
 
 #[derive(Debug, Clone)]

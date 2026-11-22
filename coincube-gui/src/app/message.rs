@@ -327,15 +327,19 @@ pub enum Message {
         claimed: Vec<coincube_core::miniscript::bitcoin::Txid>,
         answers: Vec<crate::services::entangled::LookupAnswer>,
     },
-    /// Split coins asks the app for what it needs: the chain's fee rate and
-    /// a fresh receive address to send a split coin to.
+    /// Split coins asks the app for what it needs: the chain's fee rate,
+    /// tagged with the panel's fee generation, and a fresh receive address to
+    /// send a split coin to.
     SplitFetch {
-        fee: bool,
+        fee: Option<u64>,
         address: bool,
     },
-    /// The chain-tagged Connect fee rate for Split coins; `None` is
-    /// unavailable, never a guess.
-    SplitFeeRate(Option<u64>),
+    /// The chain-tagged Connect fee rate for Split coins, for the fetch of
+    /// this generation; `None` is unavailable, never a guess.
+    SplitFeeRate {
+        generation: u64,
+        rate: Option<u64>,
+    },
     /// A fresh receive address for a split coin, or why there isn't one.
     SplitAddress(Result<String, String>),
     /// Build the split Split coins shows ([`crate::services::split_coins::prepare`]).
