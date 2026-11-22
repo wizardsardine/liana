@@ -126,7 +126,6 @@ pub enum PsbtModal {
     /// instead of dead-ending on a technical "missing field" toast.
     KeychainUnavailable(KeychainUnavailableModal),
     Broadcast(BroadcastModal),
-    Delete(DeleteModal),
     Export(VaultExportModal),
 }
 
@@ -137,7 +136,6 @@ impl<'a> AsRef<dyn Modal + 'a> for PsbtModal {
             Self::Sign(a) => a,
             Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
-            Self::Delete(a) => a,
             Self::Export(a) => a,
         }
     }
@@ -150,7 +148,6 @@ impl<'a> AsMut<dyn Modal + 'a> for PsbtModal {
             Self::Sign(a) => a,
             Self::KeychainUnavailable(a) => a,
             Self::Broadcast(a) => a,
-            Self::Delete(a) => a,
             Self::Export(a) => a,
         }
     }
@@ -201,6 +198,8 @@ pub struct PsbtState {
     /// ([`SPLIT_KEY_CHECK_LIFETIME`]); a proof in the cache is never enough
     /// by itself, because nothing re-checks it after a reorg.
     split_key_check: SplitKeyCheck,
+    /// The inline delete at the end of the detail page.
+    pub delete: view::vault::psbt::DeleteState,
 }
 
 /// How long a positive split-key re-qualification admits signing and
@@ -303,6 +302,7 @@ impl PsbtState {
             revalidated_for: None,
             bitcoin_finalization: std::sync::Mutex::new(None),
             split_key_check: SplitKeyCheck::Idle,
+            delete: view::vault::psbt::DeleteState::Idle,
         }
     }
 
@@ -1050,6 +1050,42 @@ impl PsbtState {
         Task::none()
     }
 
+    /// Delete the proposal from the inline confirmation.
+    fn delete_proposal(&mut self, daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
+        if self.delete != view::vault::psbt::DeleteState::Confirming || self.modal.is_some() {
+            return Task::none();
+        }
+        self.delete = view::vault::psbt::DeleteState::Deleting;
+        let txid = self.tx.psbt.unsigned_tx.compute_txid();
+        Task::perform(
+            async move { daemon.delete_spend_tx(&txid).await.map_err(|e| e.into()) },
+            move |res| Message::PsbtDeleted(txid, res),
+        )
+    }
+
+    /// After a delete there's nothing left to show: go back to where the
+    /// proposal was opened from. The PSBTs list says what was deleted.
+    fn finish_delete(&mut self, res: Result<(), Error>) -> Task<Message> {
+        match res {
+            Ok(()) => {
+                self.delete = view::vault::psbt::DeleteState::Idle;
+                if self.back_to_activity {
+                    Task::done(Message::View(view::Message::Close))
+                } else {
+                    Task::done(Message::View(view::Message::Psbts(
+                        view::PsbtsMessage::Deleted(view::vault::psbts::proposal_title(&self.tx)),
+                    )))
+                }
+            }
+            Err(e) => {
+                self.delete = view::vault::psbt::DeleteState::Confirming;
+                let err_msg = crate::user_error::report(&e);
+                self.warning = Some(e);
+                Task::done(Message::View(view::Message::ShowError(err_msg)))
+            }
+        }
+    }
+
     fn dismiss_psbt_modal(&mut self) -> Task<Message> {
         // Dismissing the unified signing picker. A local
         // hardware/master/border op in flight just hides the picker
@@ -1415,6 +1451,12 @@ impl PsbtState {
                     return modal.update(m);
                 }
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::Cancel))
+                if self.modal.is_none()
+                    && self.delete == view::vault::psbt::DeleteState::Confirming =>
+            {
+                self.delete = view::vault::psbt::DeleteState::Idle;
+            }
             Message::View(view::Message::Spend(view::SpendTxMessage::Cancel)) => {
                 return self.dismiss_psbt_modal()
             }
@@ -1444,10 +1486,17 @@ impl PsbtState {
                 ))));
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Delete)) => {
-                self.modal = Some(PsbtModal::Delete(DeleteModal {
-                    back_to_activity: self.back_to_activity,
-                    ..DeleteModal::default()
-                }));
+                if self.modal.is_none() && self.saved {
+                    self.delete = view::vault::psbt::DeleteState::Confirming;
+                }
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::ConfirmDelete)) => {
+                return self.delete_proposal(daemon);
+            }
+            // Only the proposal on screen takes a delete result: one started
+            // from another detail and finishing here belongs to the list.
+            Message::PsbtDeleted(txid, res) if txid == self.tx.psbt.unsigned_tx.compute_txid() => {
+                return self.finish_delete(res)
             }
             Message::View(view::Message::Spend(view::SpendTxMessage::Sign)) => {
                 return self.open_signer_picker(daemon, cache)
@@ -1494,19 +1543,16 @@ impl PsbtState {
             // able to reach `broadcast_spend_tx`. Same gate as the Broadcast
             // arm above; on refusal the dialog closes and the reason is shown.
             Message::View(view::Message::Spend(view::SpendTxMessage::Confirm))
-                if matches!(self.modal, Some(PsbtModal::Broadcast(_))) =>
+                if matches!(self.modal, Some(PsbtModal::Broadcast(_)))
+                    && !self.broadcast_ready(cache) =>
             {
-                if !self.broadcast_ready(cache) {
-                    return self.close_broadcast_dialog_if_not_ready(cache);
-                }
-                if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                }
+                return self.close_broadcast_dialog_if_not_ready(cache);
             }
             _ => {
-                if let Some(modal) = self.modal.as_mut() {
-                    return modal.as_mut().update(daemon.clone(), message, &mut self.tx);
-                }
+                let tx = &mut self.tx;
+                return self.modal.as_mut().map_or_else(Task::none, |modal| {
+                    modal.as_mut().update(daemon.clone(), message, tx)
+                });
             }
         }
         Task::none()
@@ -1552,6 +1598,7 @@ impl PsbtState {
             self.broadcast_ready(cache),
             self.recipient_identities(),
             self.back_to_activity,
+            self.delete,
         );
         if let Some(modal) = &self.modal {
             modal.as_ref().view(content)
@@ -1894,58 +1941,6 @@ impl Modal for KeychainUnavailableModal {
         modal::Modal::new(
             content,
             view::vault::psbt::keychain_unavailable_action(self.action_scope, self.signed_in),
-        )
-        .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
-        .into()
-    }
-}
-
-#[derive(Default)]
-pub struct DeleteModal {
-    deleted: bool,
-    error: Option<Error>,
-    /// Labels its Close for Cube › Activity, which opened the PSBT.
-    back_to_activity: bool,
-}
-
-impl Modal for DeleteModal {
-    fn update(
-        &mut self,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        message: Message,
-        tx: &mut SpendTx,
-    ) -> Task<Message> {
-        match message {
-            Message::View(view::Message::Spend(view::SpendTxMessage::Confirm)) => {
-                let daemon = daemon.clone();
-                let psbt = tx.psbt.clone();
-                self.error = None;
-                return Task::perform(
-                    async move {
-                        daemon
-                            .delete_spend_tx(&psbt.unsigned_tx.compute_txid())
-                            .await
-                            .map_err(|e| e.into())
-                    },
-                    Message::Updated,
-                );
-            }
-            Message::Updated(res) => match res {
-                Ok(()) => self.deleted = true,
-                Err(e) => {
-                    let err_msg = crate::user_error::report(&e);
-                    self.error = Some(e);
-                    return Task::done(Message::View(view::Message::ShowError(err_msg)));
-                }
-            },
-            _ => {}
-        }
-        Task::none()
-    }
-    fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
-        modal::Modal::new(
-            content,
-            view::vault::psbt::delete_action(self.deleted, self.back_to_activity),
         )
         .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
         .into()
@@ -5515,7 +5510,9 @@ mod tests {
                     rendered,
                     state.tx.status
                 );
-                assert!(!rendered.iter().any(|s| s == "Ready" || s == "Broadcast"));
+                assert!(!rendered
+                    .iter()
+                    .any(|s| s == "Ready to broadcast" || s == "Broadcast"));
                 state.modal = Some(PsbtModal::Sign(SignModal::new(
                     HashSet::new(),
                     state.wallet.clone(),
@@ -5536,7 +5533,7 @@ mod tests {
                 );
                 assert!(state.broadcast_ready(&Cache::default()));
                 let rendered = labels(&state);
-                assert!(rendered.iter().any(|s| s == "Ready"));
+                assert!(rendered.iter().any(|s| s == "Ready to broadcast"));
                 assert!(rendered.iter().any(|s| s == "Broadcast"));
                 assert!(!rendered.iter().any(|s| s == "Sign"));
             }

@@ -715,3 +715,43 @@ def test_extended_timeout_is_limited_to_oracle_actions(tmp_path,monkeypatch,acti
     monkeypatch.setattr(native.subprocess,'check_output',lambda *args,**kwargs:b'unit-kernel-start')
     native.process(tmp_path/'offline',{'action':action,'config':{}},tmp_path)
     assert observed==[expected]
+
+
+def test_ordinary_loopback_option_is_explicit_fixed_and_bound_per_chain(config):
+    assert native.options(config) == config
+    assert native.backend_options(config, 'testnet4') == {}
+    selected = dict(config, ordinary_backend='qa_loopback_31004')
+    assert native.options(selected) == selected
+    ordinary = native.backend_options(selected, 'testnet4')
+    assert ordinary == {'ordinary_backend': 'qa_loopback_31004'}
+    assert native.backend_options(selected, 'bitcoin-blake2b-testnet4') == {}
+    assert native.backend_options(selected, 'bitcoin') == {}
+    assert native.digest(dict(chain='testnet4', **ordinary)) != native.digest(dict(chain='testnet4'))
+
+
+@pytest.mark.parametrize('selection', ['public', 'http://127.0.0.1:31004', 'http://localhost:31004', 'qa_loopback_31005', '', None, True])
+def test_native_backend_selection_rejects_arbitrary_endpoints_before_source_or_credentials(config, selection):
+    with pytest.raises(Failed):
+        native.options(dict(config, ordinary_backend=selection))
+
+
+def test_real_controller_binds_loopback_in_every_ordinary_request_but_not_B2(config, tmp_path, monkeypatch):
+    selected = dict(config, ordinary_backend='qa_loopback_31004')
+    offline_protocol(selected, tmp_path, monkeypatch)
+    worker = native.process
+    observed = []
+    def capture(executable, request, directory, access_token=None):
+        observed.append(deepcopy(request['config']))
+        return worker(executable, request, directory, access_token)
+    monkeypatch.setattr(native, 'process', capture)
+    suite = native.NativeRecovery(selected, tmp_path/'run', {'consumer': 'offline-only-test'})
+    try:
+        suite.execute({'tokens': {'access_token': 'unit-not-a-credential'}}, 1)
+    finally:
+        suite.close()
+    assert {row['chain'] for row in observed} == set(public.CHAINS)
+    for row in observed:
+        if row['chain'] == 'testnet4':
+            assert row['ordinary_backend'] == 'qa_loopback_31004'
+        else:
+            assert 'ordinary_backend' not in row

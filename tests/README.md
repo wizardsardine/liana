@@ -65,7 +65,7 @@ the `USE_TAPROOT` environment variable to `1`.
 
 `tests/test_btcb2_harness.py` brings up the Bitcoin Blake2b (BTCB2) regtest
 harness from launch-ga Lane B4.1: Bitcoin Knots `29.3.knots20260507` (the pinned
-non-enforcing build) and `29.4.1.knots20260508` with the BLAKE2b hardfork
+non-enforcing build) and `29.5.1.knots20260508` with the BLAKE2b hardfork
 scheduled at a chosen height, a BLAKE2b-aware Esplora indexer
 (`retropex/electrs`, branch `mempool`, commit `4453cac`) on each chain, and
 `coincubed` on the Esplora backend against each. Both nodes start from one
@@ -86,7 +86,7 @@ The harness is skipped unless all three binaries are configured:
 ```
 (cd tests/tools/knots_verify && cargo build --release)   # or set CARGO_TARGET_DIR to where it was built
 export KNOTS_LEGACY_PATH=$(tests/tools/fetch_knots.sh 29.3.knots20260507)
-export KNOTS_BLAKE2B_PATH=$(tests/tools/fetch_knots.sh 29.4.1.knots20260508)
+export KNOTS_BLAKE2B_PATH=$(tests/tools/fetch_knots.sh 29.5.1.knots20260508)
 export ELECTRS_BLAKE2B_PATH=$(tests/tools/fetch_electrs_blake2b.sh)
 pytest tests/test_btcb2_harness.py -vvv
 ```

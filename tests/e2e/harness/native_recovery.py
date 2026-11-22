@@ -73,12 +73,18 @@ def create_backend_retry(case, config, records, pending):
 
 
 def options(value):
-    require(isinstance(value, dict) and set(value) == {'version', 'checkout', 'revision'}, 'CONFIG')
+    require(isinstance(value, dict) and set(value) in ({'version', 'checkout', 'revision'}, {'version', 'checkout', 'revision', 'ordinary_backend'}), 'CONFIG')
     require(type(value['version']) is int and value['version'] == 1
             and isinstance(value['checkout'], str) and Path(value['checkout']).is_absolute()
             and isinstance(value['revision'], str)
             and (value['revision'] == 'current' or re.fullmatch('[0-9a-f]{40}', value['revision'])), 'CONFIG')
+    require('ordinary_backend' not in value or value['ordinary_backend'] == 'qa_loopback_31004', 'CONFIG')
     return dict(value)
+
+
+def backend_options(value, chain):
+    cfg = options(value)
+    return {'ordinary_backend': cfg['ordinary_backend']} if chain == 'testnet4' and 'ordinary_backend' in cfg else {}
 
 
 def source(value):
@@ -414,7 +420,7 @@ class NativeRecovery:
         case = self.directory / scope
         config = {'version': 1, 'case_root': str(case), 'run_id': scope, 'chain': 'testnet4',
                   'auth_account': hashlib.sha256(f'recovery-native-v1:{case}:{scope}:testnet4:auth'.encode()).hexdigest(),
-                  'owner_id': owner_id, 'source_head': self.binding['head']}
+                  'owner_id': owner_id, 'source_head': self.binding['head'], **backend_options(self.config, 'testnet4')}
         marker = {'version': 1, 'kind': 'abandon_no_cube_capacity', 'old_source': LEGACY_CAPACITY_SOURCE,
                   'old_helper_sha256': LEGACY_CAPACITY_HELPER, 'old_directory': str(old),
                   'old_checkpoint_sha256': hashlib.sha256(old_checkpoint_raw).hexdigest(),
@@ -469,7 +475,8 @@ class NativeRecovery:
         root = self.directory/operation
         current = {'version':1,'case_root':str(root),'run_id':operation,'chain':'testnet4','owner_id':owner_id,
                    'source_head':self.binding['head'],
-                   'auth_account':hashlib.sha256(f'recovery-native-v1:{root}:{operation}:testnet4:auth'.encode()).hexdigest()}
+                   'auth_account':hashlib.sha256(f'recovery-native-v1:{root}:{operation}:testnet4:auth'.encode()).hexdigest(),
+                   **backend_options(self.config,'testnet4')}
         request = {'action':'retire_orphan_215','config':current,'old_directory':str(old),
                    'old_checkpoint_sha256':hashlib.sha256(cp_raw).hexdigest(),'old_state_sha256':hashlib.sha256(raw).hexdigest()}
         with qa_funding.pool() as data:
@@ -513,7 +520,7 @@ class NativeRecovery:
             case = self.directory / scope
             auth_account = hashlib.sha256(f'recovery-native-v1:{case}:{scope}:{chain}:auth'.encode()).hexdigest()
             config = {'version': 1, 'case_root': str(case), 'run_id': scope, 'chain': chain,
-                      'auth_account': auth_account, 'owner_id': owner_id, 'source_head': self.binding['head']}
+                      'auth_account': auth_account, 'owner_id': owner_id, 'source_head': self.binding['head'], **backend_options(self.config, chain)}
             if chain == CHAINS[0] and not all('retire_remote' in self.journal.data['artifacts'].get(c, {}) for c in CHAINS):
                 checked_process(self.config, self.binding, executable, receipt,
                                 {'action': 'admit_backends', 'config': config}, self.directory,

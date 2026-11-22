@@ -699,14 +699,28 @@ pub async fn import_psbt(
     let mut file = File::open(&path)?;
     let daemon = daemon.ok_or(Error::DaemonMissing)?;
 
-    let descr = daemon.get_info().await?.descriptors.main;
-
     let mut psbt_str = String::new();
     file.read_to_string(&mut psbt_str)?;
-    psbt_str = psbt_str.trim().to_string();
 
-    let psbt = Psbt::from_str(&psbt_str).map_err(|_| Error::ParsePsbt)?;
     send_progress!(sender, Progress(50.0));
+    let psbt = import_psbt_str(daemon, &psbt_str, txid).await?;
+    send_progress!(sender, Psbt(psbt));
+
+    send_progress!(sender, Progress(100.0));
+    Ok(())
+}
+
+/// Parse a base64 PSBT, check it against this wallet's descriptor and store
+/// it (or merge its signatures into the proposal it updates). `txid` pins the
+/// proposal an "Import signatures" must match. Shared by the file import and
+/// the PSBTs page's paste import.
+pub async fn import_psbt_str(
+    daemon: Arc<dyn Daemon + Sync + Send>,
+    psbt_str: &str,
+    txid: Option<Txid>,
+) -> Result<Psbt, Error> {
+    let psbt = Psbt::from_str(psbt_str.trim()).map_err(|_| Error::ParsePsbt)?;
+    let descr = daemon.get_info().await?.descriptors.main;
     // A Vault or an imported wallet: both read the PSBT's signatures.
     coincube_core::wallet_descriptor::SpendAnalysis::spend_info(&descr, &psbt)
         .map_err(|_| Error::InsanePsbt)?;
@@ -725,10 +739,7 @@ pub async fn import_psbt(
         }
         return Err(error.into());
     }
-    send_progress!(sender, Psbt(psbt));
-
-    send_progress!(sender, Progress(100.0));
-    Ok(())
+    Ok(psbt)
 }
 
 pub async fn import_descriptor(
@@ -1789,6 +1800,102 @@ mod tests {
         assert!(bitcoin_progress
             .iter()
             .any(|item| matches!(item, Progress::Psbt(imported) if imported == &unsafe_psbt)));
+    }
+
+    fn daemon_for_psbt_import(
+        descriptor: &CoincubeDescriptor,
+        update: Option<Result<serde_json::Value, DaemonError>>,
+    ) -> Arc<dyn Daemon + Send + Sync> {
+        let mut requests = vec![(
+            None,
+            Ok(json!({
+                "version": "",
+                "network": "bitcoin",
+                "block_height": 0,
+                "sync": 1.0,
+                "descriptors": { "main": descriptor },
+                "receive_index": 0,
+                "change_index": 0,
+                "timestamp": 0,
+            })),
+        )];
+        if let Some(update) = update {
+            requests.push((None, update));
+        }
+        Arc::new(crate::daemon::client::Coincubed::new(
+            crate::utils::mock::Daemon::new(requests).run(),
+        ))
+    }
+
+    /// The paste import shares `import_psbt_str` with file import. A PSBT that
+    /// spends an outpoint this wallet does not own is a specific error only
+    /// when no proposal is pinned; a signature import and a wrong txid stay
+    /// distinct, and surrounding whitespace is not part of the PSBT.
+    #[tokio::test]
+    async fn pasted_psbt_import_maps_an_unknown_outpoint_and_pins_a_txid() {
+        use crate::app::state::vault::test_support::unified::fixture;
+
+        let fixture = fixture();
+        let psbt = fixture.psbt;
+        let pasted = format!("\n  {psbt}  \n");
+        let unknown_outpoint = || {
+            Err(DaemonError::Unexpected(
+                "Unknown outpoint deadbeef:0".to_string(),
+            ))
+        };
+
+        let unknown = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, Some(unknown_outpoint())),
+            &pasted,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(unknown, Err(Error::OutpointNotOwned)),
+            "a paste of another wallet's PSBT says it is not owned, got {:?}",
+            unknown
+        );
+
+        let other = import_psbt_str(
+            daemon_for_psbt_import(
+                &fixture.descriptor,
+                Some(Err(DaemonError::Unexpected("database locked".to_string()))),
+            ),
+            &pasted,
+            None,
+        )
+        .await;
+        assert!(
+            matches!(&other, Err(Error::Daemon(message)) if message.contains("database locked")),
+            "a different refusal stays a daemon error, got {:?}",
+            other
+        );
+
+        let pinned = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, Some(unknown_outpoint())),
+            &pasted,
+            Some(psbt.unsigned_tx.compute_txid()),
+        )
+        .await;
+        assert!(
+            matches!(&pinned, Err(Error::Daemon(message)) if message.contains("Unknown outpoint")),
+            "importing signatures onto this proposal does not rewrite the error, got {:?}",
+            pinned
+        );
+
+        let wrong = Txid::from_str(&format!("{:064x}", 9)).unwrap();
+        assert_ne!(wrong, psbt.unsigned_tx.compute_txid());
+        let mismatch = import_psbt_str(
+            daemon_for_psbt_import(&fixture.descriptor, None),
+            &pasted,
+            Some(wrong),
+        )
+        .await;
+        assert!(
+            matches!(mismatch, Err(Error::TxidNotMatch)),
+            "a pinned import refuses a different transaction before storing it, got {:?}",
+            mismatch
+        );
     }
 
     /// This test's own scratch directory, and `label` resolved inside it.

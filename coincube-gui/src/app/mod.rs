@@ -5879,9 +5879,40 @@ impl App {
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        if self.takes_detached_psbt_delete(&message) {
+            if let Some(psbts) = self.panels.psbts.as_mut() {
+                return psbts.update(self.daemon.clone(), &self.cache, message);
+            }
+        }
         let task = self.update_connect_chrome(message);
         self.refresh_vault_alert();
         task
+    }
+
+    /// A PSBT delete reports back after its detail page may have been left
+    /// for another route (Back to Activity, the menu, Send). The PSBTs panel
+    /// takes the result unless the page on screen is the PSBTs list itself
+    /// or a Send/Recovery review of that same proposal, so its list drops
+    /// the row and a refusal is shown.
+    fn takes_detached_psbt_delete(&self, message: &Message) -> bool {
+        let Message::PsbtDeleted(txid, _) = message else {
+            return false;
+        };
+        let kept_by_page = match &self.panels.current {
+            Menu::Vault(menu::VaultSubMenu::PSBTs(_)) => true,
+            Menu::Vault(menu::VaultSubMenu::Send) => self
+                .panels
+                .create_spend
+                .as_ref()
+                .is_some_and(|panel| panel.shows_psbt(txid)),
+            Menu::Vault(menu::VaultSubMenu::Recovery) => self
+                .panels
+                .recovery
+                .as_ref()
+                .is_some_and(|panel| panel.shows_psbt(txid)),
+            _ => false,
+        };
+        !kept_by_page && self.daemon.is_some() && self.panels.psbts.is_some()
     }
 
     /// Recomputes the Vault's alert from its sync result (C8).
@@ -7947,10 +7978,14 @@ impl App {
         if let Ok(record) = &result {
             tasks.push(self.record_split((**record).clone()));
         }
-        // To the Coins panel whichever panel is showing: its overlay
-        // stays locked until it hears the result.
-        if let (Some(daemon), Some(panel)) = (self.daemon.clone(), self.panels.coins.as_mut()) {
-            tasks.push(panel.update(Some(daemon), &self.cache, Message::SplitPrepared(result)));
+        // To Split coins whichever panel is showing: its review stays
+        // locked until it hears the result.
+        if let Some(panel) = self.panels.split_hub.as_mut() {
+            tasks.push(panel.update(
+                self.daemon.clone(),
+                &self.cache,
+                Message::SplitPrepared(result),
+            ));
         }
         if let Some(txid) = txid {
             // Sign and broadcast through the Vault's normal PSBT screen.
@@ -8856,14 +8891,7 @@ impl App {
                 return self.route_create_blake2b_copy();
             }
             Message::View(view::Message::SplitFirst) => {
-                let menu = Menu::Vault(menu::VaultSubMenu::Coins(None));
-                let load = self.set_current_panel(menu);
-                return Task::batch([
-                    load,
-                    Task::done(Message::View(view::Message::CoinControl(
-                        view::CoinControlMessage::OpenSplit,
-                    ))),
-                ]);
+                return self.set_current_panel(Menu::Vault(menu::VaultSubMenu::SplitCoins));
             }
             Message::SendSelectedCoins(outpoints) => {
                 return self.route_send_selected_coins(outpoints);
@@ -14096,6 +14124,99 @@ pub(crate) mod shell_tests {
         (app, wallet)
     }
 
+    /// A PSBT delete finishing on Send belongs to the Send review only when
+    /// that review shows the same proposal; otherwise the PSBTs list takes
+    /// it, as on every other route (Cursor review).
+    #[test]
+    fn a_late_psbt_delete_on_send_goes_to_the_list_unless_reviewed_there() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = {
+            let _guard = crate::app::session::test_guard();
+            bitcoin_app(root.path())
+        };
+        let tx = state::vault::psbts::tests::spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        let other =
+            coincube_core::miniscript::bitcoin::Txid::from_str(&format!("{:064x}", 7)).unwrap();
+        let deleted = |id| Message::PsbtDeleted(id, Ok(()));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(txid)),
+            "an earlier Send step hands it to the list"
+        );
+
+        app.panels.create_spend = Some(CreateSpendPanel::reviewing_for_test(
+            state::vault::psbts::tests::spend_wallet(),
+            coincube_core::miniscript::bitcoin::Network::Signet,
+            tx.psbt.clone(),
+        ));
+        assert!(
+            !app.takes_detached_psbt_delete(&deleted(txid)),
+            "its own review"
+        );
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(other)),
+            "another proposal's result goes to the list"
+        );
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        app.panels.recovery = None;
+        assert!(app.takes_detached_psbt_delete(&deleted(txid)));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::PSBTs(None));
+        assert!(!app.takes_detached_psbt_delete(&deleted(other)));
+        assert!(!app.takes_detached_psbt_delete(&Message::CubeKeys(Ok(vec![]))));
+    }
+
+    /// `update` actually hands a late delete to the PSBTs list, and a Recovery
+    /// review of that same proposal keeps it. The predicate alone would still
+    /// pass if the early return in `App::update` were removed.
+    #[test]
+    fn a_late_psbt_delete_updates_the_list_unless_recovery_is_reviewing_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (mut app, _) = {
+            let _guard = crate::app::session::test_guard();
+            bitcoin_app(root.path())
+        };
+        let tx = state::vault::psbts::tests::spend_tx();
+        let txid = tx.psbt.unsigned_tx.compute_txid();
+        let other =
+            coincube_core::miniscript::bitcoin::Txid::from_str(&format!("{:064x}", 7)).unwrap();
+        let deleted = |id| Message::PsbtDeleted(id, Ok(()));
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Recovery);
+        app.panels.recovery = Some(CreateSpendPanel::reviewing_for_test(
+            state::vault::psbts::tests::spend_wallet(),
+            coincube_core::miniscript::bitcoin::Network::Signet,
+            tx.psbt.clone(),
+        ));
+        assert!(
+            !app.takes_detached_psbt_delete(&deleted(txid)),
+            "the Recovery review of this proposal keeps the result"
+        );
+        assert!(
+            app.takes_detached_psbt_delete(&deleted(other)),
+            "another proposal still goes to the list"
+        );
+        drop(app.update(deleted(txid)));
+        assert_eq!(
+            app.panels.psbts.as_ref().unwrap().deleted_list_note(),
+            None,
+            "the list must not record a delete the Recovery review still shows"
+        );
+
+        app.panels.current = Menu::Vault(menu::VaultSubMenu::Send);
+        app.panels.create_spend = None;
+        drop(app.update(deleted(txid)));
+        let expected = format!("PSBT {}…", &txid.to_string()[..8]);
+        assert_eq!(
+            app.panels.psbts.as_ref().unwrap().deleted_list_note(),
+            Some(expected.as_str()),
+            "Send without that review records the delete on the list"
+        );
+    }
+
     #[test]
     fn create_copy_starts_the_installer_only_while_no_copy_is_on_disk() {
         let root = std::env::temp_dir().join(format!("create-copy-{}", uuid::Uuid::new_v4()));
@@ -14158,20 +14279,30 @@ pub(crate) mod shell_tests {
     }
 
     #[test]
-    fn a_split_result_reaches_the_coins_panel_from_another_panel() {
+    fn a_split_result_reaches_split_coins_from_another_panel() {
         let root = std::env::temp_dir().join(format!("split-result-{}", uuid::Uuid::new_v4()));
         let (mut app, _) = bitcoin_app(&root);
         app.panels
-            .coins
+            .split_hub
             .as_mut()
             .unwrap()
             .start_building_split_for_test();
         drop(app.set_current_panel(Menu::Vault(menu::VaultSubMenu::Overview)));
         drop(app.update(Message::SplitPrepared(Err("Couldn't build".into()))));
         assert_eq!(
-            app.panels.coins.as_ref().unwrap().split_progress_for_test(),
-            Some((false, Some("Couldn't build".to_string()))),
+            app.panels
+                .split_hub
+                .as_ref()
+                .unwrap()
+                .split_progress_for_test(),
+            (false, Some("Couldn't build".to_string())),
             "unlocked, with the error"
+        );
+        // Coin control's Split coins, and Split first, open the tab.
+        drop(app.update(Message::View(view::Message::SplitFirst)));
+        assert_eq!(
+            app.panels.current,
+            Menu::Vault(menu::VaultSubMenu::SplitCoins)
         );
         let _ = std::fs::remove_dir_all(&root);
     }

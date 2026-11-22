@@ -104,7 +104,7 @@ pub trait Close {
     fn close() -> Self;
 }
 
-/// Coin control intents: choosing coins to send, and the Split coins overlay.
+/// Coin control intents: choosing coins to send, and the way to Split coins.
 #[derive(Debug, Clone)]
 pub enum CoinControlMessage {
     /// Open the label editor for this coin, independently of its details.
@@ -112,16 +112,28 @@ pub enum CoinControlMessage {
     Choose(coincube_core::miniscript::bitcoin::OutPoint),
     ClearChosen,
     SendSelected,
+    /// Go to Tools › Split coins (the banner's button and the send
+    /// warning's Split first).
     OpenSplit,
-    CancelSplit,
-    ToggleSplitCoin(coincube_core::miniscript::bitcoin::OutPoint),
-    SplitMethod(crate::services::split_coins::Method),
-    SignSplit,
     /// The send warning's acknowledgement checkbox.
     AcknowledgeBothChains(bool),
     /// Send the selected coins despite the warning.
     SendAnyway,
     CloseWarning,
+}
+
+/// Tools › Split coins intents.
+#[derive(Debug, Clone)]
+pub enum SplitMessage {
+    /// Leave a coin out of the split, or put it back.
+    ToggleCoin(coincube_core::miniscript::bitcoin::OutPoint),
+    /// On Bitcoin Blake2b: split with the replay-protected signature or a
+    /// split coin.
+    Method(crate::services::split_coins::Method),
+    /// Build the split and open it for signing.
+    Sign,
+    /// After an earlier split: split the coins still on both chains.
+    SplitRest,
 }
 
 #[derive(Debug, Clone)]
@@ -175,9 +187,11 @@ pub enum Message {
     SetupVaultRestoreFromKit,
     Close,
     Select(usize),
-    /// Coin control's checkbox selection and Split coins overlay.
+    /// Coin control's checkbox selection and its way to Split coins.
     CoinControl(CoinControlMessage),
-    /// Go to Coin control and open the Split coins overlay.
+    /// Tools › Split coins.
+    Split(SplitMessage),
+    /// Go to Tools › Split coins.
     SplitFirst,
     /// Dismiss the "pick a date to rescan from" prompt for this session.
     HideRescanPrompt,
@@ -191,6 +205,8 @@ pub enum Message {
     ImportSpend(ImportSpendMessage),
     BuySell(BuySellMessage),
     Spend(SpendTxMessage),
+    /// The Vault › PSBT proposals list.
+    Psbts(PsbtsMessage),
     Next,
     Previous,
     SelectHardwareWallet(usize),
@@ -328,9 +344,32 @@ pub enum ImportSpendMessage {
     Confirm,
 }
 
+/// Vault › PSBT proposals list: the Closed group, the paste import and the
+/// status line shown after a delete or an import.
+#[derive(Debug, Clone)]
+pub enum PsbtsMessage {
+    /// Fold or unfold the Closed group (confirmed and can't-be-spent rows).
+    ToggleClosed,
+    /// Dismiss the "Deleted …" / "PSBT imported" line.
+    DismissNote,
+    /// Open the import panel under the page heading.
+    OpenImport,
+    CloseImport,
+    ImportEdited(String),
+    /// Import the pasted PSBT.
+    SubmitImport,
+    /// Pick a `.psbt` file instead of pasting.
+    ImportFromFile,
+    /// The open proposal was deleted; carries the name the list shows.
+    Deleted(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum SpendTxMessage {
+    /// Ask to delete the open proposal (shows the inline confirmation).
     Delete,
+    /// Delete it, from the inline confirmation.
+    ConfirmDelete,
     Sign,
     /// Leave the view-only MCP review and show the ordinary save and sign controls.
     #[cfg(feature = "mcp-transactions")]

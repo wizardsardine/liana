@@ -117,6 +117,27 @@ fn pending_deposit_amount(
     }
 }
 
+fn wallet_loading_header<'a>(loading_status: Option<String>) -> Element<'a, Message> {
+    Column::new()
+        .spacing(4)
+        .push(spinner::typing_text_carousel(
+            "...",
+            false,
+            Duration::from_millis(400),
+            |content| text(content).size(H2_SIZE).bold(),
+        ))
+        .push(match loading_status {
+            Some(status) => Element::from(text(status).size(P1_SIZE).style(theme::text::secondary)),
+            None => {
+                spinner::typing_text_carousel("...", false, Duration::from_millis(400), |content| {
+                    text(content).size(P1_SIZE).style(theme::text::secondary)
+                })
+                .into()
+            }
+        })
+        .into()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn wallet_card<'a>(
     wallet_type: WalletType,
@@ -307,27 +328,7 @@ fn wallet_card<'a>(
                 })
                 .into()
             } else {
-                Column::new()
-                    .spacing(4)
-                    .push(spinner::typing_text_carousel(
-                        "...",
-                        false,
-                        Duration::from_millis(400),
-                        |content| text(content).size(H2_SIZE).bold(),
-                    ))
-                    .push(match loading_status {
-                        Some(status) => {
-                            Element::from(text(status).size(P1_SIZE).style(theme::text::secondary))
-                        }
-                        None => spinner::typing_text_carousel(
-                            "...",
-                            false,
-                            Duration::from_millis(400),
-                            |content| text(content).size(P1_SIZE).style(theme::text::secondary),
-                        )
-                        .into(),
-                    })
-                    .into()
+                wallet_loading_header(loading_status)
             };
 
             let title_label = wallet_card_title(wallet_type, title, vault_alias);
@@ -5559,6 +5560,8 @@ mod tests {
         }
     }
 
+    const UNBREAKABLE_CUBE_NAME: &str = "EmmanuelsLongTermSavingsCube";
+
     /// Each route tile's "**Spark** in Cube" stays one phrase (COIN-677):
     /// on one line when it fits, else "in Cube" drops whole under the
     /// asset. It never wraps beside the asset, stranding the asset on its
@@ -5567,12 +5570,11 @@ mod tests {
     #[test]
     fn transfer_route_tiles_keep_asset_and_place_together() {
         let fixture = ViewFixture::new();
-        const UNBREAKABLE: &str = "EmmanuelsLongTermSavingsCube";
         for cube_name in [
             "Everyday",
             "Emmanuel's Cube",
             "Emmanuel's Long-Term Savings Cube",
-            UNBREAKABLE,
+            UNBREAKABLE_CUBE_NAME,
         ] {
             for direction in [
                 TransferDirection::SparkToVault,
@@ -5589,56 +5591,64 @@ mod tests {
                         "dark",
                         theme::Theme::dark(),
                     );
-                    let place_text = format!("in {}", cube_name);
-                    let mut tiles = 0;
-                    for (i, (value, place)) in shown.text.iter().enumerate() {
-                        if *value != place_text {
-                            continue;
-                        }
-                        tiles += 1;
-                        let (asset_text, asset) = &shown.text[i - 1];
-                        assert!(
-                            asset_text == "Spark" || asset_text == "Vault",
-                            "{:?} precedes {:?}",
-                            asset_text,
-                            value
-                        );
-                        let one_line =
-                            (place.y - asset.y).abs() < 0.5 && place.x >= asset.x + asset.width;
-                        let dropped = (place.x - asset.x).abs() < 0.5
-                            && place.y >= asset.y + asset.height - 0.5;
-                        assert!(
-                            one_line || dropped,
-                            "{:?} {:?} at {:?}: {} {:?} beside {} {:?}",
-                            cube_name,
-                            direction,
-                            outer,
-                            asset_text,
-                            asset,
-                            value,
-                            place
-                        );
-                        // A text node's bounds are clamped to its limits, so
-                        // overflow shows as a missing line break, not as width:
-                        // at 1024 the unbreakable name is about twice the
-                        // tile's width. Word wrapping gives two lines ("in",
-                        // then the whole name, painted past the tile); it must
-                        // break inside the name too.
-                        if cube_name == UNBREAKABLE && outer == (1024, 768) {
-                            assert!(
-                                place.height > 2.0 * asset.height + 0.5,
-                                "{:?} at {:?}: {:?} {:?} did not break inside its tile",
-                                direction,
-                                outer,
-                                value,
-                                place
-                            );
-                        }
-                    }
-                    assert_eq!(tiles, 2, "From and To: {:?}", shown.text);
+                    assert_transfer_route_tiles(&shown.text, cube_name, direction, outer);
                 }
             }
         }
+    }
+
+    fn assert_transfer_route_tiles(
+        text: &[(String, iced::Rectangle)],
+        cube_name: &str,
+        direction: TransferDirection,
+        outer: (u32, u32),
+    ) {
+        let place_text = format!("in {}", cube_name);
+        let mut tiles = 0;
+        for (i, (value, place)) in text.iter().enumerate() {
+            if *value != place_text {
+                continue;
+            }
+            tiles += 1;
+            let (asset_text, asset) = &text[i - 1];
+            assert!(
+                asset_text == "Spark" || asset_text == "Vault",
+                "{:?} precedes {:?}",
+                asset_text,
+                value
+            );
+            let one_line = (place.y - asset.y).abs() < 0.5 && place.x >= asset.x + asset.width;
+            let dropped =
+                (place.x - asset.x).abs() < 0.5 && place.y >= asset.y + asset.height - 0.5;
+            assert!(
+                one_line || dropped,
+                "{:?} {:?} at {:?}: {} {:?} beside {} {:?}",
+                cube_name,
+                direction,
+                outer,
+                asset_text,
+                asset,
+                value,
+                place
+            );
+            // A text node's bounds are clamped to its limits, so
+            // overflow shows as a missing line break, not as width:
+            // at 1024 the unbreakable name is about twice the
+            // tile's width. Word wrapping gives two lines ("in",
+            // then the whole name, painted past the tile); it must
+            // break inside the name too.
+            if cube_name == UNBREAKABLE_CUBE_NAME && outer == (1024, 768) {
+                assert!(
+                    place.height > 2.0 * asset.height + 0.5,
+                    "{:?} at {:?}: {:?} {:?} did not break inside its tile",
+                    direction,
+                    outer,
+                    value,
+                    place
+                );
+            }
+        }
+        assert_eq!(tiles, 2, "From and To: {:?}", text);
     }
 
     #[test]

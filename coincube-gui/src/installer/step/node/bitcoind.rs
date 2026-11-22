@@ -2852,7 +2852,7 @@ mod tests {
     // --- Bitcoin Blake2b provider (dormant) ---------------------------------
 
     // The real published `SHA256SUMS` (+ `.asc`) for the pinned Bitcoin Blake2b
-    // release, fetched from `https://bitcoinknots.org/files/29.x/29.4.1.knots20260508/`.
+    // release, fetched from `https://bitcoinknots.org/files/29.x/29.5.1.knots20260508/`.
     const REAL_BLAKE2B_SUMS: &str = include_str!("test_fixtures/knots_blake2b_sha256sums");
     const REAL_BLAKE2B_ASC: &str = include_str!("test_fixtures/knots_blake2b_sha256sums.asc");
 
@@ -2920,7 +2920,7 @@ mod tests {
             assert!(listed, "{} is not in the release manifest", filename);
             assert!(NodeFlavor::KnotsBlake2b
                 .asset_url(KNOTS_BLAKE2B_VERSION, os, arch)
-                .ends_with(&format!("/29.4.1.knots20260508/{}", filename)),);
+                .ends_with(&format!("/29.5.1.knots20260508/{}", filename)),);
             // And the Knots pin's own archives are a different set of names.
             assert!(
                 !REAL_BLAKE2B_SUMS.contains(&NodeFlavor::Knots.asset_filename(
@@ -2946,7 +2946,7 @@ mod tests {
                     archive_filename,
                     NodeFlavor::KnotsBlake2b.download_filename()
                 );
-                assert!(archive_filename.contains("29.4.1.knots20260508"));
+                assert!(archive_filename.contains("29.5.1.knots20260508"));
                 assert_eq!(
                     signing_key_fingerprint,
                     bitcoind::KNOTS_SIGNING_KEY_FINGERPRINT

@@ -137,11 +137,9 @@ impl Esplora {
             std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
         )
         .map_err(EsploraError::Client)?;
-        if client.genesis_block_hash().map_err(EsploraError::Client)? != *expected_genesis {
-            return Ok(false);
-        }
-        client.chain_tip().map_err(EsploraError::Client)?;
-        Ok(true)
+        client
+            .public_backend_ready(expected_genesis)
+            .map_err(EsploraError::Client)
     }
 
     pub fn new(

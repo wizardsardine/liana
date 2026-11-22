@@ -628,3 +628,20 @@ Cube detail and key inventory because the separate `/vault` read is owner-only.
 Missing, failed, malformed or contradictory inventories block cleanup before it
 deletes the disposable fixture's own Vault, even if the API would later refuse
 signer deletion through its additional server-side reference guard.
+
+
+### Ordinary native QA on an owned loopback backend
+
+The integration-only `native_recovery` object optionally accepts
+`"ordinary_backend": "qa_loopback_31004"`. This explicitly binds ordinary
+Testnet4 native Recovery Kit admission, creation, restore and oracle operations
+to `http://127.0.0.1:31004`; it permits no caller URL, bearer or fallback. An
+independently admitted owned forward must already connect that port to the
+reviewed Testnet4 backend. Its owner/source/deadline guards and the original
+genesis/fullscan/current native oracles remain required. The option grants no
+runtime authority and does not start a tunnel. A new signed source/config/run
+binding is required; do not modify an existing fixture to switch its backend.
+
+Omitting the option keeps existing public-provider behavior. B2 signed case
+configs omit it and retain the authenticated Connect backend. Mainnet and B2
+reject the loopback selection. No ordinary bearer is serialized in daemon.toml.
