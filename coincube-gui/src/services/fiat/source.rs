@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use super::api::{GetPriceResult, ListCurrenciesResult, PriceApiError};
+use super::api::{is_usable_price, GetPriceResult, ListCurrenciesResult, PriceApiError};
 use super::currency::Currency;
 use crate::services::coincube_api_base_url;
 
@@ -126,7 +126,7 @@ impl PriceSource {
                 (value, updated_at)
             }
         };
-        if !value.is_finite() || value <= 0.0 {
+        if !is_usable_price(value) {
             return Err(PriceApiError::CannotParseData("price".to_string()));
         }
         Ok(GetPriceResult { value, updated_at })
