@@ -475,10 +475,13 @@ pub struct PasskeyMetadata {
 
 /// Mark a cube as synced with the remote Connect API.
 ///
-/// `owner` is the account the sync ran under. It is recorded as the Cube's
+/// `owner` is the account that created the Cube, when this sync is that
+/// creation's own registration. It is recorded as the Cube's
 /// [`CubeSettings::connect_owner`] only on the *first* sync of a Cube that has
 /// no owner yet — a later sync (or a Cube already marked synced before owners
 /// were tracked) must not attribute it to whoever happens to be signed in.
+/// The catch-up sync passes `None`: a Cube it finds without an owner was made
+/// signed out, and the first account to sign in has no claim to it.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
     cube_id: &str,
@@ -965,12 +968,14 @@ pub struct CubeSettings {
     /// account that owns its server-side record, and so its Vault and the
     /// Keychain signers attached to it.
     ///
-    /// Written once, on the Cube's first successful registration (see
-    /// [`mark_cube_synced`] and the creation Recovery Kit path), and never
+    /// Written once, when the Cube is created while signed in (or by its
+    /// post-creation registration, see [`mark_cube_synced`]), and never
     /// overwritten: signing in as another account re-registers the same local
     /// Cube UUID as a *new* server row, which must not claim ownership. `None`
-    /// on Cubes registered before this field existed, and on Cubes never
-    /// registered at all — callers treat that as "unknown", not "mismatch".
+    /// on Cubes registered before this field existed and on Cubes created
+    /// signed out — even once the catch-up sync has registered them, since
+    /// the first account to sign in is not evidence of who made the Cube.
+    /// Callers treat `None` as "unknown", not "mismatch".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_owner: Option<ConnectOwner>,
 }

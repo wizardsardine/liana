@@ -2840,10 +2840,14 @@ impl Home {
         // updates (already exists but name may have changed).
         if let Some(client) = self.connect_account.authenticated_client() {
             let datadir = self.datadir_path.clone();
-            let owner = self.connect_owner();
             // Never register a Cube another account already owns under this
-            // one: that would hand it over (and stamp this account as its
-            // owner) on the first sign-in.
+            // one: that would hand it over on the first sign-in.
+            //
+            // Nor does catch-up ever *record* an owner. A Cube still without
+            // one here was created signed out (one created signed in is
+            // stamped at creation), so whoever happens to sign in first has
+            // no claim to it; stamping them would hide it from its creator
+            // on every other account. It stays ownerless, and so visible.
             let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
                 .into_iter()
                 .filter(|cube| !cube.remote_synced)
@@ -2885,9 +2889,7 @@ impl Home {
                             match outcome {
                                 Ok(()) => {
                                     let nd = datadir.network_directory(cube.network);
-                                    let _ =
-                                        settings::mark_cube_synced(&nd, &cube.id, owner.clone())
-                                            .await;
+                                    let _ = settings::mark_cube_synced(&nd, &cube.id, None).await;
                                     outcomes.push((cube.id.clone(), None));
                                 }
                                 Err(e) => {
@@ -4795,6 +4797,16 @@ impl Home {
             .map(settings::ConnectOwner::from_user)
     }
 
+    /// The owner to stamp on a Cube created now: the signed-in account, or
+    /// `None` when signed out (or its profile hasn't loaded). A Cube created
+    /// signed out stays ownerless for good: the catch-up sync in
+    /// [`Self::first_connect_login`] registers it but never claims it.
+    fn creating_account(&self) -> Option<settings::ConnectOwner> {
+        self.connect_account
+            .authenticated_client()
+            .and_then(|_| self.connect_owner())
+    }
+
     /// Whether `cube` belongs to a different Connect account than the one
     /// signed in. See [`settings::cube_hidden_from_account`].
     fn cube_hidden_from_account(&self, cube: &CubeSettings) -> bool {
@@ -5279,7 +5291,7 @@ impl Home {
         let cube_name = self.create_cube_name.value.trim().to_string();
         let datadir_path = self.datadir_path.clone();
         let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-        let owner = self.connect_owner();
+        let owner = self.creating_account();
         let pending_bitcoin_import = self.pending_bitcoin_import.clone();
 
         Task::perform(
@@ -5311,8 +5323,11 @@ impl Home {
                 // stops `CubeCreated` registering it a second time.
                 if recovery_kit.is_some() {
                     cube.remote_synced = true;
-                    cube.connect_owner = owner;
                 }
+                // The account signed in while the Cube is created is its
+                // owner, registered or not: a registration that fails now is
+                // retried by catch-up, which never records an owner itself.
+                cube.connect_owner = owner;
                 cube.creation_recovery_kit = recovery_kit;
                 // Armed, like every Cube created under the gate. Without this a
                 // passkey Cube reads as one that predates the gate and is waved
@@ -5422,7 +5437,7 @@ impl Home {
         let pin = self.create_cube_pin.value();
         let datadir_path = self.datadir_path.clone();
         let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-        let owner = self.connect_owner();
+        let owner = self.creating_account();
         let pending_bitcoin_import = self.pending_bitcoin_import.clone();
 
         Task::perform(
@@ -5541,8 +5556,9 @@ impl Home {
                 // `finalize_passkey_cube_creation`, which does the same.
                 if recovery_kit.is_some() {
                     cube.remote_synced = true;
-                    cube.connect_owner = owner;
                 }
+                // The creating account owns it, as on the passkey path.
+                cube.connect_owner = owner;
                 cube.creation_recovery_kit = recovery_kit;
                 // Arm the gate. Reaching this line means one of the two
                 // fields above is set: the user either typed the challenge
@@ -15730,6 +15746,38 @@ mod tests {
     /// A signed-in Home rooted at `dir`, so `can_create_recovery_kit()` is true.
     /// No network call is made by any test below: every one either stops at a
     /// synchronous gate or feeds the upload result in directly.
+    /// The account signed in at creation owns the Cube even when it is not
+    /// registered yet: catch-up registers it later but never records an
+    /// owner, so a Cube made signed out stays ownerless — and visible to its
+    /// creator — however many accounts sign in after it.
+    #[test]
+    fn only_the_account_signed_in_at_creation_owns_a_cube() {
+        for signed_in in [true, false] {
+            let dir = tmp_datadir(if signed_in {
+                "owner-signed-in"
+            } else {
+                "owner-signed-out"
+            });
+            let mut home = if signed_in {
+                signed_in_home_with_datadir(&dir)
+            } else {
+                home_with_datadir(&dir)
+            };
+            passkey_create_form(&mut home, "Owned");
+            let _ = drain(webview_registration(&mut home, "cred", 13));
+            let out = drain(walk_backup_to_verified(&mut home));
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("verification must create the Cube, got {:?}", out);
+            };
+            assert!(!cube.remote_synced, "no Kit, so not registered yet");
+            assert_eq!(
+                cube.connect_owner.as_ref().map(|owner| owner.user_id),
+                signed_in.then_some(7),
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
     fn signed_in_home_with_datadir(dir: &std::path::Path) -> Home {
         let mut home = home_with_datadir(dir);
         home.connect_account.step = ConnectFlowStep::Dashboard;
