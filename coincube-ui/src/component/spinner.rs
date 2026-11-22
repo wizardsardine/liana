@@ -18,6 +18,9 @@ use iced::{
 pub struct Carousel<'a, Message, Theme> {
     interval: Duration,
     children: Vec<Element<'a, Message, Theme>>,
+    /// Lay out at the largest child's size, so cycling never moves what
+    /// sits beside it.
+    uniform: bool,
 }
 
 impl<'a, Message, Theme> Carousel<'a, Message, Theme> {
@@ -25,7 +28,14 @@ impl<'a, Message, Theme> Carousel<'a, Message, Theme> {
         Carousel {
             interval,
             children: children.into_iter().map(|child| child.into()).collect(),
+            uniform: false,
         }
+    }
+
+    /// Take the size of the largest child instead of the current one.
+    pub fn uniform(mut self) -> Self {
+        self.uniform = true;
+        self
     }
 }
 
@@ -76,7 +86,15 @@ where
                     .layout(&mut tree.children[i], renderer, limits)
             })
             .collect();
-        layout::Node::with_children(child_nodes[state.current].size(), child_nodes)
+        let size = if self.uniform {
+            child_nodes.iter().fold(Size::ZERO, |max, node| {
+                let size = node.size();
+                Size::new(max.width.max(size.width), max.height.max(size.height))
+            })
+        } else {
+            child_nodes[state.current].size()
+        };
+        layout::Node::with_children(size, child_nodes)
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -157,15 +175,15 @@ where
 }
 
 /// Animated trailing dots ("", ".", "..", "...") for a status line, so a
-/// long wait visibly isn't stuck. Put it in a fixed-width container: the
-/// dots change width as they cycle.
+/// long wait visibly isn't stuck. Always as wide as "...", so the dots
+/// never shift what follows them.
 pub fn ellipsis<'a, Message, Theme>(
     text_builder: impl Fn(&'a str) -> iced::widget::Text<'a, Theme, Renderer>,
 ) -> Carousel<'a, Message, Theme>
 where
     Theme: 'a + iced::widget::text::Catalog,
 {
-    typing_text_carousel("...", true, Duration::from_millis(400), text_builder)
+    typing_text_carousel("...", true, Duration::from_millis(400), text_builder).uniform()
 }
 
 /// Create a `Carousel` that types out the given `content` one character
