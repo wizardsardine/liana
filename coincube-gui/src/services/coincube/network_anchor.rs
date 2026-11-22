@@ -293,6 +293,25 @@ impl CoincubeClient {
         })
     }
 
+    /// Whether an authenticated start on `chain` would be admitted now: the
+    /// anchor is available and trusted, as [`Self::authenticated_backend`]
+    /// requires. Checked before a change that only such a start can reopen.
+    pub async fn anchor_admits_start(&self, chain: ChainId) -> Result<(), String> {
+        let status = self
+            .network_anchor(chain)
+            .await
+            .map_err(|_| "Connect's Bitcoin Blake2b status could not be read".to_string())?;
+        if status.state != AnchorState::Available {
+            return Err("Connect's Bitcoin Blake2b backend is not available".into());
+        }
+        status
+            .anchor
+            .ok_or_else(|| "Connect returned no Bitcoin Blake2b anchor".to_string())?
+            .trusted(chain, SystemTime::now())
+            .map(|_| ())
+            .map_err(|_| "Connect's Bitcoin Blake2b anchor is not trusted".into())
+    }
+
     /// Creates one immutable chain/account/provider context. Caller must invalidate
     /// the returned session on logout or account/provider changes, and restart the
     /// daemon with a newly admitted context. Nothing here is serialized.

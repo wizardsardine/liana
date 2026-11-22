@@ -3165,6 +3165,18 @@ pub fn resync_managed_fork_chain_data(
     root: &CoincubeDirectory,
     chain: crate::chain::ChainId,
 ) -> Result<(), String> {
+    resync_managed_fork_chain_data_then(root, chain, || Ok(()))
+}
+
+/// [`resync_managed_fork_chain_data`], running `before_delete` once every
+/// refusal has passed, under the same locks, and immediately before anything
+/// is deleted. If it fails, nothing is deleted and its error is returned. It
+/// does not run at all when the resync is refused.
+pub fn resync_managed_fork_chain_data_then(
+    root: &CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    before_delete: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     if !chain.is_blake2b() {
         return Err("Only the Bitcoin Blake2b managed node can be resynced here.".into());
     }
@@ -3209,6 +3221,7 @@ pub fn resync_managed_fork_chain_data(
                 .into(),
         );
     }
+    before_delete()?;
     for dir in managed_fork_chain_data_dirs(root, &chain.bitcoin_network()) {
         match std::fs::remove_dir_all(&dir) {
             Ok(()) => info!("Deleted '{}' for a resync", dir.display()),
@@ -7113,6 +7126,55 @@ mod blake2b_pin_bump {
         assert!(refused.contains("RPC port"), "{}", refused);
         assert!(blocks.exists());
         drop(listener);
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    // The step a resync runs before deleting (the loader's move to Connect)
+    // runs only once every refusal has passed, and before anything is
+    // deleted; if it fails, nothing is.
+    #[test]
+    fn the_pre_deletion_step_runs_only_for_a_resync_that_will_delete() {
+        let (base, root) = temp_root("resync-pre-delete");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = write_fork_conf(&root, listener.local_addr().unwrap().port());
+        let datadir = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b);
+        let blocks = datadir.join("testnet4").join("blocks");
+        std::fs::create_dir_all(&blocks).unwrap();
+        let chain = ChainId::BitcoinBlake2bTestnet4;
+        let never = || -> Result<(), String> { panic!("ran for a refused resync") };
+
+        // Refused: the RPC port answers.
+        assert!(resync_managed_fork_chain_data_then(&root, chain, never).is_err());
+        drop(listener);
+        // Refused: another Cube owns the node.
+        let lock = LockFile::create(
+            root.bitcoind_directory_for(NodeChainFamily::BitcoinBlake2b),
+            Network::Testnet4,
+        )
+        .unwrap();
+        lock.activate();
+        let owner = Bitcoind::owned(config, lock);
+        assert!(resync_managed_fork_chain_data_then(&root, chain, never).is_err());
+        drop(owner);
+        assert!(wait_for_managed_node_cleanup(time::Duration::from_secs(60)));
+        assert!(blocks.exists());
+
+        // The step fails: its reason, and nothing deleted.
+        let failed = resync_managed_fork_chain_data_then(&root, chain, || Err("not moved".into()))
+            .unwrap_err();
+        assert_eq!(failed, "not moved");
+        assert!(blocks.exists());
+
+        // It runs once, with the chain data still there, then the deletion.
+        let runs = std::cell::Cell::new(0);
+        resync_managed_fork_chain_data_then(&root, chain, || {
+            runs.set(runs.get() + 1);
+            assert!(blocks.exists());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(runs.get(), 1);
+        assert!(!blocks.exists());
         let _ = std::fs::remove_dir_all(base);
     }
 

@@ -122,6 +122,10 @@ pub struct Loader {
     fork_session_revoked: bool,
     /// The resync this loader started and still waits for, if any.
     fork_resync: Option<u64>,
+    /// Set when that resync must not change anything any more: the Connect
+    /// session it carries was cleared or revoked, or the loader closed. It is
+    /// checked under the resync's locks, before daemon.toml is rewritten.
+    fork_resync_cancel: Arc<std::sync::atomic::AtomicBool>,
     fork_task: Option<iced::task::Handle>,
     fork_retry_not_before: Option<std::time::Instant>,
     step: Step,
@@ -287,12 +291,18 @@ impl Loader {
         )
     }
 
+    /// The loader of a Bitcoin Blake2b Cube whose wallet runs on its local
+    /// managed node. The open itself never uses Connect; `connect_client` is
+    /// the session the unlock had, if any, carried only so that a resync can
+    /// move the Cube back to Connect and reopen it there (see
+    /// [`resync_fork_cube`]). A client without a token is not carried.
     pub fn new_local_fork(
         datadir_path: CoincubeDirectory,
         gui_config: GUIConfig,
         wallet_settings: WalletSettings,
         cube_settings: CubeSettings,
         cube_encryption_key: Arc<crate::services::connect::crypto::CubeEncryptionKey>,
+        connect_client: Option<crate::services::coincube::CoincubeClient>,
     ) -> (Self, Task<Message>) {
         Self::build(
             datadir_path,
@@ -304,7 +314,7 @@ impl Loader {
             cube_settings,
             None,
             None,
-            None,
+            connect_client.filter(|c| c.token().is_some()),
             Some(cube_encryption_key),
         )
     }
@@ -429,6 +439,7 @@ impl Loader {
                     .then(|| std::time::Instant::now() + Duration::from_secs(30)),
                 fork_session_revoked: false,
                 fork_resync: None,
+                fork_resync_cancel: Arc::default(),
                 fork_task,
                 datadir_path,
                 gui_config,
@@ -755,6 +766,7 @@ impl Loader {
         if let Some(handle) = self.fork_task.take() {
             handle.abort();
         }
+        self.cancel_fork_resync();
         if let Some(node) = self.internal_bitcoind.take() {
             node.stop();
         }
@@ -764,6 +776,19 @@ impl Loader {
         self.step = Step::Error(Box::new(Error::Unexpected(
             "Connect session changed; reopen this Cube".into(),
         )));
+    }
+
+    /// Stop a resync in flight from changing anything it has not yet changed.
+    fn cancel_fork_resync(&self) {
+        self.fork_resync_cancel
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Drop the Connect session a local-backend loader carries for a resync
+    /// (any sign-in change), and stop a resync in flight from using it.
+    pub(crate) fn clear_connect_session(&mut self) {
+        self.connect_client = None;
+        self.cancel_fork_resync();
     }
 
     pub fn stop(&mut self) {
@@ -780,6 +805,7 @@ impl Loader {
         if let Some(handle) = self.fork_task.take() {
             handle.abort();
         }
+        self.cancel_fork_resync();
         info!("Close requested");
         // NOTE: we take() the internal_bitcoind here to make sure the debug.log reader
         // subscription is dropped.
@@ -888,16 +914,13 @@ impl Loader {
                 let root = self.datadir_path.clone();
                 let chain = self.cube_settings.network;
                 let wallet = self.wallet_settings.clone();
+                let client = self.connect_client.clone();
+                let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+                self.fork_resync_cancel = cancel.clone();
                 self.step = Step::Connecting;
                 self.set_quote_context("loading");
                 Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            resync_fork_cube(&root, chain, wallet.as_ref())
-                        })
-                        .await
-                        .unwrap_or_else(|e| Err(ForkResyncError::Failed(e.to_string())))
-                    },
+                    resync_fork_cube(root, chain, wallet, client, cancel),
                     move |result| Message::ForkNodeResynced { token, result },
                 )
             }
@@ -908,8 +931,28 @@ impl Loader {
             }
             // The user asked for this start by deleting the chain data, so it
             // is not held to the Connect retry delay the Retry button applies.
+            // A Cube the resync moved to Connect reopens there: the rebuilt
+            // loader finds it on Connect and opens it with the session it
+            // carries, as `new_for_chain` would. If that session was cleared
+            // meanwhile, the rebuild refuses and the Cube opens after sign-in.
             Message::ForkNodeResynced { result: Ok(()), .. } => {
                 self.fork_resync = None;
+                // Moved to Connect, but the session was cleared after the
+                // move: the Cube opens again once signed in. Nothing here can
+                // open it without a session, so Retry is disabled like after
+                // a revocation, keeping this guidance instead of replacing it
+                // with the Connect delay and then the generic refusal.
+                if self.requires_connect() && self.connect_client.is_none() {
+                    self.fork_session_revoked = true;
+                    self.step = Step::Error(Box::new(Error::Unexpected(
+                        "The Bitcoin Blake2b node is resyncing and this Cube now uses Connect \
+                         until it has caught up. Sign in to Connect from Home, then reopen this \
+                         Cube."
+                            .into(),
+                    )));
+                    self.set_quote_context("error");
+                    return Task::none();
+                }
                 self.rebuild()
             }
             // A failed resync stays offered: a partial deletion is finished by
@@ -1528,22 +1571,18 @@ impl Drop for PendingForkNode {
     }
 }
 
-/// Why a Bitcoin Blake2b Cube cannot be resynced from its loader, if so.
+/// Why a Cube whose wallet runs on its local node is not resynced: there is no
+/// Connect session to reopen it on.
 ///
-/// A Cube whose wallet already runs on its local node (promoted after the
-/// first sync) cannot be admitted to a node in initial block download, so
-/// after a resync from scratch every open would fail and stop the node again.
-/// Moving it back to Connect for the resync needs a Connect session, which a
-/// local-backend Cube's loader never holds, so it would not reopen either.
-/// Until that is solved, such a Cube is refused before anything is deleted.
-fn fork_resync_refusal(cfg: &Config, root: &CoincubeDirectory) -> Option<String> {
-    crate::chain::is_managed_local_fork(cfg, root).then(|| {
-        "this Cube's wallet runs on its local node, which could not admit the wallet again \
-         until a resync finished, so nothing was deleted. Switching this Cube back to Connect \
-         before resyncing is not available from here yet"
-            .to_string()
-    })
-}
+/// Such a Cube cannot be admitted to a node in initial block download, so a
+/// resync from scratch first moves it back to Connect with the node pending
+/// (see [`connect_demoted_config`]). Its loader then reopens it through
+/// Connect, which needs a session. Without one the Cube could not reopen, so
+/// nothing is deleted or changed.
+const LOCAL_FORK_RESYNC_NEEDS_CONNECT: &str =
+    "this Cube's wallet runs on its local node. Resyncing moves it to Connect until the \
+     node has caught up, which needs a Connect session. Nothing was deleted. Sign in to \
+     Connect from Home, reopen this Cube, then resync";
 
 /// Why a resync did not complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1556,29 +1595,168 @@ pub enum ForkResyncError {
     Failed(String),
 }
 
-/// Resync a Bitcoin Blake2b Cube's node: refuse a Cube that could not reopen
-/// afterwards, then delete the node's chain data. A repeat after a partial
-/// failure finishes the job: missing directories are not an error.
-fn resync_fork_cube(
-    root: &CoincubeDirectory,
+/// The configuration of a Cube whose wallet runs on its local node, moved
+/// back to Connect for a resync: the node becomes the pending one, adopted
+/// (`auto_switch_to_pending = Some(true)`) so the App promotes it again once
+/// it has caught up. This is the inverse of the App's promotion
+/// (`synced_bitcoind_config`) and the state of a Cube before its first one.
+/// The Connect endpoint is rebuilt for the chain, as a switch to Connect does,
+/// and the session token is never persisted ([`Config::for_persistence`]).
+fn connect_demoted_config(cfg: &Config) -> Option<Config> {
+    let Some(BitcoinBackend::Bitcoind(node)) = &cfg.bitcoin_backend else {
+        return None;
+    };
+    let chain = cfg.bitcoin_config.chain;
+    let mut esplora = crate::installer::connect_esplora_config(chain, "");
+    esplora.token = None;
+    let mut demoted = cfg.clone();
+    demoted.pending_bitcoind = Some(node.clone());
+    demoted.bitcoin_backend = Some(BitcoinBackend::Esplora(esplora));
+    demoted.fallback_esplora = None;
+    demoted.pending_managed_node_install = None;
+    demoted.auto_switch_to_pending = Some(true);
+    demoted.bitcoin_config.poll_interval_secs =
+        Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS);
+    Some(demoted.for_persistence())
+}
+
+/// Resync a Bitcoin Blake2b Cube's node. See [`resync_fork_cube_with`]; the
+/// Connect check is [`confirm_connect_reopen`].
+async fn resync_fork_cube(
+    root: CoincubeDirectory,
     chain: crate::chain::ChainId,
-    wallet: Option<&WalletSettings>,
+    wallet: Option<WalletSettings>,
+    client: Option<crate::services::coincube::CoincubeClient>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<(), ForkResyncError> {
+    resync_fork_cube_with(
+        root,
+        chain,
+        wallet,
+        client,
+        cancel,
+        |chain, client, root| async move { confirm_connect_reopen(chain, client, root).await },
+    )
+    .await
+}
+
+/// Whether the Connect start that reopens a Cube moved to Connect would be
+/// admitted now: Bitcoin Blake2b is enabled for the account
+/// ([`crate::chain::require_connect_feature`], as the start checks) and
+/// Connect's anchor is available and trusted (as the authenticated daemon
+/// start requires).
+async fn confirm_connect_reopen(
+    chain: crate::chain::ChainId,
+    client: crate::services::coincube::CoincubeClient,
+    root: CoincubeDirectory,
+) -> Result<(), String> {
+    crate::chain::require_connect_feature(chain, &client, &root).await?;
+    client.anchor_admits_start(chain).await
+}
+
+/// Resync a Bitcoin Blake2b Cube's node: delete its chain data so it starts
+/// from scratch. A repeat after a partial failure finishes the job: missing
+/// directories are not an error.
+///
+/// A Cube whose wallet runs on its local node must be able to reopen after
+/// the deletion, so before anything is deleted:
+/// - it needs an authenticated Connect `client`, or it is refused;
+/// - `verify_connect` (whether the reopen would be admitted) must pass;
+/// - its daemon.toml is moved to Connect ([`connect_demoted_config`]) under
+///   the resync's locks, once every refusal has passed, only if the file is
+///   still what was read and `cancel` is not set. If any of this fails,
+///   nothing is deleted.
+///
+/// A Cube already on Connect is resynced without touching its configuration.
+/// Any other node backend is refused: deleting its chain data would leave a
+/// wallet that cannot be admitted to it and cannot move to Connect from here.
+async fn resync_fork_cube_with<V, F>(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    wallet: Option<WalletSettings>,
+    client: Option<crate::services::coincube::CoincubeClient>,
+    cancel: Arc<std::sync::atomic::AtomicBool>,
+    verify_connect: V,
+) -> Result<(), ForkResyncError>
+where
+    V: FnOnce(
+        crate::chain::ChainId,
+        crate::services::coincube::CoincubeClient,
+        CoincubeDirectory,
+    ) -> F,
+    F: std::future::Future<Output = Result<(), String>>,
+{
+    let mut demotion = None;
     if let Some(wallet) = wallet {
         let path = root
             .network_directory(chain)
             .coincubed_data_directory(&wallet.wallet_id())
             .path()
             .join("daemon.toml");
-        let cfg = Config::from_file(Some(path)).map_err(|e| {
+        let read = std::fs::read(&path).map_err(|e| {
             ForkResyncError::Failed(format!("could not read this Cube's configuration: {e}"))
         })?;
-        if let Some(refusal) = fork_resync_refusal(&cfg, root) {
-            return Err(ForkResyncError::Refused(refusal));
+        let cfg = Config::from_file(Some(path.clone())).map_err(|e| {
+            ForkResyncError::Failed(format!("could not read this Cube's configuration: {e}"))
+        })?;
+        if crate::chain::is_managed_local_fork(&cfg, &root) {
+            let client = client
+                .filter(|c| c.token().is_some())
+                .ok_or_else(|| ForkResyncError::Refused(LOCAL_FORK_RESYNC_NEEDS_CONNECT.into()))?;
+            // Refused, not offered again: a session that fails now (an
+            // expired token, Connect unavailable) needs the Cube reopened.
+            verify_connect(chain, client, root.clone())
+                .await
+                .map_err(|e| {
+                    ForkResyncError::Refused(format!(
+                        "this Cube's wallet runs on its local node and must move to Connect \
+                         while the node resyncs, but Connect cannot reopen it now ({e}). Nothing \
+                         was deleted. Reopen this Cube to try again"
+                    ))
+                })?;
+            let demoted = connect_demoted_config(&cfg).ok_or_else(|| {
+                ForkResyncError::Failed("this Cube's local node configuration is missing".into())
+            })?;
+            let content = toml::to_string(&demoted).map_err(|e| {
+                ForkResyncError::Failed(format!("could not write this Cube's configuration: {e}"))
+            })?;
+            demotion = Some((path, read, content));
+        } else if matches!(cfg.bitcoin_backend, Some(BitcoinBackend::Bitcoind(_))) {
+            return Err(ForkResyncError::Refused(
+                "this Cube's node is not the managed Bitcoin Blake2b node, so nothing was deleted"
+                    .into(),
+            ));
         }
     }
-    crate::node::bitcoind::resync_managed_fork_chain_data(root, chain)
-        .map_err(ForkResyncError::Failed)
+    tokio::task::spawn_blocking(move || {
+        crate::node::bitcoind::resync_managed_fork_chain_data_then(&root, chain, move || {
+            let Some((path, read, content)) = demotion else {
+                return Ok(());
+            };
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                return Err(
+                    "the Connect session changed or the Cube was closed during the resync, so \
+                     nothing was deleted"
+                        .into(),
+                );
+            }
+            if std::fs::read(&path).ok().as_deref() != Some(read.as_slice()) {
+                return Err(
+                    "this Cube's configuration changed during the resync, so nothing was deleted"
+                        .into(),
+                );
+            }
+            crate::services::chain_status::store::write_atomically(&path, content.as_bytes())
+                .map_err(|e| {
+                    format!("could not move this Cube to Connect ({e}), so nothing was deleted")
+                })?;
+            info!("Moved this Cube to Connect for the Bitcoin Blake2b resync");
+            Ok(())
+        })
+    })
+    .await
+    .unwrap_or_else(|e| Err(e.to_string()))
+    .map_err(ForkResyncError::Failed)
 }
 
 /// Install the pinned Bitcoin Blake2b binary when it is missing (see
@@ -2492,67 +2670,6 @@ mod tests {
         );
         assert!(loader.fork_task.is_none());
         assert!(!loader.daemon_started);
-    }
-
-    // A Cube whose wallet runs on its local node is refused before any
-    // chain data is deleted or its configuration touched: after a resync it
-    // could not be admitted, and its loader holds no Connect session to fall
-    // back on. A Cube on Connect with the node pending is resynced.
-    #[test]
-    fn a_local_backend_cube_is_refused_before_anything_is_deleted() {
-        use crate::node::bitcoind::{internal_bitcoind_datadir_for, NodeChainFamily};
-        let chain = crate::chain::ChainId::BitcoinBlake2bTestnet4;
-        let path = std::env::temp_dir().join(format!("fork-resync-{}", uuid::Uuid::new_v4()));
-        let root = CoincubeDirectory::new(path.clone());
-        let (cfg, wallet) = crate::chain::managed_local_fixture(&root, chain);
-        let blocks = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b)
-            .join("testnet4")
-            .join("blocks");
-        std::fs::create_dir_all(&blocks).unwrap();
-        let daemon_toml = root
-            .network_directory(chain)
-            .coincubed_data_directory(&wallet.wallet_id())
-            .path()
-            .join("daemon.toml");
-
-        // Even with a recorded Connect fallback.
-        let mut promoted = cfg.clone();
-        promoted.fallback_esplora = Some(crate::installer::connect_esplora_config(
-            chain,
-            "runtime-only-token",
-        ));
-        for local in [cfg.clone(), promoted] {
-            std::fs::write(&daemon_toml, toml::to_string(&local).unwrap()).unwrap();
-            let before = std::fs::read(&daemon_toml).unwrap();
-            let refused = resync_fork_cube(&root, chain, Some(&wallet)).unwrap_err();
-            assert!(
-                matches!(&refused, ForkResyncError::Refused(e) if e.contains("nothing was deleted")),
-                "{:?}",
-                refused
-            );
-            assert!(blocks.exists());
-            assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
-        }
-
-        // On Connect with the node pending: resynced, configuration untouched.
-        let Some(BitcoinBackend::Bitcoind(local)) = cfg.bitcoin_backend.clone() else {
-            panic!("fixture is a local backend");
-        };
-        let mut pending = cfg.clone();
-        pending.pending_bitcoind = Some(local);
-        pending.bitcoin_backend = Some(BitcoinBackend::Esplora(
-            crate::installer::connect_esplora_config(chain, "runtime-only-token"),
-        ));
-        std::fs::write(
-            &daemon_toml,
-            toml::to_string(&pending.for_persistence()).unwrap(),
-        )
-        .unwrap();
-        let before = std::fs::read(&daemon_toml).unwrap();
-        resync_fork_cube(&root, chain, Some(&wallet)).unwrap();
-        assert!(!blocks.exists());
-        assert_eq!(std::fs::read(&daemon_toml).unwrap(), before);
-        let _ = std::fs::remove_dir_all(path);
     }
 
     fn pruned_revalidation_error() -> Error {
@@ -3783,12 +3900,14 @@ mod bootstrap_backend_selection_tests {
             let key = encryption_key();
             let (loader, startup) = if local {
                 let (_, wallet) = crate::chain::managed_local_fixture(&root, chain);
+                // Carried for a resync only, and dropped on any auth change.
                 Loader::new_local_fork(
                     root.clone(),
                     GUIConfig::new(false),
                     wallet,
                     cube(chain),
                     key.clone(),
+                    Some(authenticated_client()),
                 )
             } else {
                 Loader::new_for_chain(
@@ -4422,5 +4541,604 @@ mod local_start_cancel_tests {
         assert_eq!(std::fs::read_dir(&locks).unwrap().count(), 1);
         assert!(other.exists());
         std::fs::remove_dir_all(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod local_fork_resync_tests {
+    //! Resyncing a pruned Bitcoin Blake2b Cube whose wallet runs on its local
+    //! node: it moves to Connect with the node pending, then its loader
+    //! reopens it there; or it is refused with nothing deleted or changed.
+    //! Real wallet settings and daemon.toml (`managed_local_fixture`), a real
+    //! managed-node layout and a mocked Connect API; no node is started.
+    use super::*;
+    use crate::chain::ChainId;
+    use crate::services::coincube::CoincubeClient;
+    use httpmock::prelude::*;
+
+    const CHAIN: ChainId = ChainId::BitcoinBlake2bTestnet4;
+    struct Fixture {
+        root: CoincubeDirectory,
+        wallet: WalletSettings,
+        node: coincubed::config::BitcoindConfig,
+        daemon_toml: PathBuf,
+        blocks: PathBuf,
+        rpc_port: u16,
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(self.root.path());
+        }
+    }
+
+    /// A local-backend Cube with chain data, its node on a port nothing
+    /// listens on (the fixture's fixed port may be taken on a shared host),
+    /// and the Bitcoin Blake2b beta enabled.
+    fn local_cube(tag: &str) -> Fixture {
+        use crate::node::bitcoind::{
+            internal_bitcoind_config_path, internal_bitcoind_datadir_for, InternalBitcoindConfig,
+            NodeChainFamily,
+        };
+        let path = std::env::temp_dir().join(format!(
+            "coincube-local-resync-{tag}-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let root = CoincubeDirectory::new(path);
+        let (mut cfg, wallet) = crate::chain::managed_local_fixture(&root, CHAIN);
+        let rpc_port = std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let datadir = internal_bitcoind_datadir_for(&root, NodeChainFamily::BitcoinBlake2b);
+        let conf_path = internal_bitcoind_config_path(&datadir);
+        let mut managed = InternalBitcoindConfig::from_file(&conf_path).unwrap();
+        managed
+            .networks
+            .get_mut(&CHAIN.bitcoin_network())
+            .unwrap()
+            .rpc_port = rpc_port;
+        managed.to_ini().write_to_file(&conf_path).unwrap();
+        let Some(BitcoinBackend::Bitcoind(node)) = cfg.bitcoin_backend.as_mut() else {
+            panic!("the fixture is a local backend");
+        };
+        node.addr.set_port(rpc_port);
+        let node = node.clone();
+        let daemon_toml = root
+            .network_directory(CHAIN)
+            .coincubed_data_directory(&wallet.wallet_id())
+            .path()
+            .join("daemon.toml");
+        std::fs::write(&daemon_toml, toml::to_string(&cfg).unwrap()).unwrap();
+        assert!(crate::chain::is_managed_local_fork(&cfg, &root));
+        let blocks = datadir.join("testnet4").join("blocks");
+        std::fs::create_dir_all(&blocks).unwrap();
+        crate::app::settings::global::GlobalSettings::update_bitcoin_blake2b_beta(
+            &crate::app::settings::global::GlobalSettings::path(&root),
+            true,
+        )
+        .unwrap();
+        Fixture {
+            root,
+            wallet,
+            node,
+            daemon_toml,
+            blocks,
+            rpc_port,
+        }
+    }
+
+    fn cube() -> CubeSettings {
+        CubeSettings::new_with_raw_id("cube-uuid".to_string(), "Local".to_string(), CHAIN)
+    }
+
+    fn client(server: &MockServer) -> CoincubeClient {
+        let mut client = CoincubeClient::for_test(server.base_url());
+        client.set_token("synthetic-session-token");
+        client
+    }
+
+    fn encryption_key() -> Arc<crate::services::connect::crypto::CubeEncryptionKey> {
+        let signer =
+            coincube_core::signer::MasterSigner::generate(bitcoin::Network::Testnet).unwrap();
+        Arc::new(crate::services::connect::crypto::CubeEncryptionKey::derive(
+            &signer,
+            bitcoin::Network::Testnet,
+        ))
+    }
+
+    async fn features(server: &MockServer, enabled: bool) -> httpmock::Mock<'_> {
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api/v1/connect/features")
+                    .header("authorization", "Bearer synthetic-session-token");
+                then.status(200).json_body(serde_json::json!({
+                    "data": {"plans": [], "bitcoin_blake2b_enabled": enabled}
+                }));
+            })
+            .await
+    }
+
+    async fn anchor(server: &MockServer, available: bool) -> httpmock::Mock<'_> {
+        let body = if available {
+            serde_json::json!({"success": true, "data": {
+            "network": "bitcoin-blake2b-testnet4", "state": "available", "anchor": {
+                "tip_hash": "11".repeat(32), "tip_height": 973029,
+                "tip_median_time_past": 1800000000,
+                "observed_at": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+                "observation": {"tip_height": 973029,
+                    "fork": {"height": 972000, "active": true},
+                    "rdts": {"state": "flagday", "flagday": {
+                        "height": 972000, "expiry_time": 1800010000_i64, "active": false}}}
+            }}})
+        } else {
+            serde_json::json!({"success": false,
+                "error": {"code": "SERVICE_UNAVAILABLE"},
+                "data": {"network": "bitcoin-blake2b-testnet4", "state": "syncing"}})
+        };
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/api/v1/connect/networks/bitcoin-blake2b-testnet4/anchor");
+                then.status(if available { 200 } else { 503 })
+                    .json_body(body);
+            })
+            .await
+    }
+
+    fn no_cancel() -> Arc<std::sync::atomic::AtomicBool> {
+        Arc::default()
+    }
+
+    fn pruned() -> Error {
+        Error::Bitcoind(StartInternalBitcoindError::PrunedRevalidationRequired(
+            CHAIN,
+        ))
+    }
+
+    // The whole recovery: the pruned page's resync moves the Cube to Connect
+    // with its node pending and adopted, deletes the chain data, and the
+    // result reopens the Cube on Connect with the session it carried.
+    #[tokio::test]
+    async fn a_local_backend_cube_resyncs_through_connect_and_reopens_there() {
+        let fx = local_cube("reopen");
+        let server = MockServer::start_async().await;
+        let enabled = features(&server, true).await;
+        let available = anchor(&server, true).await;
+        let session = client(&server);
+
+        let (mut loader, startup) = Loader::new_local_fork(
+            fx.root.clone(),
+            GUIConfig::new(false),
+            fx.wallet.clone(),
+            cube(),
+            encryption_key(),
+            Some(session.clone()),
+        );
+        drop(startup); // Never start a node or daemon here.
+        assert!(!loader.requires_connect());
+        loader.step = Step::Error(Box::new(pruned()));
+        let task = loader.update(Message::View(ViewMessage::ResyncForkNode));
+        assert!(task.units() > 0);
+        drop(task); // The same future, run directly below.
+        assert!(matches!(loader.step, Step::Connecting));
+        let token = loader.fork_resync.expect("resync in flight");
+
+        resync_fork_cube(
+            fx.root.clone(),
+            CHAIN,
+            Some(fx.wallet.clone()),
+            loader.connect_client.clone(),
+            loader.fork_resync_cancel.clone(),
+        )
+        .await
+        .unwrap();
+        enabled.assert_hits_async(1).await;
+        available.assert_hits_async(1).await;
+        assert!(!fx.blocks.exists());
+
+        // On Connect, the node pending and adopted, no token on disk.
+        let raw = std::fs::read_to_string(&fx.daemon_toml).unwrap();
+        assert!(!raw.contains("synthetic-session-token"));
+        let cfg = Config::from_file(Some(fx.daemon_toml.clone())).unwrap();
+        assert!(!crate::chain::is_managed_local_fork(&cfg, &fx.root));
+        match &cfg.bitcoin_backend {
+            Some(BitcoinBackend::Esplora(esplora)) => {
+                assert_eq!(
+                    esplora.addr,
+                    crate::installer::connect_esplora_config(CHAIN, "").addr
+                );
+                assert!(esplora.token.is_none());
+            }
+            other => panic!("not on Connect: {:?}", other),
+        }
+        assert_eq!(cfg.pending_bitcoind, Some(fx.node.clone()));
+        assert_eq!(cfg.auto_switch_to_pending, Some(true));
+        assert!(cfg.fallback_esplora.is_none());
+        assert_eq!(
+            cfg.bitcoin_config.poll_interval_secs,
+            Duration::from_secs(coincubed::config::ESPLORA_POLL_INTERVAL_SECS)
+        );
+        assert_eq!(cfg.bitcoin_config.chain, CHAIN);
+        assert!(cfg.pending_managed_node_install.is_none());
+
+        // The result reopens it on Connect, admitted with the carried session.
+        let task = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Ok(()),
+        });
+        assert!(task.units() > 0, "the reopen must start");
+        drop(task);
+        assert!(matches!(loader.step, Step::Connecting));
+        assert!(loader.requires_connect());
+        assert!(!loader.fork_session_revoked);
+        assert_eq!(
+            loader.connect_client.as_ref().and_then(|c| c.token()),
+            Some("synthetic-session-token")
+        );
+        assert!(loader.cube_encryption_key.is_some());
+
+        // Without that session the Cube would not reopen: why it is required
+        // before anything is deleted.
+        let (bare, startup) = Loader::new_local_fork(
+            fx.root.clone(),
+            GUIConfig::new(false),
+            fx.wallet.clone(),
+            cube(),
+            encryption_key(),
+            None,
+        );
+        assert_eq!(startup.units(), 0, "refused before anything starts");
+        assert!(
+            matches!(&bare.step, Step::Error(_)),
+            "a Connect Cube without a session must be refused"
+        );
+    }
+
+    // Every way the recovery can be refused leaves the chain data and
+    // daemon.toml exactly as they were.
+    #[tokio::test]
+    async fn a_local_backend_resync_is_refused_before_anything_changes() {
+        let fx = local_cube("refused");
+        let server = MockServer::start_async().await;
+        let before = std::fs::read(&fx.daemon_toml).unwrap();
+        let unchanged = |fx: &Fixture| {
+            assert!(fx.blocks.exists());
+            assert_eq!(std::fs::read(&fx.daemon_toml).unwrap(), before);
+        };
+        let wallet = Some(fx.wallet.clone());
+        let never = |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async {
+            panic!("Connect checked without a session")
+        };
+        let ok = |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async { Ok(()) };
+
+        // No session, or one without a token: refused, not offered again.
+        for session in [None, Some(CoincubeClient::for_test(server.base_url()))] {
+            let refused = resync_fork_cube_with(
+                fx.root.clone(),
+                CHAIN,
+                wallet.clone(),
+                session,
+                no_cancel(),
+                never,
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(&refused, ForkResyncError::Refused(e)
+                    if e.contains("Nothing was deleted") && e.contains("Sign in to Connect")),
+                "{:?}",
+                refused
+            );
+            unchanged(&fx);
+        }
+
+        // Connect would not admit the reopen: the chain is not enabled for
+        // the account, or its anchor is unavailable. Refused, nothing deleted.
+        let disabled = features(&server, false).await;
+        let refused = resync_fork_cube(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            no_cancel(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&refused, ForkResyncError::Refused(e)
+                if e.contains("isn't enabled") && e.contains("Nothing was deleted")),
+            "{:?}",
+            refused
+        );
+        disabled.assert_hits_async(1).await;
+        disabled.delete_async().await;
+        unchanged(&fx);
+        let enabled = features(&server, true).await;
+        let syncing = anchor(&server, false).await;
+        let refused = resync_fork_cube(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            no_cancel(),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&refused, ForkResyncError::Refused(e)
+                if e.contains("not available") && e.contains("Nothing was deleted")),
+            "{:?}",
+            refused
+        );
+        syncing.assert_hits_async(1).await;
+        enabled.delete_async().await;
+        syncing.delete_async().await;
+        unchanged(&fx);
+
+        // The node still answers: the resync is refused before daemon.toml
+        // is moved, not after.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", fx.rpc_port)).unwrap();
+        let failed = resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            no_cancel(),
+            ok,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&failed, ForkResyncError::Failed(e) if e.contains("RPC port")),
+            "{:?}",
+            failed
+        );
+        drop(listener);
+        unchanged(&fx);
+
+        // The session was cleared (or the loader closed) during the check.
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let failed = resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            cancel,
+            ok,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&failed, ForkResyncError::Failed(e) if e.contains("session changed")),
+            "{:?}",
+            failed
+        );
+        unchanged(&fx);
+
+        // daemon.toml changed after it was read: not overwritten, nothing
+        // deleted.
+        let path = fx.daemon_toml.clone();
+        let edited = format!("{}\n", String::from_utf8(before.clone()).unwrap());
+        let edit = edited.clone();
+        let failed = resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            no_cancel(),
+            move |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async move {
+                std::fs::write(&path, edit).unwrap();
+                Ok(())
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&failed, ForkResyncError::Failed(e) if e.contains("changed")),
+            "{:?}",
+            failed
+        );
+        assert!(fx.blocks.exists());
+        assert_eq!(std::fs::read_to_string(&fx.daemon_toml).unwrap(), edited);
+        std::fs::write(&fx.daemon_toml, &before).unwrap();
+
+        // A node backend that is not the managed one (here: another port)
+        // fails closed rather than being deleted without the move.
+        let mut cfg = Config::from_file(Some(fx.daemon_toml.clone())).unwrap();
+        let Some(BitcoinBackend::Bitcoind(node)) = cfg.bitcoin_backend.as_mut() else {
+            panic!("local backend");
+        };
+        node.addr.set_port(fx.rpc_port.wrapping_add(1));
+        std::fs::write(&fx.daemon_toml, toml::to_string(&cfg).unwrap()).unwrap();
+        let other = std::fs::read(&fx.daemon_toml).unwrap();
+        let refused = resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            wallet.clone(),
+            Some(client(&server)),
+            no_cancel(),
+            never,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&refused, ForkResyncError::Refused(e) if e.contains("not the managed")),
+            "{:?}",
+            refused
+        );
+        assert!(fx.blocks.exists());
+        assert_eq!(std::fs::read(&fx.daemon_toml).unwrap(), other);
+    }
+
+    // A Cube already on Connect with the node pending needs no session and
+    // no Connect check: its chain data is deleted, its configuration untouched.
+    #[tokio::test]
+    async fn a_connect_cube_with_the_node_pending_is_resynced_untouched() {
+        let fx = local_cube("pending");
+        let cfg = Config::from_file(Some(fx.daemon_toml.clone())).unwrap();
+        let mut pending = connect_demoted_config(&cfg).unwrap();
+        pending.auto_switch_to_pending = Some(false);
+        std::fs::write(&fx.daemon_toml, toml::to_string(&pending).unwrap()).unwrap();
+        let before = std::fs::read(&fx.daemon_toml).unwrap();
+        resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            Some(fx.wallet.clone()),
+            None,
+            no_cancel(),
+            |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async {
+                panic!("a Connect Cube needs no reopen check")
+            },
+        )
+        .await
+        .unwrap();
+        assert!(!fx.blocks.exists());
+        assert_eq!(std::fs::read(&fx.daemon_toml).unwrap(), before);
+    }
+
+    // A sign-in change while the resync checks Connect: the local loader
+    // drops its session and the resync changes nothing; a result arriving
+    // once the Cube is on Connect without a session asks for sign-in rather
+    // than rebuilding into a misleading refusal.
+    #[tokio::test]
+    async fn a_sign_in_change_during_the_check_stops_the_resync() {
+        let fx = local_cube("sign-in-change");
+        let server = MockServer::start_async().await;
+        let before = std::fs::read(&fx.daemon_toml).unwrap();
+        let (mut loader, startup) = Loader::new_local_fork(
+            fx.root.clone(),
+            GUIConfig::new(false),
+            fx.wallet.clone(),
+            cube(),
+            encryption_key(),
+            Some(client(&server)),
+        );
+        drop(startup);
+        loader.step = Step::Error(Box::new(pruned()));
+        drop(loader.update(Message::View(ViewMessage::ResyncForkNode)));
+        let token = loader.fork_resync.expect("resync in flight");
+        let session = loader.connect_client.clone();
+        let cancel = loader.fork_resync_cancel.clone();
+        let mut tab = crate::gui::tab::Tab::new(1, crate::gui::tab::State::Loader(loader));
+        drop(tab.invalidate_fork_session(crate::gui::tab::AuthChange::LogOut, false));
+        let failed = resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            Some(fx.wallet.clone()),
+            session.clone(),
+            cancel,
+            |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async { Ok(()) },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&failed, ForkResyncError::Failed(_)),
+            "{:?}",
+            failed
+        );
+        assert!(fx.blocks.exists());
+        assert_eq!(std::fs::read(&fx.daemon_toml).unwrap(), before);
+
+        // Had the move already happened, the result asks for sign-in.
+        let crate::gui::tab::State::Loader(loader) = &mut tab.state else {
+            panic!("a local loader stays open across sign-in changes");
+        };
+        assert!(loader.connect_client.is_none());
+        resync_fork_cube_with(
+            fx.root.clone(),
+            CHAIN,
+            Some(fx.wallet.clone()),
+            session,
+            no_cancel(),
+            |_: ChainId, _: CoincubeClient, _: CoincubeDirectory| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        let task = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Ok(()),
+        });
+        assert_eq!(task.units(), 0);
+        let asks_sign_in = |loader: &Loader| {
+            matches!(&loader.step, Step::Error(e)
+                if e.to_string().contains("Sign in to Connect from Home, then reopen this Cube"))
+        };
+        assert!(asks_sign_in(loader));
+
+        // Retry cannot open it without a session: it is disabled and keeps the
+        // guidance, both inside the Connect retry delay and after it.
+        assert!(!loader.can_retry());
+        loader.fork_retry_not_before = Some(std::time::Instant::now() + Duration::from_secs(30));
+        assert_eq!(loader.update(Message::View(ViewMessage::Retry)).units(), 0);
+        assert!(asks_sign_in(loader));
+        loader.fork_retry_not_before = None;
+        assert_eq!(loader.update(Message::View(ViewMessage::Retry)).units(), 0);
+        assert!(asks_sign_in(loader));
+        assert_eq!(
+            loader
+                .update(Message::View(ViewMessage::ResyncForkNode))
+                .units(),
+            0
+        );
+        assert!(asks_sign_in(loader));
+    }
+
+    // A sign-out once the Cube is on Connect revokes the loader like any
+    // Connect loader's: the resync's late result does not reopen it, and the
+    // Cube opens on Connect after the next sign-in.
+    #[tokio::test]
+    async fn a_sign_out_after_the_move_to_connect_revokes_the_reopen() {
+        let fx = local_cube("sign-out");
+        let server = MockServer::start_async().await;
+        let _enabled = features(&server, true).await;
+        let _available = anchor(&server, true).await;
+        let (mut loader, startup) = Loader::new_local_fork(
+            fx.root.clone(),
+            GUIConfig::new(false),
+            fx.wallet.clone(),
+            cube(),
+            encryption_key(),
+            Some(client(&server)),
+        );
+        drop(startup);
+        loader.step = Step::Error(Box::new(pruned()));
+        drop(loader.update(Message::View(ViewMessage::ResyncForkNode)));
+        let token = loader.fork_resync.expect("resync in flight");
+        resync_fork_cube(
+            fx.root.clone(),
+            CHAIN,
+            Some(fx.wallet.clone()),
+            loader.connect_client.clone(),
+            loader.fork_resync_cancel.clone(),
+        )
+        .await
+        .unwrap();
+
+        let mut tab = crate::gui::tab::Tab::new(1, crate::gui::tab::State::Loader(loader));
+        drop(tab.invalidate_fork_session(crate::gui::tab::AuthChange::LogOut, false));
+        let crate::gui::tab::State::Loader(loader) = &mut tab.state else {
+            panic!("the loader stays, refused");
+        };
+        assert!(loader.fork_revoked());
+        assert!(loader.connect_client.is_none());
+        let task = loader.update(Message::ForkNodeResynced {
+            token,
+            result: Ok(()),
+        });
+        assert_eq!(task.units(), 0);
+        assert!(
+            matches!(&loader.step, Step::Error(e) if e.to_string().contains("reopen this Cube"))
+        );
+        // Still on Connect: the next open goes through Connect sign-in.
+        let cfg = Config::from_file(Some(fx.daemon_toml.clone())).unwrap();
+        assert!(matches!(
+            cfg.bitcoin_backend,
+            Some(BitcoinBackend::Esplora(_))
+        ));
+        assert!(cfg.pending_bitcoind.is_some());
     }
 }

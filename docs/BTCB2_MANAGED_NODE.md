@@ -100,13 +100,51 @@ any later pin bump.
     Connect with the node pending keeps that configuration: once the
     replacement node starts, Connect serves the wallet (with a Connect
     session) while the node downloads the chain, and the Cube switches to the
-    node when it has synced, as after installation. A Cube whose wallet
-    already runs on its local node is **refused before anything is deleted**:
-    a node in initial block download cannot admit the wallet, so every open
-    would fail and stop the node, and that Cube's loader holds no Connect
-    session to move it back to Connect for the resync. Recovering such a Cube
-    is not covered yet.
-  - **Refusals.** Besides the local-backend case, the resync is refused while any Cube owns the node, while
+    node when it has synced, as after installation.
+  - **A Cube whose wallet already runs on its local node** (the common case:
+    pruned by default, promoted after its first sync) cannot stay on the node
+    for the resync: a node in initial block download cannot admit the wallet
+    (`DaemonHandle::start_with_local_node` requires a completed IBD), so every
+    open would fail. The resync therefore moves it back to Connect first, the
+    inverse of the App's promotion: `daemon.toml` gets the chain's Connect
+    endpoint as its backend (no token is written), the local node becomes
+    `pending_bitcoind` with `auto_switch_to_pending = true`, `fallback_esplora`
+    is cleared and the poll interval returns to the Esplora one. The loader
+    then reopens the Cube on Connect with the session it carries, and from
+    there it is a Cube before its first promotion: Connect serves the wallet
+    while the node resyncs, and the App switches back to the node once it has
+    synced, under the usual holds (not during a Vault scan, and not to a
+    pruned node that no longer holds this Vault's history). The node keeps
+    the Vault's watch-only wallet, which coincubed registered with
+    `load_on_startup`, so the node reloads it when it starts and follows the
+    new chain from genesis; this has not been checked against a real pruned
+    resync yet. The local-backend loader carries the unlock's Connect session
+    for this recovery; the local open does not need it (the global
+    availability check reads only the client's address, with its token
+    cleared), and any sign-in change clears it.
+    Nothing is deleted unless the Cube will be able to reopen:
+    - Without an authenticated Connect session the resync is refused, and the
+      page says to sign in from Home, reopen the Cube and resync.
+    - Connect must confirm that the reopen would be admitted: Bitcoin Blake2b
+      enabled for the account, and Connect's chain anchor available and
+      trusted (`confirm_connect_reopen`). Otherwise the resync is refused and
+      the page says to reopen the Cube to try again (an expired session, for
+      example, needs a fresh unlock).
+    - A node backend that is not the managed Blake2b node is refused.
+    - A sign-in change or closing the Cube while the resync runs stops it
+      from changing anything not yet changed (checked under the locks, just
+      before `daemon.toml` is rewritten).
+    - `daemon.toml` is rewritten (atomically, and only if it is unchanged
+      since it was read) after every refusal below has passed, under the same
+      locks, immediately before the deletion
+      (`resync_managed_fork_chain_data_then`). If the rewrite fails, nothing
+      is deleted. If the deletion then fails, the Cube is already on Connect
+      and the next resync finishes it.
+    - A sign-out after the move revokes the loader like any Connect loader's;
+      the Cube then opens on Connect after the next sign-in. A result that
+      finds the Cube on Connect without a session asks for sign-in instead
+      of reopening.
+  - **Refusals.** The resync is refused while any Cube owns the node, while
     the node's own datadir lock (`.lock`, the same `fcntl`/`LockFileEx` lock
     `bitcoind` takes) is held by another process, while anything accepts
     connections on the recorded RPC port (a plain TCP connect, so a missing
@@ -124,10 +162,11 @@ node-setup messages, so the loader is the only re-provisioning path. The
 positive install path is only exercised against the real signed release; unit
 tests cover the skip, fetch, refusal and staged-publish cases with the
 vendored manifest. The resync is one click with no confirmation, and an
-owner on either Blake2b network blocks it. A pruned local-backend Cube
-(wallet already on its node) cannot be recovered in-app yet: the resync
-refuses it, since afterwards it could neither be admitted to the syncing node
-nor fall back to Connect from its loader.
+owner on either Blake2b network blocks it. A pruned local-backend Cube is
+recovered only through Connect: without a Connect account that has Bitcoin
+Blake2b, it has no in-app recovery, and the resync refuses it with nothing
+deleted. The move back to Connect sends the Vault's address queries to Connect
+until the node is promoted again.
 
 ## What is isolated, and where
 

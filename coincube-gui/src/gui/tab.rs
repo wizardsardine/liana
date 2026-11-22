@@ -1243,11 +1243,19 @@ impl Tab {
             &signer,
             cube.network.bitcoin_network(),
         ));
-        let (loader, command) = match client.filter(|_| requires_connect) {
-            Some(client) => {
-                Loader::new_for_chain(datadir, config, wallet_settings, cube, client, cek)
-            }
-            None => Loader::new_local_fork(datadir, config, wallet_settings, cube, cek),
+        let (loader, command) = if requires_connect {
+            Loader::new_for_chain(
+                datadir,
+                config,
+                wallet_settings,
+                cube,
+                client.expect("authenticated backend checked"),
+                cek,
+            )
+        } else {
+            // The session rides along only for a resync, which moves the
+            // Cube back to Connect and reopens it there.
+            Loader::new_local_fork(datadir, config, wallet_settings, cube, cek, client)
         };
         self.state = State::Loader(loader);
         Some(command.map(Message::Load))
@@ -1558,7 +1566,7 @@ impl Tab {
             State::Loader(loader)
                 if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
             {
-                loader.connect_client = None;
+                loader.clear_connect_session();
                 true
             }
             State::PinEntry(pin) if pin.cube().network.is_blake2b() && !pin.requires_connect() => {
@@ -4745,7 +4753,16 @@ impl Tab {
                 cek,
             )
         } else {
-            Loader::new_local_fork(datadir.clone(), config.clone(), wallet_settings, cube, cek)
+            // The session rides along only for a resync, which moves the Cube
+            // back to Connect and reopens it there.
+            Loader::new_local_fork(
+                datadir.clone(),
+                config.clone(),
+                wallet_settings,
+                cube,
+                cek,
+                client,
+            )
         };
         self.state = State::Loader(loader);
         command.map(Message::Load)
@@ -5118,7 +5135,16 @@ impl Tab {
                 cek,
             )
         } else {
-            Loader::new_local_fork(datadir.clone(), config.clone(), wallet_settings, cube, cek)
+            // The session rides along only for a resync, which moves the Cube
+            // back to Connect and reopens it there.
+            Loader::new_local_fork(
+                datadir.clone(),
+                config.clone(),
+                wallet_settings,
+                cube,
+                cek,
+                client,
+            )
         };
         self.state = State::Loader(loader);
         command.map(Message::Load)
