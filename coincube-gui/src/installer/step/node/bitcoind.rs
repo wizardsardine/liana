@@ -2018,6 +2018,143 @@ pub(crate) fn provision_managed_node_in_background(
     })
 }
 
+/// Unpack into a private staging directory under `directory`, check that the
+/// release's executable is complete there, and only then move its version
+/// directory to where `executable` is looked up. An interrupted or failed
+/// unpack therefore never leaves a partial binary at the path whose presence
+/// means "installed", so the next attempt downloads again. Whatever the
+/// staging directory holds is removed on every path.
+fn install_into_staging_then_publish(
+    directory: &Path,
+    executable: &Path,
+    unpack: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let relative = executable.strip_prefix(directory).map_err(|_| {
+        format!(
+            "'{}' is outside '{}'",
+            executable.display(),
+            directory.display()
+        )
+    })?;
+    let version_dir_name = relative
+        .components()
+        .next()
+        .ok_or_else(|| format!("No version directory in '{}'", relative.display()))?;
+    let staging = directory.join(format!(".staging-{}", uuid::Uuid::new_v4()));
+    let result = (|| {
+        std::fs::create_dir_all(&staging)
+            .map_err(|e| format!("Could not create '{}': {e}", staging.display()))?;
+        unpack(&staging)?;
+        let staged_executable = staging.join(relative);
+        if !std::fs::metadata(&staged_executable).is_ok_and(|m| m.is_file() && m.len() > 0) {
+            return Err(format!(
+                "The Bitcoin Blake2b archive did not contain '{}'",
+                relative.display()
+            ));
+        }
+        let published = directory.join(version_dir_name);
+        // A version directory without its executable is a leftover from an
+        // older, non-staged attempt; it is moved aside, never merged into.
+        if published.exists() {
+            let aside = directory.join(format!(".stale-{}", uuid::Uuid::new_v4()));
+            std::fs::rename(&published, &aside)
+                .map_err(|e| format!("Could not move '{}' aside: {e}", published.display()))?;
+            let _ = std::fs::remove_dir_all(&aside);
+        }
+        std::fs::rename(staging.join(version_dir_name), &published)
+            .map_err(|e| format!("Could not install '{}': {e}", published.display()))
+    })();
+    let _ = std::fs::remove_dir_all(&staging);
+    result
+}
+
+/// The pinned release's archive bytes and signed `SHA256SUMS` manifest.
+pub(crate) type PinnedRelease = (Vec<u8>, Option<(String, String)>);
+
+/// Make sure the Bitcoin Blake2b managed node's **pinned** binary
+/// ([`bitcoind::KNOTS_BLAKE2B_VERSION`]) is installed, re-provisioning it when
+/// it is not — the state an install is left in after a pin bump, since only the
+/// pinned version is ever searched or started. Returns whether it installed.
+///
+/// The download is verified exactly as the installer verifies it
+/// ([`DownloadVerification::for_flavor`]: the signed `SHA256SUMS` under the
+/// pinned Knots key, then the archive's checksum in it) before anything is
+/// unpacked; a failed verification installs nothing. Unpacking runs under the
+/// family's lifecycle lock and is skipped if another start installed the
+/// binary meanwhile, or refused while another app process owns the node.
+/// Older versions' directories are left in place.
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) async fn ensure_pinned_fork_binary(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+) -> Result<bool, String> {
+    ensure_pinned_fork_binary_with(root, chain, |flavor| async move {
+        let bytes = download::fetch_managed_node_bytes(flavor.download_url())
+            .await
+            .map_err(|e| e.to_string())?;
+        let manifest = download::fetch_release_manifest(flavor)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok((bytes, manifest))
+    })
+    .await
+}
+
+/// [`ensure_pinned_fork_binary`] with the release fetch injected, so the
+/// decision and the verification can be tested without the network.
+pub(crate) async fn ensure_pinned_fork_binary_with<F, Fut>(
+    root: CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    fetch: F,
+) -> Result<bool, String>
+where
+    F: FnOnce(NodeFlavor) -> Fut,
+    Fut: std::future::Future<Output = Result<PinnedRelease, String>>,
+{
+    let flavor = NodeFlavor::KnotsBlake2b;
+    flavor.check_chain(chain).map_err(|e| e.to_string())?;
+    let family = flavor.chain_family();
+    let executable = bitcoind::internal_bitcoind_exe_path_for(&root, family, flavor.version());
+    if executable.exists() {
+        return Ok(false);
+    }
+    info!(
+        "The pinned Bitcoin Blake2b node {} is not installed; downloading it",
+        flavor.version()
+    );
+    let (bytes, manifest) = fetch(flavor)
+        .await
+        .map_err(|e| format!("Could not download the Bitcoin Blake2b node: {e}"))?;
+    tokio::task::spawn_blocking(move || {
+        let lifecycle = crate::node::bitcoind::ManagedNodeLifecycle::acquire(&root, family)
+            .map_err(|e| e.to_string())?;
+        if executable.exists() {
+            return Ok(false);
+        }
+        if lifecycle
+            .try_has_foreign_owners()
+            .map_err(|e| format!("Could not enumerate managed-node owners: {e}"))?
+        {
+            return Err(
+                "Another app process owns the Bitcoin Blake2b node. Close it before \
+                        updating the node here."
+                    .to_string(),
+            );
+        }
+        let verification = DownloadVerification::for_flavor(flavor, manifest)
+            .ok_or_else(|| "Missing release manifest for node verification".to_string())?;
+        let directory = bitcoind::internal_bitcoind_directory_for(&root, family);
+        install_into_staging_then_publish(&directory, &executable, |staging| {
+            install_bitcoind(staging, &bytes, &verification)
+                .map_err(|e| format!("The Bitcoin Blake2b node download was refused: {e}"))
+        })?;
+        drop(lifecycle);
+        Ok(true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 async fn start_background_managed_node(
     root: CoincubeDirectory,
     chain: crate::chain::ChainId,
@@ -3404,5 +3541,212 @@ mod tests {
         ));
         assert_eq!(step.manifest, manifest);
         let _ = std::fs::remove_dir_all(&base);
+    }
+}
+
+/// Re-provisioning the pinned Bitcoin Blake2b binary after a pin bump.
+#[cfg(test)]
+mod pinned_fork_binary {
+    use super::*;
+    use crate::chain::ChainId;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    const REAL_BLAKE2B_SUMS: &str = include_str!("test_fixtures/knots_blake2b_sha256sums");
+    const REAL_BLAKE2B_ASC: &str = include_str!("test_fixtures/knots_blake2b_sha256sums.asc");
+
+    fn temp_root() -> CoincubeDirectory {
+        CoincubeDirectory::new(
+            std::env::temp_dir().join(format!("btcb2-reprovision-{}", uuid::Uuid::new_v4())),
+        )
+    }
+
+    fn pinned_exe(root: &CoincubeDirectory) -> PathBuf {
+        bitcoind::internal_bitcoind_exe_path_for(
+            root,
+            NodeFlavor::KnotsBlake2b.chain_family(),
+            bitcoind::KNOTS_BLAKE2B_VERSION,
+        )
+    }
+
+    // An install that already has the pinned binary downloads nothing.
+    #[tokio::test]
+    async fn an_installed_pinned_binary_is_not_downloaded_again() {
+        let root = temp_root();
+        let exe = pinned_exe(&root);
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"#!/bin/sh\n").unwrap();
+        let fetches = AtomicU32::new(0);
+        let installed = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async {
+                fetches.fetch_add(1, Ordering::SeqCst);
+                Err::<PinnedRelease, _>("must not be called".to_string())
+            },
+        )
+        .await;
+        assert_eq!(installed, Ok(false));
+        assert_eq!(fetches.load(Ordering::SeqCst), 0);
+        let _ = std::fs::remove_dir_all(root.path());
+    }
+
+    // After a pin bump only the previous release is on disk: the pinned one
+    // is fetched, for the Blake2b provider, and a download that does not
+    // verify against the signed manifest installs nothing.
+    #[tokio::test]
+    async fn a_missing_pinned_binary_is_fetched_and_verified_before_install() {
+        let root = temp_root();
+        let family = NodeFlavor::KnotsBlake2b.chain_family();
+        let old = bitcoind::internal_bitcoind_exe_path_for(&root, family, "29.4.1.knots20260508");
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, b"#!/bin/sh\n").unwrap();
+
+        let fetched = std::sync::Mutex::new(None);
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |flavor| {
+                *fetched.lock().unwrap() = Some(flavor);
+                async {
+                    Ok((
+                        b"not the release archive".to_vec(),
+                        Some((REAL_BLAKE2B_SUMS.to_string(), REAL_BLAKE2B_ASC.to_string())),
+                    ))
+                }
+            },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(*fetched.lock().unwrap(), Some(NodeFlavor::KnotsBlake2b));
+        assert!(
+            error.contains("is not in the release SHA256SUMS manifest"),
+            "{}",
+            error
+        );
+        assert!(!pinned_exe(&root).exists());
+        // The old release is left where it was; it is just never started.
+        assert!(old.exists());
+
+        // A tampered manifest (signature no longer matches) is refused too.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async {
+                Ok((
+                    b"not the release archive".to_vec(),
+                    Some((
+                        format!("{}\n00 extra", REAL_BLAKE2B_SUMS),
+                        REAL_BLAKE2B_ASC.to_string(),
+                    )),
+                ))
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("signature did not verify"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+
+        // No manifest at all is never trusted.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async { Ok((b"x".to_vec(), None)) },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("manifest"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+
+        // A failed download is reported and installs nothing.
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::BitcoinBlake2bTestnet4,
+            |_| async { Err::<PinnedRelease, _>("offline".to_string()) },
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("offline"), "{}", error);
+        assert!(!pinned_exe(&root).exists());
+        let _ = std::fs::remove_dir_all(root.path());
+    }
+
+    // The Bitcoin chains never fetch a Blake2b binary.
+    #[tokio::test]
+    async fn a_bitcoin_chain_never_provisions_the_blake2b_binary() {
+        let root = temp_root();
+        let error = ensure_pinned_fork_binary_with(
+            root.clone(),
+            ChainId::from(Network::Bitcoin),
+            |_| async { Err::<PinnedRelease, _>("must not be called".to_string()) },
+        )
+        .await
+        .unwrap_err();
+        assert!(!error.contains("must not be called"), "{}", error);
+        assert!(!root.path().exists(), "provider check must precede all I/O");
+    }
+
+    // A failed or incomplete unpack never leaves a binary at the path whose
+    // presence means "installed", so the next open downloads again; a
+    // complete one is moved into place whole, replacing a leftover directory.
+    #[test]
+    fn the_binary_is_published_only_after_a_complete_unpack() {
+        let root = temp_root();
+        let family = NodeFlavor::KnotsBlake2b.chain_family();
+        let directory = bitcoind::internal_bitcoind_directory_for(&root, family);
+        let exe = pinned_exe(&root);
+        let relative = exe.strip_prefix(&directory).unwrap().to_path_buf();
+        let staging_left = |dir: &Path| {
+            std::fs::read_dir(dir)
+                .map(|entries| {
+                    entries
+                        .flatten()
+                        .any(|e| e.file_name().to_string_lossy().starts_with('.'))
+                })
+                .unwrap_or(false)
+        };
+
+        // The unpack fails part-way, after writing a partial binary.
+        let error = install_into_staging_then_publish(&directory, &exe, |staging| {
+            let partial = staging.join(&relative);
+            std::fs::create_dir_all(partial.parent().unwrap()).unwrap();
+            std::fs::write(&partial, b"trunc").unwrap();
+            Err("disk full".to_string())
+        })
+        .unwrap_err();
+        assert_eq!(error, "disk full");
+        assert!(!exe.exists());
+        assert!(!staging_left(&directory));
+
+        // The unpack "succeeds" without the executable (or with an empty one).
+        for content in [None, Some(&b""[..])] {
+            let error = install_into_staging_then_publish(&directory, &exe, |staging| {
+                if let Some(content) = content {
+                    let empty = staging.join(&relative);
+                    std::fs::create_dir_all(empty.parent().unwrap()).unwrap();
+                    std::fs::write(&empty, content).unwrap();
+                }
+                Ok(())
+            })
+            .unwrap_err();
+            assert!(error.contains("did not contain"), "{}", error);
+            assert!(!exe.exists());
+            assert!(!staging_left(&directory));
+        }
+
+        // A leftover version directory without its binary is replaced whole.
+        let leftover = directory.join(relative.components().next().unwrap());
+        std::fs::create_dir_all(leftover.join("share")).unwrap();
+        std::fs::write(leftover.join("share").join("stale"), b"x").unwrap();
+        install_into_staging_then_publish(&directory, &exe, |staging| {
+            let complete = staging.join(&relative);
+            std::fs::create_dir_all(complete.parent().unwrap()).unwrap();
+            std::fs::write(&complete, b"#!/bin/sh\n").unwrap();
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"#!/bin/sh\n");
+        assert!(!leftover.join("share").exists());
+        assert!(!staging_left(&directory));
+        let _ = std::fs::remove_dir_all(root.path());
     }
 }

@@ -35,27 +35,99 @@ The pin moved to `29.5.1.knots20260508` because it changes consensus on both
 scheduled networks; a `29.4.1` node would follow a different chain. No released
 build has shipped the Blake2b node, so this affects internal installs only.
 
-- **The old binary is not replaced.** Only the pinned version is searched, and
-  nothing re-downloads a Blake2b binary in-app, so a Cube provisioned with
-  `29.4.1` does not open (`ExecutableNotFound`). Install the verified
-  `29.5.1` release at
-  `<coincube datadir>/bitcoind-blake2b/bitcoin-29.5.1.knots20260508/bin/bitcoind`.
+Opening the Cube handles each step of the upgrade itself; the same applies to
+any later pin bump.
+
+- **The pinned binary is re-provisioned on open.** Only the pinned version is
+  searched or started, so after a bump the old binary no longer counts as
+  installed. Before the loader starts the managed node it checks for
+  `<coincube datadir>/bitcoind-blake2b/bitcoin-29.5.1.knots20260508/bin/bitcoind`
+  and, when it is missing, downloads the pinned release and verifies it exactly
+  as the installer does (`DownloadVerification::for_flavor`: the signed
+  `SHA256SUMS` under the pinned Knots key, then the archive's checksum in it)
+  before unpacking it under the family's lifecycle lock
+  (`ensure_pinned_fork_binary`). The archive is unpacked into a private
+  staging directory and its version directory moved into place only once the
+  executable is complete, so an interrupted or failed unpack never leaves a
+  binary that would count as installed. A failed download or verification
+  installs nothing. It does not stop the start by itself: a pinned node that
+  is already running needs no binary on disk and is reused. Its reason is
+  shown (with Retry) only when the start then needs the missing binary. The
+  unpack is refused while another app process owns the node. The old `bitcoin-29.4.1.knots20260508/`
+  directory is left on disk and never started.
+- **A still-running older build is replaced, not reused.** A Blake2b node's
+  flavour cannot be read from its subversion, but its build can: the start
+  reads `getnetworkinfo.subversion` and reuses the node only when it is the
+  pinned build (`/Satoshi:29.5.1/Knots:20260508/`, `classify_blake2b_build`).
+  The build date comes from the explicit `Knots:` field, not from a
+  user-agent comment inside the client segment. A positively read other build
+  is stopped and the pinned binary started in its place, as a Bitcoin flavour
+  switch is. A subversion that cannot be read (no answer, an empty string, or
+  not the `/Satoshi:<version>…/` shape) refuses the start and leaves that node
+  running: it may be a busy, healthy node another Cube shares. Identifying the
+  build uses a short-timeout probe and is bounded to about 5 s in total,
+  since the family lifecycle lock is held. The
+  replacement binary is resolved before anything is stopped, and the stop is
+  refused while another app process owns the node. A freshly started node that
+  reports another build is killed and refused.
 - **First start rewinds the chainstate.** `29.4.1` wrote no
   chainstate-revalidation markers, so `29.5.1` rewinds once to just below the
   earliest revalidation deployment's start and reconnects from there: mainnet
   from `973440` (tip `973439`), testnet4 from `151550` (tip `151549`; the RDTS
   extension range from `152963` is covered by the same rewind). Headless
-  `bitcoind` does not prompt. If the block or undo data it
-  needs has been pruned, it exits with "The active chain must be revalidated
-  for current consensus rules, but required block data has been pruned". With
-  the 550 MB or 5 GB prune targets this is likely. Recover by deleting the
-  chain data and letting the node resync: on mainnet `blocks/` and
-  `chainstate/` sit directly under `bitcoind-blake2b/datadir/` (Knots keeps
-  mainnet in the datadir root); on testnet4 they are under
-  `bitcoind-blake2b/datadir/testnet4/`.
-- **A still-running `29.4.1` process is reused.** A Blake2b node's flavour is
-  not read from its subversion, so stop any orphaned `29.4.1` process on the
-  managed RPC port before upgrading.
+  `bitcoind` does not prompt. On the mainnet service node this took about nine
+  minutes before `Done loading`; the Cube shows "Connecting" meanwhile. The
+  "Found invalid chain … Chain state database corruption likely" warnings
+  logged during the reconnect are expected and are not treated as a failure.
+- **A pruned datadir that cannot be revalidated offers a resync.** If the
+  block or undo data the rewind needs has been pruned (likely with the 550 MB
+  or 5 GB prune targets), Knots exits with "The active chain must be
+  revalidated for current consensus rules, but required block data has been
+  pruned". The start reads only what that launch appended to the node's
+  `debug.log` (after a startup log shrink, only what follows the last
+  startup banner), recognises the message, stops respawning and reports
+  `StartInternalBitcoindError::PrunedRevalidationRequired`. The Cube's error
+  page then offers **Delete chain data and resync** beside Retry (the Retry
+  cooldown never hides it). It deletes only `blocks/` and `chainstate/` for
+  that network (directly under `bitcoind-blake2b/datadir/` on mainnet, since
+  Knots keeps mainnet in the datadir root; under
+  `bitcoind-blake2b/datadir/testnet4/` on testnet4) and starts the Cube again.
+  `bitcoin.conf`, the cookie, node wallets, the log and the Bitcoin node's
+  datadir are untouched. While the error page is shown and the deletion runs,
+  nothing serves the wallet: the start fails before the wallet daemon is
+  started.
+  - **Which backend serves the wallet during the resync.** A Cube still on
+    Connect with the node pending keeps that configuration: once the
+    replacement node starts, Connect serves the wallet (with a Connect
+    session) while the node downloads the chain, and the Cube switches to the
+    node when it has synced, as after installation. A Cube whose wallet
+    already runs on its local node is **refused before anything is deleted**:
+    a node in initial block download cannot admit the wallet, so every open
+    would fail and stop the node, and that Cube's loader holds no Connect
+    session to move it back to Connect for the resync. Recovering such a Cube
+    is not covered yet.
+  - **Refusals.** Besides the local-backend case, the resync is refused while any Cube owns the node, while
+    the node's own datadir lock (`.lock`, the same `fcntl`/`LockFileEx` lock
+    `bitcoind` takes) is held by another process, while anything accepts
+    connections on the recorded RPC port (a plain TCP connect, so a missing
+    cookie never makes an occupied port look idle), or when that network has
+    no readable managed configuration (`resync_managed_fork_chain_data`).
+    The datadir lock is held through the deletion.
+  - **Results.** A failed resync is shown with its reason and offered again;
+    a partial deletion is finished by the next one. A result is bound to the
+    loader and resync that started it, so it never reaches another Cube
+    opened in the same tab, and one that finishes after the Connect session
+    was revoked keeps the revocation's refusal.
+
+Not covered: the background installer and Settings still drop Blake2b
+node-setup messages, so the loader is the only re-provisioning path. The
+positive install path is only exercised against the real signed release; unit
+tests cover the skip, fetch, refusal and staged-publish cases with the
+vendored manifest. The resync is one click with no confirmation, and an
+owner on either Blake2b network blocks it. A pruned local-backend Cube
+(wallet already on its node) cannot be recovered in-app yet: the resync
+refuses it, since afterwards it could neither be admitted to the syncing node
+nor fall back to Connect from its loader.
 
 ## What is isolated, and where
 

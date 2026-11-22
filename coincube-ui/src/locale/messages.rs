@@ -120,6 +120,7 @@ catalog! {
     KitPhoneOptionDescription => ("Restore by approving on your phone, with no password to remember.", "Restaura aprobando la solicitud en tu teléfono, sin recordar una contraseña."),
     RestoreByTypingYourRecoveryPassword => ("Restore by typing your recovery password.", "Restaura ingresando tu contraseña de recuperación."),
     Retry => ("Retry", "Reintentar"),
+    ResyncForkNodeChainData => ("Delete chain data and resync", "Eliminar datos de la cadena y resincronizar"),
     Review => ("Review", "Revisión"),
     Saving => ("Saving…", "Guardando…"),
     ScanningTheBlockchain => ("Scanning the blockchain...", "Explorando la cadena de bloques…"),
