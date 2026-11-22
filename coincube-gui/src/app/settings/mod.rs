@@ -480,8 +480,9 @@ pub struct PasskeyMetadata {
 /// [`CubeSettings::connect_owner`] only on the *first* sync of a Cube that has
 /// no owner yet — a later sync (or a Cube already marked synced before owners
 /// were tracked) must not attribute it to whoever happens to be signed in.
-/// The catch-up sync passes `None`: a Cube it finds without an owner was made
-/// signed out, and the first account to sign in has no claim to it.
+/// The catch-up sync and the remote-update (rename) path pass `None`: a Cube
+/// they find without an owner was made signed out, and neither the first
+/// account to sign in nor the first to rename it has a claim to it.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
     cube_id: &str,

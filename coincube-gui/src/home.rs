@@ -2675,6 +2675,10 @@ impl Home {
         // The Cube list is filtered by the signed-in account, so a sign-in,
         // sign-out, account switch or profile load must re-read it.
         let task = if self.launcher_account_key() != account_before {
+            // Drop the previous account's Cubes from what is cached now, so
+            // they cannot be opened while the re-reads below are in flight,
+            // or linger if one of them fails.
+            self.hide_cached_foreign_cubes();
             // Other listed networks' Cubes are filtered when read, so they
             // are re-read too, or one account's Cubes would linger there.
             let others = self.refresh_network_catalog(true);
@@ -3636,6 +3640,20 @@ impl Home {
             );
             self.open_created_cube = Some(cube.id.clone());
             reload_task
+        } else if cube.connect_owner.as_ref().is_some_and(|owner| {
+            self.connect_account.user.as_ref().map(|u| u.id) != Some(owner.user_id)
+        }) {
+            // The account signed in when the Cube was created owns it. If
+            // another account (or none with a loaded profile) is active now,
+            // registering here would put the Cube under the wrong account;
+            // it stays unsynced for catch-up under its owner.
+            tracing::warn!(
+                "Cube {} was created under another Connect account; \
+                 not registering it with the current account",
+                cube.id
+            );
+            self.open_created_cube = Some(cube.id.clone());
+            reload_task
         } else if let Some(client) = self.connect_account.authenticated_client() {
             let cube_id = cube.id.clone();
             let cube_network = cube.network;
@@ -3721,8 +3739,14 @@ impl Home {
                 // seed. A reload that lands now (the catch-up sync after
                 // signing in from the hub, say) must not replace it; it
                 // only refreshes the list a Cancel returns to.
-                if let State::Cubes { cubes, .. } = &mut state {
-                    self.creation_backup_cubes = std::mem::take(cubes);
+                // Replace it for an emptied list too: a reload that hid
+                // every parked Cube must not have Cancel bring them back.
+                match &mut state {
+                    State::Cubes { cubes, .. } => {
+                        self.creation_backup_cubes = std::mem::take(cubes);
+                    }
+                    State::NoCube { .. } => self.creation_backup_cubes.clear(),
+                    _ => {}
                 }
                 Task::none()
             }
@@ -4451,10 +4475,13 @@ impl Home {
             Ok(_) => {
                 log::info!("[LAUNCHER] Cube {} updated remotely", cube_id);
                 let network_dir = self.datadir_path.network_directory(network);
-                let owner = self.connect_owner();
+                // A rename re-syncs the Cube (`confirm_rename` clears
+                // `remote_synced`), but it is not the creation's own
+                // registration: an ownerless Cube must stay ownerless rather
+                // than be claimed by whoever renamed it.
                 Task::perform(
                     async move {
-                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                        settings::mark_cube_synced(&network_dir, &cube_id, None)
                             .await
                             .ok();
                     },
@@ -4836,6 +4863,24 @@ impl Home {
                 create_cube: *create_cube,
             };
         }
+    }
+
+    /// Applies [`Self::cube_hidden_from_account`] to every Cube list already
+    /// held: the current list (or the one parked by the creation backup step)
+    /// and each other network's catalog. Used when the signed-in account
+    /// changes, before the lists are read again.
+    fn hide_cached_foreign_cubes(&mut self) {
+        let mut state = std::mem::replace(&mut self.state, State::Unchecked);
+        self.hide_foreign_cubes(&mut state);
+        self.state = state;
+        let mut parked = std::mem::take(&mut self.creation_backup_cubes);
+        parked.retain(|cube| !self.cube_hidden_from_account(cube));
+        self.creation_backup_cubes = parked;
+        let mut catalog = std::mem::take(&mut self.network_catalog);
+        for (_, cubes) in &mut catalog {
+            cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+        }
+        self.network_catalog = catalog;
     }
 
     /// The signed-in account as the launcher list sees it: whether a session
@@ -15776,6 +15821,88 @@ mod tests {
             );
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    /// A Cube created under one account is not registered with another
+    /// account's client when the account changed during the async write; it
+    /// stays unsynced so catch-up registers it under its owner.
+    #[test]
+    fn a_created_cube_is_registered_only_under_its_owner() {
+        let dir = tmp_datadir("register-owner-only");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let mut cube = CubeSettings::new("Owned".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.connect_owner = Some(settings::ConnectOwner {
+            user_id: 7,
+            email: "founder@example.com".to_string(),
+        });
+        // Account 8 became active before the write returned.
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let out = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, Message::CubeRemoteRegistered { .. })),
+            "another account must not register the Cube: {:?}",
+            out
+        );
+        assert!(home.open_after_registration.is_none());
+        assert_eq!(home.open_created_cube.as_deref(), Some(cube.id.as_str()));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rename re-syncs a Cube, but it is not the creation's registration:
+    /// an ownerless Cube must not be claimed by the account that renamed it.
+    #[test]
+    fn a_remote_rename_does_not_claim_an_ownerless_cube() {
+        let dir = tmp_datadir("rename-no-claim");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let cube = CubeSettings::new("Shared".to_string(), Network::Bitcoin);
+        let network_dir = CoincubeDirectory::new(dir.clone()).network_directory(Network::Bitcoin);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(settings::SETTINGS_FILE_NAME),
+            serde_json::to_vec(&settings::Settings {
+                cubes: vec![cube.clone()],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let _ = drain(home.update(Message::CubeRemoteUpdated {
+            cube_id: cube.id.clone(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response(&cube.id)),
+        }));
+        let stored = cubes_on_disk(&dir);
+        let [stored] = stored.as_slice() else {
+            panic!("expected one Cube on disk, got {:?}", stored);
+        };
+        assert!(stored.remote_synced);
+        assert_eq!(stored.connect_owner, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reload landing during the creation backup step that hides every
+    /// parked Cube must empty the parked list, or Cancel restores them.
+    #[test]
+    fn a_reload_that_hides_every_parked_cube_empties_the_parked_list() {
+        let dir = tmp_datadir("parked-nocube");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.network = Network::Bitcoin.into();
+        let foreign = owned_cube("Theirs", Some(99));
+        home.creation_backup_cubes = vec![foreign.clone()];
+        home.state = State::CreationBackup(CreationBackupStep::Choice);
+        let _ = home.update(Message::Checked {
+            for_chain: home.network,
+            res: Ok(State::Cubes {
+                cubes: vec![foreign],
+                create_cube: false,
+                source: home.network,
+            }),
+        });
+        assert!(home.creation_backup_cubes.is_empty());
+        assert!(matches!(home.state, State::CreationBackup(_)));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     fn signed_in_home_with_datadir(dir: &std::path::Path) -> Home {
