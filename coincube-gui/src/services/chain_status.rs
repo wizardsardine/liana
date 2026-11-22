@@ -209,6 +209,15 @@ pub enum ProofEntry {
     NoQualifyingAncestry { checked_at: SystemTime },
     /// The check could not finish at `failed_at`. Shown as not checked.
     Failed { failed_at: SystemTime },
+    /// A [`Self::Saved`] path whose fresh check could not finish at
+    /// `failed_at`. A check that can't finish (Connect down, a read timing
+    /// out) says nothing about the path, so the path is kept, written back,
+    /// and re-checked after [`FAILED_RETRY`] like any failed check. Shown
+    /// as checking, never used as a split key.
+    SavedRetry {
+        path: coincube_core::claim_ancestry::retained::RetainedPath,
+        failed_at: SystemTime,
+    },
 }
 
 impl ProofEntry {
@@ -216,7 +225,28 @@ impl ProofEntry {
         match self {
             Self::Verified(_) => Some(ProofOutcome::Verified),
             Self::NoQualifyingAncestry { .. } => Some(ProofOutcome::NoQualifyingAncestry),
-            Self::Saved(_) | Self::Failed { .. } => None,
+            Self::Saved(_) | Self::Failed { .. } | Self::SavedRetry { .. } => None,
+        }
+    }
+
+    /// The path this entry holds, verified or waiting for a fresh check.
+    pub fn path(&self) -> Option<&coincube_core::claim_ancestry::retained::RetainedPath> {
+        match self {
+            Self::Verified(path) | Self::Saved(path) | Self::SavedRetry { path, .. } => Some(path),
+            Self::NoQualifyingAncestry { .. } | Self::Failed { .. } => None,
+        }
+    }
+
+    /// Fold a fresh check's `result` into what was held before. A check
+    /// that could not finish keeps a held path (as [`Self::SavedRetry`]);
+    /// every other result is the answer.
+    pub fn after_check(previous: Option<&Self>, result: Self) -> Self {
+        match (previous.and_then(Self::path), result) {
+            (Some(path), Self::Failed { failed_at }) => Self::SavedRetry {
+                path: path.clone(),
+                failed_at,
+            },
+            (_, result) => result,
         }
     }
 
@@ -225,7 +255,9 @@ impl ProofEntry {
             Self::Verified(_) => return false,
             Self::Saved(_) => return true,
             Self::NoQualifyingAncestry { checked_at } => (*checked_at, NO_PATH_RETRY),
-            Self::Failed { failed_at } => (*failed_at, FAILED_RETRY),
+            Self::Failed { failed_at } | Self::SavedRetry { failed_at, .. } => {
+                (*failed_at, FAILED_RETRY)
+            }
         };
         now.duration_since(at).map_or(true, |age| age >= after)
     }

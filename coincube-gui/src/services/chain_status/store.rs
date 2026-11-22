@@ -8,7 +8,8 @@
 //! that fails either check is dropped. One that passes loads as
 //! [`ProofEntry::Saved`], not verified: decoding proves the links fit, not
 //! that the chain still holds them, so it waits for a fresh check. A failed
-//! check is not kept, so a restart retries it.
+//! check is not kept, so a restart retries it; a path whose check failed is
+//! kept, so a failure never erases it.
 
 use std::{
     collections::HashMap,
@@ -114,12 +115,12 @@ pub fn save(
     };
     for (outpoint, entry) in proofs.iter().filter(|(outpoint, _)| keep(outpoint)) {
         match entry {
-            ProofEntry::Verified(path) | ProofEntry::Saved(path) => {
-                record.verified.push(VerifiedRecord {
-                    outpoint: *outpoint,
-                    path: hex::encode(path.encode()),
-                })
-            }
+            ProofEntry::Verified(path)
+            | ProofEntry::Saved(path)
+            | ProofEntry::SavedRetry { path, .. } => record.verified.push(VerifiedRecord {
+                outpoint: *outpoint,
+                path: hex::encode(path.encode()),
+            }),
             ProofEntry::NoQualifyingAncestry { checked_at } => record.no_path.push(NoPathRecord {
                 outpoint: *outpoint,
                 checked_at: checked_at
@@ -286,6 +287,77 @@ mod tests {
             Some(ProofEntry::Saved(_))
         ));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A saved path's fresh check fails (Connect answered 503): the path
+    /// survives in memory and on disk, and waits the usual failed-check
+    /// interval before the next attempt instead of being erased.
+    #[test]
+    fn a_failed_check_never_erases_a_saved_path() {
+        use crate::services::chain_status::{proof_candidates, FAILED_RETRY};
+        let dir = temp_dir();
+        let (selected, retained) = verified_path();
+        let failed_at = SystemTime::now();
+        let entry = ProofEntry::after_check(
+            Some(&ProofEntry::Saved(retained)),
+            ProofEntry::Failed { failed_at },
+        );
+        assert!(
+            matches!(&entry, ProofEntry::SavedRetry { path, .. } if path.selected() == selected),
+            "the path is kept"
+        );
+        assert_eq!(entry.outcome(), None, "still shown as checking");
+
+        let proofs: HashMap<_, _> = [(selected, entry)].into();
+        let due = |now| {
+            proof_candidates(
+                vec![selected],
+                |_| crate::services::entangled::Entanglement::NotEntangled,
+                &proofs,
+                &std::collections::HashSet::new(),
+                now,
+            )
+        };
+        assert!(due(failed_at).is_empty(), "not retried at once");
+        assert_eq!(due(failed_at + FAILED_RETRY), vec![selected]);
+
+        save(&dir, &proofs, |_| true).unwrap();
+        assert!(
+            matches!(load(&dir).get(&selected), Some(ProofEntry::Saved(p)) if p.selected() == selected),
+            "written back, and a restart re-checks it"
+        );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A finished answer still replaces a saved path, and a failure with no
+    /// path held stays a plain failure.
+    #[test]
+    fn only_an_unfinished_check_keeps_the_held_path() {
+        let (_, retained) = verified_path();
+        let saved = ProofEntry::Saved(retained);
+        let no_path = ProofEntry::NoQualifyingAncestry {
+            checked_at: SystemTime::now(),
+        };
+        assert!(matches!(
+            ProofEntry::after_check(Some(&saved), no_path),
+            ProofEntry::NoQualifyingAncestry { .. }
+        ));
+        let failed = ProofEntry::Failed {
+            failed_at: SystemTime::now(),
+        };
+        assert!(matches!(
+            ProofEntry::after_check(None, failed.clone()),
+            ProofEntry::Failed { .. }
+        ));
+        assert!(matches!(
+            ProofEntry::after_check(
+                Some(&ProofEntry::NoQualifyingAncestry {
+                    checked_at: SystemTime::now()
+                }),
+                failed
+            ),
+            ProofEntry::Failed { .. }
+        ));
     }
 
     #[test]
