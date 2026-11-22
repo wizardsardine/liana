@@ -5,6 +5,7 @@
 pub mod d;
 pub mod electrum;
 pub mod esplora;
+pub mod maturity;
 pub mod poller;
 
 use crate::bitcoin::d::{BitcoindError, CachedTxGetter, LSBlockEntry};
@@ -18,7 +19,9 @@ use miniscript::bitcoin::{self, address, bip32::ChildNumber};
 // A spent coin's outpoint together with its spend transaction's txid, height and time.
 type SpentCoin = (bitcoin::OutPoint, bitcoin::Txid, i32, u32);
 
-const COINBASE_MATURITY: i32 = 100;
+// Bitcoin's 100 blocks: the floor every chain shares. Backends filter on it;
+// the poller then applies the chain's own rule (`maturity::coinbase_is_mature`).
+use maturity::COINBASE_MATURITY;
 
 /// Information about a block
 #[derive(Debug, Clone, Eq, PartialEq, Copy)]

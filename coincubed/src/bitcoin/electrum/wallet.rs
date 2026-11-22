@@ -337,7 +337,8 @@ impl BdkWallet {
                 ChainPosition::Confirmed(anchor) => Some(block_info_from_anchor(anchor)),
             };
 
-            // Immature if from a coinbase transaction with less than a hundred confs.
+            // Immature if from a coinbase transaction with less than a hundred confs. This is
+            // only the floor every chain shares; the poller applies the chain's own rule.
             let is_immature = full_txo.is_on_coinbase
                 && block_info
                     .and_then(|blk| {

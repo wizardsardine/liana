@@ -1,12 +1,16 @@
 use crate::{
     bitcoin::{
-        AncestorSearch, BitcoinInterface, BlockChainTip, HistorySyncCache, PollFailure,
+        maturity, AncestorSearch, BitcoinInterface, BlockChainTip, HistorySyncCache, PollFailure,
         ReorgAlertCache, UTxO, UTxOAddress,
     },
     database::{Coin, DatabaseConnection, DatabaseInterface},
 };
 
-use std::{collections::HashSet, convert::TryInto, sync, thread, time};
+use std::{
+    collections::{HashMap, HashSet},
+    convert::TryInto,
+    sync, thread, time,
+};
 
 #[cfg(test)]
 use coincube_core::descriptors;
@@ -73,8 +77,8 @@ enum ReceivedDerivation {
 // or spent.
 // NOTE: A coin may be updated multiple times at once. That is, a coin may be received, confirmed,
 // and spent in a single poll.
-// NOTE: Coinbase transaction deposits are very much an afterthought here. We treat them as
-// unconfirmed until the CB tx matures.
+// NOTE: Coinbase transaction deposits are treated as unconfirmed until the CB tx matures. Backends
+// only know Bitcoin's 100 blocks; `hold_immature_coinbase` then applies the chain's own rule.
 fn update_coins(
     bit: &impl BitcoinInterface,
     db_conn: &mut Box<dyn DatabaseConnection>,
@@ -632,6 +636,97 @@ fn rollback_depth(
         })
 }
 
+/// Apply the chain's coinbase maturity on top of the backends' 100-block floor.
+///
+/// Backends confirm a coinbase deposit once it is 100 blocks deep, which is Bitcoin's rule
+/// but not Bitcoin Blake2b's (see [`maturity`]). Before anything is written this:
+///
+/// - drops newly confirmed coinbase deposits that are not mature at `tip_height` from
+///   `updated.confirmed`, so they stay unconfirmed and are re-checked on every poll;
+/// - flags newly received coinbase deposits that are not mature as immature;
+/// - returns the stored coins to put (back) into the immature state: coinbase deposits that
+///   were confirmed before reaching the chain's maturity (by an earlier build, which used 100
+///   blocks everywhere) and unconfirmed ones that lost their flag (a rollback leaves it unset).
+///
+/// A deposit that already has a spender is left alone: a node accepted that spend, so the
+/// deposit was mature for it. Change coins cannot carry the immature flag (the schema forbids
+/// it); they are only kept unconfirmed.
+///
+/// Whether a coin comes from a coinbase transaction is read from the transaction itself
+/// (`coinbase_txids`), not from the backend's immature flag, which follows the 100-block rule.
+fn hold_immature_coinbase(
+    chain: coincube_core::chain::ChainId,
+    tip_height: i32,
+    coinbase_txids: &HashSet<bitcoin::Txid>,
+    curr_coins: &HashMap<bitcoin::OutPoint, Coin>,
+    updated: &mut UpdatedCoins,
+) -> Vec<bitcoin::OutPoint> {
+    let is_coinbase = |op: &bitcoin::OutPoint| coinbase_txids.contains(&op.txid);
+    let spending: HashSet<bitcoin::OutPoint> = updated.spending.iter().map(|(op, _)| *op).collect();
+    let expired: HashSet<bitcoin::OutPoint> = updated.expired.iter().copied().collect();
+    let has_spender = |op: &bitcoin::OutPoint| {
+        spending.contains(op) || curr_coins.get(op).is_some_and(|c| c.spend_txid.is_some())
+    };
+    // `None` for the RDTS expiry input: unknown is treated as covered, never shorter.
+    let mature = |height: i32| maturity::coinbase_is_mature(chain, height, tip_height, None);
+
+    updated.confirmed.retain(|(op, height, _)| {
+        let keep = !is_coinbase(op) || has_spender(op) || mature(*height);
+        if !keep {
+            log::debug!(
+                "Coinbase deposit at '{}' (block {}) is not mature on {} at tip {}. \
+                 Not marking it as confirmed for now.",
+                op,
+                height,
+                chain,
+                tip_height
+            );
+        }
+        keep
+    });
+    let confirmed: HashSet<bitcoin::OutPoint> =
+        updated.confirmed.iter().map(|(op, ..)| *op).collect();
+
+    for coin in updated.received.iter_mut() {
+        let op = coin.outpoint;
+        if !is_coinbase(&op) || confirmed.contains(&op) || expired.contains(&op) || has_spender(&op)
+        {
+            continue;
+        }
+        if coin.is_change {
+            log::warn!(
+                "Immature coinbase deposit at '{}' pays to a change address.",
+                op
+            );
+        } else {
+            coin.is_immature = true;
+        }
+    }
+
+    curr_coins
+        .values()
+        .filter(|c| {
+            let op = &c.outpoint;
+            if !is_coinbase(op) || c.is_change || expired.contains(op) || has_spender(op) {
+                return false;
+            }
+            match c.block_info {
+                Some(block) => !mature(block.height),
+                None => !c.is_immature && !confirmed.contains(op),
+            }
+        })
+        .map(|c| {
+            log::info!(
+                "Coinbase deposit at '{}' is not mature on {} at tip {}. Marking it immature.",
+                c.outpoint,
+                chain,
+                tip_height
+            );
+            c.outpoint
+        })
+        .collect()
+}
+
 fn updates(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
@@ -707,9 +802,32 @@ fn updates(
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
-    let updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp)?;
+    let mut updated_coins = update_coins(bit, db_conn, &current_tip, descs, secp)?;
 
     let transactions = collect_txs(bit, db_conn, &updated_coins)?;
+    let coinbase_txids: HashSet<bitcoin::Txid> = db_conn
+        .coinbase_txids()
+        .into_iter()
+        .chain(
+            transactions
+                .iter()
+                .filter(|tx| tx.is_coinbase())
+                .map(|tx| tx.compute_txid()),
+        )
+        .collect();
+    let to_mark_immature = if coinbase_txids.is_empty() {
+        Vec::new()
+    } else {
+        let chain = db_conn.chain();
+        let curr_coins = db_conn.coins(&[], &[]);
+        hold_immature_coinbase(
+            chain,
+            latest_tip.height,
+            &coinbase_txids,
+            &curr_coins,
+            &mut updated_coins,
+        )
+    };
     // Check again after all transaction reads, before the first write.
     if bit.try_chain_tip()? != latest_tip {
         return Err("Chain tip changed during polling; retry on the next scheduled poll".into());
@@ -732,6 +850,9 @@ fn updates(
     db_conn.new_unspent_coins(&updated_coins.received);
     db_conn.remove_coins(&updated_coins.expired);
     db_conn.confirm_coins(&updated_coins.confirmed);
+    if !to_mark_immature.is_empty() {
+        db_conn.mark_immature_coinbase(&to_mark_immature);
+    }
     db_conn.unspend_coins(&updated_coins.expired_spending);
     db_conn.spend_coins(&updated_coins.spending);
     db_conn.confirm_spend(&updated_coins.spent);
@@ -1898,5 +2019,240 @@ mod history_sync_tests {
             &failure(REPEATED_FAILURE_WARN_INTERVAL),
             false
         ));
+    }
+}
+
+#[cfg(test)]
+mod coinbase_maturity_tests {
+    //! The poller applies the chain's coinbase maturity on top of the backends'
+    //! 100-block floor (`hold_immature_coinbase`).
+    use super::*;
+    use crate::{
+        database::{BlockInfo, DatabaseInterface},
+        testutils::{DummyBitcoind, DummyDatabase},
+    };
+    use coincube_core::chain::ChainId;
+    use miniscript::bitcoin::{
+        absolute, bip32::ChildNumber, transaction, Amount, ScriptBuf, Sequence, Transaction, TxIn,
+        TxOut, Witness,
+    };
+
+    /// A coinbase transaction, made unique by `seed`.
+    fn coinbase_tx(seed: u8) -> Transaction {
+        Transaction {
+            version: transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![TxIn {
+                previous_output: bitcoin::OutPoint::null(),
+                script_sig: ScriptBuf::from_bytes(vec![1, seed]),
+                sequence: Sequence::MAX,
+                witness: Witness::new(),
+            }],
+            output: vec![TxOut {
+                value: Amount::from_sat(312_500_000),
+                script_pubkey: ScriptBuf::new(),
+            }],
+        }
+    }
+
+    fn coin(outpoint: bitcoin::OutPoint, block_height: Option<i32>, is_immature: bool) -> Coin {
+        Coin {
+            outpoint,
+            is_immature,
+            block_info: block_height.map(|height| BlockInfo { height, time: 1 }),
+            amount: Amount::from_sat(312_500_000),
+            derivation_index: ChildNumber::from_normal_idx(0).unwrap(),
+            is_change: false,
+            spend_txid: None,
+            spend_block: None,
+            is_from_self: false,
+        }
+    }
+
+    fn updated(received: Vec<Coin>, confirmed: Vec<(bitcoin::OutPoint, i32, u32)>) -> UpdatedCoins {
+        UpdatedCoins {
+            receive_index: ChildNumber::from_normal_idx(0).unwrap(),
+            change_index: ChildNumber::from_normal_idx(0).unwrap(),
+            received,
+            confirmed,
+            expired: Vec::new(),
+            spending: Vec::new(),
+            expired_spending: Vec::new(),
+            spent: Vec::new(),
+        }
+    }
+
+    fn outpoint(tx: &Transaction) -> bitcoin::OutPoint {
+        bitcoin::OutPoint::new(tx.compute_txid(), 0)
+    }
+
+    /// A deposit the backend confirms at 100 confirmations is held on BTCB2 until the
+    /// long maturity, and confirmed on Bitcoin.
+    #[test]
+    fn newly_confirmed_coinbase_waits_for_the_chain_maturity() {
+        let tx = coinbase_tx(1);
+        let op = outpoint(&tx);
+        let coinbase: HashSet<_> = std::iter::once(op.txid).collect();
+        let curr: HashMap<_, _> = vec![(op, coin(op, None, true))].into_iter().collect();
+        let height = 980_000;
+
+        // Bitcoin: the backend's 100 blocks are the rule.
+        let mut up = updated(Vec::new(), vec![(op, height, 1)]);
+        let marked =
+            hold_immature_coinbase(ChainId::Bitcoin, height + 99, &coinbase, &curr, &mut up);
+        assert_eq!(up.confirmed, vec![(op, height, 1)]);
+        assert!(marked.is_empty());
+
+        // BTCB2 mainnet: 100 confirmations are not enough...
+        let mut up = updated(Vec::new(), vec![(op, height, 1)]);
+        let marked = hold_immature_coinbase(
+            ChainId::BitcoinBlake2b,
+            height + 99,
+            &coinbase,
+            &curr,
+            &mut up,
+        );
+        assert!(up.confirmed.is_empty());
+        assert!(marked.is_empty(), "already flagged immature");
+
+        // ...25919 are not either, 25920 are.
+        let mut up = updated(Vec::new(), vec![(op, height, 1)]);
+        hold_immature_coinbase(
+            ChainId::BitcoinBlake2b,
+            height + 25_918,
+            &coinbase,
+            &curr,
+            &mut up,
+        );
+        assert!(up.confirmed.is_empty());
+        let mut up = updated(Vec::new(), vec![(op, height, 1)]);
+        hold_immature_coinbase(
+            ChainId::BitcoinBlake2b,
+            height + 25_919,
+            &coinbase,
+            &curr,
+            &mut up,
+        );
+        assert_eq!(up.confirmed, vec![(op, height, 1)]);
+    }
+
+    /// Non-coinbase deposits are never held, whatever the chain.
+    #[test]
+    fn ordinary_deposits_are_untouched() {
+        let tx = coinbase_tx(2);
+        let op = outpoint(&tx);
+        let curr: HashMap<_, _> = vec![(op, coin(op, None, false))].into_iter().collect();
+        let mut up = updated(Vec::new(), vec![(op, 980_000, 1)]);
+        let marked = hold_immature_coinbase(
+            ChainId::BitcoinBlake2b,
+            980_000,
+            &HashSet::new(),
+            &curr,
+            &mut up,
+        );
+        assert_eq!(up.confirmed.len(), 1);
+        assert!(marked.is_empty());
+    }
+
+    /// A coinbase deposit first seen during a rescan, already past 100 blocks, comes from
+    /// the backend without the immature flag. It is flagged and held.
+    #[test]
+    fn received_coinbase_is_flagged_from_its_transaction() {
+        let tx = coinbase_tx(3);
+        let op = outpoint(&tx);
+        let coinbase: HashSet<_> = std::iter::once(op.txid).collect();
+        let mut up = updated(vec![coin(op, None, false)], vec![(op, 973_500, 1)]);
+        hold_immature_coinbase(
+            ChainId::BitcoinBlake2bTestnet4,
+            973_500 + 200,
+            &coinbase,
+            &HashMap::new(),
+            &mut up,
+        );
+        assert!(up.confirmed.is_empty());
+        assert!(up.received[0].is_immature);
+    }
+
+    /// A deposit with a spender was accepted by a node, so it is left as it is.
+    #[test]
+    fn spent_or_spending_deposits_are_left_alone() {
+        let tx = coinbase_tx(4);
+        let op = outpoint(&tx);
+        let coinbase: HashSet<_> = std::iter::once(op.txid).collect();
+        let mut spent = coin(op, Some(980_000), false);
+        spent.spend_txid = Some(coinbase_tx(5).compute_txid());
+        let curr: HashMap<_, _> = vec![(op, spent)].into_iter().collect();
+        let mut up = updated(Vec::new(), Vec::new());
+        let marked =
+            hold_immature_coinbase(ChainId::BitcoinBlake2b, 980_200, &coinbase, &curr, &mut up);
+        assert!(marked.is_empty());
+
+        let curr: HashMap<_, _> = vec![(op, coin(op, None, true))].into_iter().collect();
+        let mut up = updated(Vec::new(), vec![(op, 980_000, 1)]);
+        up.spending.push((op, coinbase_tx(5).compute_txid()));
+        hold_immature_coinbase(ChainId::BitcoinBlake2b, 980_200, &coinbase, &curr, &mut up);
+        assert_eq!(up.confirmed.len(), 1);
+    }
+
+    /// End to end through a poll: a BTCB2 coinbase deposit an earlier build confirmed at
+    /// 100 blocks is put back into the immature state, and one that lost its flag in a
+    /// rollback gets it back. A mature one is left confirmed.
+    #[test]
+    fn poll_re_evaluates_coins_already_marked_mature() {
+        let (early, rolled_back, mature) = (coinbase_tx(6), coinbase_tx(7), coinbase_tx(8));
+        let mut db = DummyDatabase::new();
+        db.set_chain(ChainId::BitcoinBlake2b);
+        let mut bit = DummyBitcoind::new();
+        let tip_height = 1_000_000;
+        bit.tip.height = tip_height;
+        db.connection().update_tip(&bit.tip);
+        db.connection()
+            .new_txs(&[early.clone(), rolled_back.clone(), mature.clone()]);
+        db.insert_coins(vec![
+            coin(outpoint(&early), Some(tip_height - 150), false),
+            coin(outpoint(&rolled_back), None, false),
+            coin(outpoint(&mature), Some(tip_height - 25_919), false),
+        ]);
+
+        updates(
+            &mut db.connection(),
+            &mut bit,
+            &super::tests::test_descs(),
+            &secp256k1::Secp256k1::verification_only(),
+            &ReorgAlertCache::default(),
+        )
+        .unwrap();
+
+        let coins = db.connection().coins(&[], &[]);
+        let early = coins[&outpoint(&early)];
+        assert!(early.is_immature && early.block_info.is_none());
+        let rolled_back = coins[&outpoint(&rolled_back)];
+        assert!(rolled_back.is_immature && rolled_back.block_info.is_none());
+        let mature = coins[&outpoint(&mature)];
+        assert!(!mature.is_immature && mature.block_info.is_some());
+    }
+
+    /// The same poll on a Bitcoin wallet changes nothing for a deposit 150 blocks deep.
+    #[test]
+    fn poll_leaves_bitcoin_coinbase_deposits_confirmed() {
+        let tx = coinbase_tx(9);
+        let mut db = DummyDatabase::new();
+        let mut bit = DummyBitcoind::new();
+        bit.tip.height = 1_000;
+        db.connection().update_tip(&bit.tip);
+        db.connection().new_txs(std::slice::from_ref(&tx));
+        db.insert_coins(vec![coin(outpoint(&tx), Some(bit.tip.height - 150), false)]);
+
+        updates(
+            &mut db.connection(),
+            &mut bit,
+            &super::tests::test_descs(),
+            &secp256k1::Secp256k1::verification_only(),
+            &ReorgAlertCache::default(),
+        )
+        .unwrap();
+
+        let stored = db.connection().coins(&[], &[])[&outpoint(&tx)];
+        assert!(!stored.is_immature && stored.block_info.is_some());
     }
 }

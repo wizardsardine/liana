@@ -225,6 +225,10 @@ pub trait DatabaseConnection {
     /// The network we are operating on.
     fn network(&mut self) -> bitcoin::Network;
 
+    /// The chain identity this database was created for. Unlike [`Self::network`] it tells
+    /// Bitcoin Blake2b apart from Bitcoin.
+    fn chain(&mut self) -> ChainId;
+
     /// Get the `Wallet`.
     fn wallet(&mut self) -> Wallet;
 
@@ -295,8 +299,8 @@ pub trait DatabaseConnection {
 
     /// Mark a set of coins as being confirmed at a specified height and block time.
     /// NOTE: if the coin comes from an immature coinbase transaction, this will mark it as mature.
-    /// Immature coinbase deposits must not be confirmed before they are 100 blocks deep in the
-    /// chain.
+    /// Immature coinbase deposits must not be confirmed before they reach the chain's coinbase
+    /// maturity (see `bitcoin::maturity`).
     fn confirm_coins(&mut self, outpoints: &[(bitcoin::OutPoint, i32, u32)]);
 
     /// Mark a set of coins as being spent by a specified txid of a pending transaction.
@@ -359,6 +363,15 @@ pub trait DatabaseConnection {
     /// Retrieves all txids from the transactions table whether or not they are referenced by a coin.
     fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid>;
 
+    /// The txids of stored transactions that are coinbase transactions.
+    fn coinbase_txids(&mut self) -> HashSet<bitcoin::Txid>;
+
+    /// Return unspent, non-change coins to the immature state: unconfirmed with `is_immature`
+    /// set, the representation an immature coinbase deposit has until it is confirmed. Used
+    /// when a coinbase deposit was confirmed (or rolled back) before the chain's coinbase
+    /// maturity was reached. Coins that are spent, spending or change are left unchanged.
+    fn mark_immature_coinbase(&mut self, outpoints: &[bitcoin::OutPoint]);
+
     /// Store transactions in database, ignoring any that already exist.
     fn new_txs(&mut self, txs: &[bitcoin::Transaction]);
 
@@ -407,6 +420,10 @@ impl DatabaseConnection for SqliteConn {
 
     fn network(&mut self) -> bitcoin::Network {
         self.db_tip().network
+    }
+
+    fn chain(&mut self) -> ChainId {
+        self.db_tip().chain
     }
 
     fn wallet(&mut self) -> Wallet {
@@ -609,6 +626,14 @@ impl DatabaseConnection for SqliteConn {
 
     fn list_saved_txids(&mut self) -> Vec<bitcoin::Txid> {
         self.db_list_saved_txids()
+    }
+
+    fn coinbase_txids(&mut self) -> HashSet<bitcoin::Txid> {
+        self.db_coinbase_txids()
+    }
+
+    fn mark_immature_coinbase(&mut self, outpoints: &[bitcoin::OutPoint]) {
+        self.mark_immature_coinbase(outpoints)
     }
 
     fn new_txs<'a>(&mut self, txs: &[bitcoin::Transaction]) {
