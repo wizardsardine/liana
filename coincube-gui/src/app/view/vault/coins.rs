@@ -45,8 +45,8 @@ use crate::{
 /// [`crate::services::chain_status`].
 pub fn chain_badge<'a, T: 'a>(status: ChainStatus, here: ChainId) -> Container<'a, T> {
     Container::new(iced::widget::tooltip::Tooltip::new(
-        Container::new(p2_regular(status.label(here)))
-            .padding([5, 8])
+        Container::new(p2_regular(status.label(here)).wrapping(iced::widget::text::Wrapping::None))
+            .padding(10)
             .center_x(Length::Shrink)
             .style(theme::pill::simple),
         Container::new(p1_regular(status.explanation(here)))
@@ -81,12 +81,14 @@ fn recovery_timing_known(coin: &Coin, tip: u32) -> bool {
 }
 
 const AMOUNT_COLUMN_WIDTH: f32 = 160.0;
-const CONFIRMATIONS_COLUMN_WIDTH: f32 = 100.0;
+const CONFIRMATIONS_COLUMN_WIDTH: f32 = 120.0;
 const DETAILS_COLUMN_WIDTH: f32 = 85.0;
 const CHECK_COLUMN_WIDTH: f32 = 24.0;
-const CHAINS_COLUMN_WIDTH: f32 = 110.0;
-const STATUS_COLUMN_WIDTH: f32 = 216.0;
-const TABLE_MIN_WIDTH: f32 = 1024.0;
+const CHAINS_COLUMN_WIDTH: f32 = 220.0;
+const STATUS_COLUMN_WIDTH: f32 = 200.0;
+/// Wide enough for every column's longest content on one line, the Chains
+/// badge included; narrower panes scroll the table sideways.
+const TABLE_MIN_WIDTH: f32 = 1138.0;
 pub const COIN_LABEL_INPUT_ID: &str = "vault.coin-label.input";
 
 pub fn coin_action_id(outpoint: &str, action: &str) -> iced::advanced::widget::Id {
@@ -1284,7 +1286,9 @@ mod tests {
                     true,
                     CoinControl::default(),
                 ),
-                (1024, 768),
+                // The Chains column makes this table wider than 1024px; a
+                // narrower pane scrolls it, which this probe can't follow.
+                (1280, 768),
                 "light",
                 theme::Theme::light(),
             );
@@ -1406,6 +1410,44 @@ mod tests {
         assert!(mounted.contains("1 selected · •••••• sats"));
         assert!(!mounted.contains("98,765,432"));
         assert!(mounted.contains("Send selected"));
+    }
+
+    #[test]
+    fn every_chains_badge_fits_its_column_on_one_line() {
+        let statuses = [
+            ChainStatus::BothChains,
+            ChainStatus::Splitting { confirmations: 3 },
+            ChainStatus::SplitUnconfirmed,
+            ChainStatus::OnlyHere,
+            ChainStatus::NotSeen,
+            ChainStatus::CouldntVerify,
+            ChainStatus::NotChecked,
+        ];
+        for here in [ChainId::Bitcoin, ChainId::BitcoinBlake2b] {
+            for status in statuses {
+                let label = status.label(here);
+                let mounted = capture::inspect_full_window(
+                    "vault-coins-chains-badge",
+                    // Unconstrained, so the text's natural width is measured
+                    // rather than whatever the column would clip it to.
+                    Container::<Message>::new(chain_badge(status, here)).into(),
+                    (1280, 200),
+                    "dark",
+                    theme::Theme::dark(),
+                );
+                let (_, bounds) = mounted
+                    .text
+                    .iter()
+                    .find(|(value, _)| value == &label)
+                    .unwrap_or_else(|| panic!("{} not shown", label));
+                assert!(bounds.height < 24.0, "{} wraps", label);
+                assert!(
+                    bounds.width + 20.0 <= CHAINS_COLUMN_WIDTH,
+                    "{} is wider than the Chains column",
+                    label
+                );
+            }
+        }
     }
 
     #[test]
