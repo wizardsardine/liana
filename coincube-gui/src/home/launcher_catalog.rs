@@ -2500,6 +2500,93 @@ mod tests {
         home
     }
 
+    /// What the launcher lists, across every network, once an account is
+    /// signed in: another account's Cubes appear on no network's rows, and
+    /// signing out brings them back.
+    #[test]
+    fn the_floor_lists_only_the_signed_in_accounts_cubes_on_every_network() {
+        use crate::app::settings::ConnectOwner;
+        use crate::app::state::connect::account::ConnectFlowStep;
+        use crate::services::coincube::User;
+
+        let owned = |name: &str, chain: ChainId, owner: u32| {
+            let mut cube = CubeSettings::new(name.to_string(), chain);
+            cube.connect_owner = Some(ConnectOwner {
+                user_id: owner,
+                email: format!("user{owner}@example.com"),
+            });
+            cube
+        };
+        let mut home = home_with(&[]);
+        home.developer_mode = true;
+        home.displayed_networks = vec![ChainId::Bitcoin, ChainId::Testnet4];
+        home.connect_account.step = ConnectFlowStep::Dashboard;
+        home.connect_account.user = Some(User {
+            id: 99,
+            email: "user99@example.com".to_string(),
+            email_verified: Some(true),
+        });
+        // The current network's list and the other network's, as read.
+        drop(home.update(Message::Checked {
+            for_chain: ChainId::Bitcoin,
+            res: Ok(State::Cubes {
+                cubes: vec![
+                    owned("btc-99", ChainId::Bitcoin, 99),
+                    owned("btc-102", ChainId::Bitcoin, 102),
+                ],
+                create_cube: false,
+                source: ChainId::Bitcoin,
+            }),
+        }));
+        home.displayed_networks = vec![ChainId::Bitcoin, ChainId::Testnet4];
+        home.network_catalog_generation = 1;
+        home.network_catalog_requested = vec![ChainId::Testnet4];
+        drop(home.update(Message::NetworkCatalogLoaded {
+            generation: 1,
+            chain: ChainId::Testnet4,
+            cubes: Ok(vec![
+                owned("t4-99", ChainId::Testnet4, 99),
+                owned("t4-102", ChainId::Testnet4, 102),
+            ]),
+        }));
+        let names = |home: &Home| {
+            let mut names: Vec<String> = project_locals(home, "", NetworkFilter::All)
+                .locals
+                .iter()
+                .map(|row| row.name.clone())
+                .collect();
+            names.sort();
+            names
+        };
+        assert_eq!(names(&home), vec!["btc-99", "t4-99"]);
+
+        // The other account sees the mirror image.
+        home.connect_account.user.as_mut().unwrap().id = 102;
+        drop(home.update(Message::Checked {
+            for_chain: ChainId::Bitcoin,
+            res: Ok(State::Cubes {
+                cubes: vec![
+                    owned("btc-99", ChainId::Bitcoin, 99),
+                    owned("btc-102", ChainId::Bitcoin, 102),
+                ],
+                create_cube: false,
+                source: ChainId::Bitcoin,
+            }),
+        }));
+        home.displayed_networks = vec![ChainId::Bitcoin, ChainId::Testnet4];
+        home.network_catalog_generation = 1;
+        home.network_catalog_requested = vec![ChainId::Testnet4];
+        drop(home.update(Message::NetworkCatalogLoaded {
+            generation: 1,
+            chain: ChainId::Testnet4,
+            cubes: Ok(vec![
+                owned("t4-99", ChainId::Testnet4, 99),
+                owned("t4-102", ChainId::Testnet4, 102),
+            ]),
+        }));
+        assert_eq!(names(&home), vec!["btc-102", "t4-102"]);
+    }
+
     fn remote(
         uuid: &str,
         name: &str,
