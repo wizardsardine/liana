@@ -1731,6 +1731,119 @@ mod native {
         )
     }
 
+    async fn create_export(
+        c: &Config,
+        state: &mut State,
+        root: &Path,
+        original: &Path,
+        retry_create: bool,
+    ) -> Result<()> {
+        check(
+            device_secret::load_optional(&c.run_id.to_string())
+                .map_err(|_| "native_keychain_blocked")?
+                .is_none(),
+            "native_original_factor_exists",
+        )?;
+        let (client, jwt) = auth(c)?;
+        check(
+            client
+                .get_user()
+                .await
+                .map_err(|_| "native_auth_blocked")?
+                .id
+                == c.owner_id,
+            "native_account_changed",
+        )?;
+        if retry_create {
+            observe_remote_before_create(c, &jwt, &client).await?;
+            validate_canary(c, state)?;
+        } else {
+            prepare_create_secrets(c, state)?;
+        }
+        let pin = string(load(c, "original_pin")?)?;
+        let password = string(load(c, "recovery_password")?)?;
+        let _restored_pin = load(c, "restored_pin")?;
+        let admission = recovery_native::admit_backend_readiness(c.chain, &client).await;
+        record_backend_refusal(root, state, admission)?;
+        let entropy = random(16);
+        let phrase = bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
+        let words = Zeroizing::new(phrase.words().map(str::to_owned).collect::<Vec<_>>());
+        let (identity, kit) = recovery_native::create_export(
+            c.chain,
+            &CoincubeDirectory::new(original.to_path_buf()),
+            c.run_id,
+            &pin,
+            &words,
+            &password,
+            &jwt,
+            client,
+            || begin_create(root, state),
+        )
+        .await?;
+        check(
+            identity.owner_id == c.owner_id && kit.cube_id == identity.remote_cube_id,
+            "native_remote_binding",
+        )?;
+        validate_identity(c, &identity, &Kit::from_api(kit.clone()))?;
+        let factor =
+            device_secret::load(&identity.cube.id).map_err(|_| "native_original_factor")?;
+        state.original_factor = Some(hash(factor.as_ref()));
+        let files = manifest_files(original)?;
+        state.original_manifest = Some(files_digest(&files)?);
+        state.original_files = Some(files);
+        state.identity = Some(identity);
+        state.kit = Some(Kit::from_api(kit));
+        put(c, "provenance", &binding(state)?)?;
+        state.stage = "exported".into();
+        Ok(())
+    }
+
+    async fn reopen_sign(
+        c: &Config,
+        state: &mut State,
+        root: &Path,
+        original: &Path,
+        restored: PathBuf,
+    ) -> Result<()> {
+        process_absent(
+            state
+                .restorer
+                .as_ref()
+                .ok_or("native_restore_process_missing")?,
+        )?;
+        check(!original.exists(), "native_original_reappeared")?;
+        let identity = state.identity.as_ref().ok_or("native_identity_missing")?;
+        let factor =
+            device_secret::load(&identity.cube.id).map_err(|_| "native_restored_factor")?;
+        check(
+            Some(hash(factor.as_ref())) == state.restored_factor
+                && state.restored_factor != state.original_factor,
+            "native_restored_factor_changed",
+        )?;
+        // C can load only the new PIN; never either recovery/old-PIN/factor handle.
+        let pin = string(load(c, "restored_pin")?)?;
+        let wrong = if pin.as_str() == "0000" {
+            "0001"
+        } else {
+            "0000"
+        };
+        let (client, _) = auth(c)?;
+        let wallet = recovery_native::cold_load(
+            &CoincubeDirectory::new(restored),
+            identity,
+            &pin,
+            wrong,
+            client,
+        )
+        .await?;
+        let psbt = recovery_native::sign_unfunded(&wallet)?;
+        let bytes = psbt.serialize();
+        write(root, "unfunded-key-control.psbt", &bytes)?;
+        state.proof_sha256 = Some(hash(&bytes));
+        state.stage = "signed_unfunded".into();
+        Ok(())
+    }
+
     async fn action(request: Request) -> Result<()> {
         let c = request.config;
         preflight(&c)?;
@@ -1781,64 +1894,7 @@ mod native {
         }
         match request.action.as_str() {
             "create_export" => {
-                check(
-                    device_secret::load_optional(&c.run_id.to_string())
-                        .map_err(|_| "native_keychain_blocked")?
-                        .is_none(),
-                    "native_original_factor_exists",
-                )?;
-                let (client, jwt) = auth(&c)?;
-                check(
-                    client
-                        .get_user()
-                        .await
-                        .map_err(|_| "native_auth_blocked")?
-                        .id
-                        == c.owner_id,
-                    "native_account_changed",
-                )?;
-                if retry_create {
-                    observe_remote_before_create(&c, &jwt, &client).await?;
-                    validate_canary(&c, &state)?;
-                } else {
-                    prepare_create_secrets(&c, &mut state)?;
-                }
-                let pin = string(load(&c, "original_pin")?)?;
-                let password = string(load(&c, "recovery_password")?)?;
-                let _restored_pin = load(&c, "restored_pin")?;
-                let admission = recovery_native::admit_backend_readiness(c.chain, &client).await;
-                record_backend_refusal(root, &mut state, admission)?;
-                let entropy = random(16);
-                let phrase =
-                    bip39::Mnemonic::from_entropy(&entropy).map_err(|_| "native_entropy")?;
-                let words = Zeroizing::new(phrase.words().map(str::to_owned).collect::<Vec<_>>());
-                let (identity, kit) = recovery_native::create_export(
-                    c.chain,
-                    &CoincubeDirectory::new(original.clone()),
-                    c.run_id,
-                    &pin,
-                    &words,
-                    &password,
-                    &jwt,
-                    client,
-                    || begin_create(root, &mut state),
-                )
-                .await?;
-                check(
-                    identity.owner_id == c.owner_id && kit.cube_id == identity.remote_cube_id,
-                    "native_remote_binding",
-                )?;
-                validate_identity(&c, &identity, &Kit::from_api(kit.clone()))?;
-                let factor =
-                    device_secret::load(&identity.cube.id).map_err(|_| "native_original_factor")?;
-                state.original_factor = Some(hash(factor.as_ref()));
-                let files = manifest_files(&original)?;
-                state.original_manifest = Some(files_digest(&files)?);
-                state.original_files = Some(files);
-                state.identity = Some(identity);
-                state.kit = Some(Kit::from_api(kit));
-                put(&c, "provenance", &binding(&state)?)?;
-                state.stage = "exported".into();
+                create_export(&c, &mut state, root, &original, retry_create).await?;
             }
             "wipe_original" => {
                 let identity = state.identity.as_ref().ok_or("native_identity_missing")?;
@@ -1945,42 +2001,7 @@ mod native {
                 state.stage = "restored".into();
             }
             "reopen_sign" => {
-                process_absent(
-                    state
-                        .restorer
-                        .as_ref()
-                        .ok_or("native_restore_process_missing")?,
-                )?;
-                check(!original.exists(), "native_original_reappeared")?;
-                let identity = state.identity.as_ref().ok_or("native_identity_missing")?;
-                let factor =
-                    device_secret::load(&identity.cube.id).map_err(|_| "native_restored_factor")?;
-                check(
-                    Some(hash(factor.as_ref())) == state.restored_factor
-                        && state.restored_factor != state.original_factor,
-                    "native_restored_factor_changed",
-                )?;
-                // C can load only the new PIN; never either recovery/old-PIN/factor handle.
-                let pin = string(load(&c, "restored_pin")?)?;
-                let wrong = if pin.as_str() == "0000" {
-                    "0001"
-                } else {
-                    "0000"
-                };
-                let (client, _) = auth(&c)?;
-                let wallet = recovery_native::cold_load(
-                    &CoincubeDirectory::new(restored),
-                    identity,
-                    &pin,
-                    wrong,
-                    client,
-                )
-                .await?;
-                let psbt = recovery_native::sign_unfunded(&wallet)?;
-                let bytes = psbt.serialize();
-                write(root, "unfunded-key-control.psbt", &bytes)?;
-                state.proof_sha256 = Some(hash(&bytes));
-                state.stage = "signed_unfunded".into();
+                reopen_sign(&c, &mut state, root, &original, restored).await?;
             }
             "retire_remote" => {
                 let raw = private(&root.join("unfunded-key-control.psbt"))?;
