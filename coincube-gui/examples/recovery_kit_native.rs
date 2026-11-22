@@ -2042,6 +2042,87 @@ mod native {
         save(root, &state)?;
         Ok(())
     }
+    fn authenticated_command(input: &[u8], mode: Option<&str>) -> Result<()> {
+        let request: AuthInput =
+            serde_json::from_slice(input).map_err(|_| "native_auth_input_schema")?;
+        preflight(&request.config)?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| "native_runtime")?;
+        let mut client = CoincubeClient::new();
+        client.set_token(&request.access_token);
+        let user = runtime
+            .block_on(client.get_user())
+            .map_err(|_| "native_auth_blocked")?;
+        check(user.id == request.config.owner_id, "native_account_changed")?;
+        if mode == Some("--admit-backends") {
+            for chain in [ChainId::Testnet4, ChainId::BitcoinBlake2bTestnet4] {
+                runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
+                    chain,
+                    &client,
+                    if chain == ChainId::Testnet4 {
+                        request.config.ordinary_backend
+                    } else {
+                        recovery_native::OrdinaryBackend::Public
+                    },
+                ))?;
+            }
+        } else if mode == Some("--begin-cleanup") {
+            runtime.block_on(observe_before_create(
+                &request.config,
+                &request.access_token,
+                &client,
+            ))?;
+            check(
+                !runtime.block_on(recovery_native::create_capacity_available(
+                    request.config.chain,
+                    request.config.run_id,
+                    request.config.owner_id,
+                    &client,
+                ))?,
+                "native_capacity_not_full",
+            )?;
+        } else if mode == Some("--observe-cleanup") {
+            runtime.block_on(observe_before_create(
+                &request.config,
+                &request.access_token,
+                &client,
+            ))?;
+        } else if mode == Some("--admit-create") {
+            runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
+                request.config.chain,
+                &client,
+                request.config.ordinary_backend,
+            ))?;
+            runtime.block_on(observe_before_create(
+                &request.config,
+                &request.access_token,
+                &client,
+            ))?;
+            runtime.block_on(recovery_native::admit_create(
+                request.config.chain,
+                request.config.run_id,
+                request.config.owner_id,
+                &client,
+            ))?;
+        } else if mode == Some("--refresh-auth") {
+            let _ = load(&request.config, "auth")?;
+            device_secret::integration::update(
+                &request.config.auth_account,
+                request.access_token.as_bytes(),
+            )
+            .map_err(|_| "native_auth_refresh")?;
+            check(
+                load(&request.config, "auth")?.as_slice() == request.access_token.as_bytes(),
+                "native_auth_refresh",
+            )?;
+        } else {
+            put(&request.config, "auth", request.access_token.as_bytes())?;
+        }
+        Ok(())
+    }
+
     pub fn main() -> Result<()> {
         log::set_logger(&PROVIDER_WARNING_LOGGER).map_err(|_| "native_diagnostic_logger")?;
         log::set_max_level(log::LevelFilter::Warn);
@@ -2084,84 +2165,7 @@ mod native {
                     | "--refresh-auth"
             )
         ) {
-            let request: AuthInput =
-                serde_json::from_slice(&input).map_err(|_| "native_auth_input_schema")?;
-            preflight(&request.config)?;
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build()
-                .map_err(|_| "native_runtime")?;
-            let mut client = CoincubeClient::new();
-            client.set_token(&request.access_token);
-            let user = runtime
-                .block_on(client.get_user())
-                .map_err(|_| "native_auth_blocked")?;
-            check(user.id == request.config.owner_id, "native_account_changed")?;
-            if mode.as_deref() == Some("--admit-backends") {
-                for chain in [ChainId::Testnet4, ChainId::BitcoinBlake2bTestnet4] {
-                    runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
-                        chain,
-                        &client,
-                        if chain == ChainId::Testnet4 {
-                            request.config.ordinary_backend
-                        } else {
-                            recovery_native::OrdinaryBackend::Public
-                        },
-                    ))?;
-                }
-            } else if mode.as_deref() == Some("--begin-cleanup") {
-                runtime.block_on(observe_before_create(
-                    &request.config,
-                    &request.access_token,
-                    &client,
-                ))?;
-                check(
-                    !runtime.block_on(recovery_native::create_capacity_available(
-                        request.config.chain,
-                        request.config.run_id,
-                        request.config.owner_id,
-                        &client,
-                    ))?,
-                    "native_capacity_not_full",
-                )?;
-            } else if mode.as_deref() == Some("--observe-cleanup") {
-                runtime.block_on(observe_before_create(
-                    &request.config,
-                    &request.access_token,
-                    &client,
-                ))?;
-            } else if mode.as_deref() == Some("--admit-create") {
-                runtime.block_on(recovery_native::admit_backend_readiness_with_backend(
-                    request.config.chain,
-                    &client,
-                    request.config.ordinary_backend,
-                ))?;
-                runtime.block_on(observe_before_create(
-                    &request.config,
-                    &request.access_token,
-                    &client,
-                ))?;
-                runtime.block_on(recovery_native::admit_create(
-                    request.config.chain,
-                    request.config.run_id,
-                    request.config.owner_id,
-                    &client,
-                ))?;
-            } else if mode.as_deref() == Some("--refresh-auth") {
-                let _ = load(&request.config, "auth")?;
-                device_secret::integration::update(
-                    &request.config.auth_account,
-                    request.access_token.as_bytes(),
-                )
-                .map_err(|_| "native_auth_refresh")?;
-                check(
-                    load(&request.config, "auth")?.as_slice() == request.access_token.as_bytes(),
-                    "native_auth_refresh",
-                )?;
-            } else {
-                put(&request.config, "auth", request.access_token.as_bytes())?;
-            }
-            return Ok(());
+            return authenticated_command(&input, mode.as_deref());
         }
         check(std::env::args().len() == 1, "native_arguments")?;
         let request: Request = serde_json::from_slice(&input).map_err(|_| "native_input_schema")?;
