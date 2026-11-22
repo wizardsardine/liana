@@ -114,15 +114,26 @@ any later pin bump.
     there it is a Cube before its first promotion: Connect serves the wallet
     while the node resyncs, and the App switches back to the node once it has
     synced, under the usual holds (not during a Vault scan, and not to a
-    pruned node that no longer holds this Vault's history). The local-backend
-    loader carries the unlock's Connect session for this purpose only; the
-    local open never uses it, and any sign-in change clears it.
+    pruned node that no longer holds this Vault's history). The node keeps
+    the Vault's watch-only wallet, which coincubed registered with
+    `load_on_startup`, so the node reloads it when it starts and follows the
+    new chain from genesis; this has not been checked against a real pruned
+    resync yet. The local-backend loader carries the unlock's Connect session
+    for this recovery; the local open does not need it (the global
+    availability check reads only the client's address, with its token
+    cleared), and any sign-in change clears it.
     Nothing is deleted unless the Cube will be able to reopen:
     - Without an authenticated Connect session the resync is refused, and the
       page says to sign in from Home, reopen the Cube and resync.
-    - Connect must first confirm Bitcoin Blake2b for the account (the check
-      the reopen itself makes); if it cannot, the failure is shown and the
-      resync can be retried.
+    - Connect must confirm that the reopen would be admitted: Bitcoin Blake2b
+      enabled for the account, and Connect's chain anchor available and
+      trusted (`confirm_connect_reopen`). Otherwise the resync is refused and
+      the page says to reopen the Cube to try again (an expired session, for
+      example, needs a fresh unlock).
+    - A node backend that is not the managed Blake2b node is refused.
+    - A sign-in change or closing the Cube while the resync runs stops it
+      from changing anything not yet changed (checked under the locks, just
+      before `daemon.toml` is rewritten).
     - `daemon.toml` is rewritten (atomically, and only if it is unchanged
       since it was read) after every refusal below has passed, under the same
       locks, immediately before the deletion
@@ -130,7 +141,9 @@ any later pin bump.
       is deleted. If the deletion then fails, the Cube is already on Connect
       and the next resync finishes it.
     - A sign-out after the move revokes the loader like any Connect loader's;
-      the Cube then opens on Connect after the next sign-in.
+      the Cube then opens on Connect after the next sign-in. A result that
+      finds the Cube on Connect without a session asks for sign-in instead
+      of reopening.
   - **Refusals.** The resync is refused while any Cube owns the node, while
     the node's own datadir lock (`.lock`, the same `fcntl`/`LockFileEx` lock
     `bitcoind` takes) is held by another process, while anything accepts

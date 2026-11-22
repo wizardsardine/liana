@@ -1566,7 +1566,7 @@ impl Tab {
             State::Loader(loader)
                 if loader.cube_settings.network.is_blake2b() && !loader.requires_connect() =>
             {
-                loader.connect_client = None;
+                loader.clear_connect_session();
                 true
             }
             State::PinEntry(pin) if pin.cube().network.is_blake2b() && !pin.requires_connect() => {
