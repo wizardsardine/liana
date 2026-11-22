@@ -42,16 +42,7 @@ impl App {
     fn refresh_persisted_cube_settings(&mut self, cube: &settings::CubeSettings) {
         self.cache.bitcoin_unit = cube.unit_setting.display_unit;
         self.cube_settings.fiat_price = cube.fiat_price.clone();
-        if self.cube_settings.network.is_blake2b()
-            && self.cache.fiat_price.as_ref().is_some_and(|price| {
-                !cube.fiat_price.as_ref().is_some_and(|setting| {
-                    setting.is_enabled && setting.currency == price.currency()
-                })
-            })
-        {
-            self.cache.clear_btcb2_fiat();
-            self.cache.btcb2_price_request = None;
-        }
+        self.refresh_fiat_selection(cube.fiat_price.as_ref());
         // The backup attention row follows persisted state.
         self.cache.current_cube_backed_up = cube.backed_up;
         self.cube_settings.backed_up = cube.backed_up;
@@ -81,16 +72,30 @@ impl App {
         // Vault-less (seed-only) kit has no fingerprint to carry.
         self.cache.recovery_kit_password_backed_up = cube.recovery_kit_password_backed_up;
         self.cube_settings.recovery_kit_password_backed_up = cube.recovery_kit_password_backed_up;
+    }
 
-        // Clear cached fiat display price if disabled.
-        // Note: btc_usd_price is NOT cleared — it's needed for
-        // USDt→sats conversion regardless of fiat display setting.
-        if !cube.fiat_price.as_ref().is_some_and(|p| p.is_enabled) {
-            self.cache.fiat_price = None;
-            if self.cube_settings.network.is_blake2b() {
+    fn refresh_fiat_selection(&mut self, setting: Option<&settings::fiat::PriceSetting>) {
+        let enabled = setting.filter(|setting| setting.is_enabled);
+        let is_fork = self.cube_settings.network.is_blake2b();
+        let stale_display = self.cache.fiat_price.as_ref().is_some_and(|price| {
+            !enabled.is_some_and(|setting| {
+                setting.currency == price.currency()
+                    && (is_fork || setting.source == price.source())
+            })
+        });
+
+        if is_fork {
+            if enabled.is_none() || stale_display {
                 self.cache.clear_btcb2_fiat();
+            }
+            if self.cache.btcb2_price_request.is_some_and(|request| {
+                !enabled.is_some_and(|setting| setting.currency == request.currency)
+            }) {
                 self.cache.btcb2_price_request = None;
             }
+        } else if stale_display {
+            // The independent BTC/USD conversion quote still feeds USDt→sats.
+            self.cache.fiat_price = None;
         }
     }
 }
@@ -323,6 +328,47 @@ mod tests {
                 assert!(app.cache.fiat_price.is_none());
                 assert_eq!(app.cache.btc_usd_price, Some(67000.0));
             }
+        });
+    }
+
+    #[test]
+    fn bitcoin_display_quote_follows_the_selected_currency_and_source() {
+        with_app(ChainId::Bitcoin, |app| {
+            for (currency, source, retained) in [
+                (Currency::USD, PriceSource::Coincube, true),
+                (Currency::EUR, PriceSource::Coincube, false),
+                (Currency::USD, PriceSource::CoinGecko, false),
+            ] {
+                app.cache.fiat_price = Some(quote(app, Currency::USD));
+                app.cache.btc_usd_price = Some(67_000.0);
+                let mut selected = app.cube_settings.clone();
+                selected.fiat_price = Some(settings::fiat::PriceSetting {
+                    is_enabled: true,
+                    currency,
+                    source,
+                });
+                save(app, ChainId::Bitcoin, vec![selected]);
+                refresh(app);
+                assert_eq!(app.cache.fiat_price.is_some(), retained);
+                assert_eq!(app.cache.btc_usd_price, Some(67_000.0));
+            }
+        });
+    }
+
+    #[test]
+    fn fork_currency_change_invalidates_a_pending_request_without_a_display_quote() {
+        with_app(ChainId::BitcoinBlake2b, |app| {
+            app.cache.btcb2_price_request = Some(quote(app, Currency::USD).request);
+            app.cache.fiat_price = None;
+            let mut selected = app.cube_settings.clone();
+            selected.fiat_price = Some(settings::fiat::PriceSetting {
+                is_enabled: true,
+                currency: Currency::EUR,
+                ..Default::default()
+            });
+            save(app, ChainId::BitcoinBlake2b, vec![selected]);
+            refresh(app);
+            assert!(app.cache.btcb2_price_request.is_none());
         });
     }
 
