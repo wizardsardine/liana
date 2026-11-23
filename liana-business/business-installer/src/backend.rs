@@ -92,6 +92,7 @@ pub trait Backend {
 }
 
 /// Stream wrapper for Backend responses
+#[allow(dead_code)]
 pub struct BackendStream {
     pub receiver: mpsc::Receiver<Notification>,
 }

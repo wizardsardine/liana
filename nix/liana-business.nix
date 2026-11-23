@@ -1,4 +1,4 @@
-{ craneLib, pkgs, lib, lipo, rootPath }:
+{ craneLib, craneLibBootstrap, craneLibBootstrapApple, pkgs, lib, lipo, rootPath }:
 let
   commonBuildSettings = {
     src = lib.fileset.toSource {
@@ -25,6 +25,8 @@ let
 
   mkWindowsInstaller = import ./windows-installer.nix { inherit pkgs lib rootPath; };
 
+  normalizeElf = import ./normalize-elf.nix { inherit pkgs; };
+
   # Windows-specific settings shared between deps and final build
   windowsSettings = {
     inherit (commonBuildSettings) src strictDeps cargoLock cargoVendorDir LIANA_SKIP_GUI_ICON;
@@ -48,13 +50,13 @@ let
   };
 
   # Build deps separately with LIANA_SKIP_GUI_ICON to ensure liana-gui doesn't set its icon
-  windowsDeps = craneLib.buildDepsOnly (windowsSettings // {
+  windowsDeps = craneLibBootstrap.buildDepsOnly (windowsSettings // {
     pname = "liana-business-deps";
     version = lianaBusinessInfo.version;
     doCheck = false;
   });
 
-  x86_64-pc-windows-gnu-exe = craneLib.buildPackage (windowsSettings // {
+  x86_64-pc-windows-gnu-exe = craneLibBootstrap.buildPackage (windowsSettings // {
     inherit (lianaBusinessInfo) pname version;
     doCheck = false;
 
@@ -76,7 +78,44 @@ let
     icon = rootPath + "/liana-ui/static/logos/liana-business.ico";
   };
 
-  x86_64-apple-darwin = craneLib.buildPackage {
+  # Linux and Windows use the bootstrapped toolchain, whose `std` is cross-compiled
+  # from source. The Apple targets use craneLibBootstrapApple: same compiler, plus
+  # an Apple `std` that needs the proprietary macOS SDK to link.
+  x86_64-unknown-linux-gnu = craneLibBootstrap.buildPackage {
+    inherit (commonBuildSettings) src strictDeps doCheck;
+    inherit (lianaBusinessInfo) pname version;
+
+    CARGO_BUILD_TARGET = "x86_64-unknown-linux-gnu";
+    # `libudev.so` itself is built against the glibc of nixpkgs: let the linker ignore the
+    # symbols it needs from a newer glibc than the one we target. Only the `libudev.so.1`
+    # dependency and the udev symbols we use end up in the binary.
+    CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS = "-C link-arg=-Wl,--allow-shlib-undefined";
+    # The glibc version suffix makes zig link against its own 2.31 stubs, so the binaries
+    # also run on distributions shipping an older glibc than the one of the build machine.
+    buildPhaseCargoCommand = "cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.31 -p liana-business --no-default-features --message-format json-render-diagnostics";
+    doNotPostBuildInstallCargoBinaries = true;
+
+    nativeBuildInputs = [ pkgs.pkg-config ];
+    buildInputs = [ pkgs.udev ];
+    depsBuildBuild = [ pkgs.zig pkgs.cargo-zigbuild ];
+
+    preBuild = ''
+      # hidapi compiles its own `hid.c`, which includes `libudev.h`, without asking pkg-config.
+      export CFLAGS_x86_64_unknown_linux_gnu="$(pkg-config --cflags libudev)"
+      export XDG_CACHE_HOME=$TMPDIR/xdg_cache
+      mkdir -p $XDG_CACHE_HOME
+      export CARGO_ZIGBUILD_CACHE_DIR=$TMPDIR/cargo-zigbuild-cache
+      mkdir -p $CARGO_ZIGBUILD_CACHE_DIR
+    '';
+
+    installPhaseCommand = ''
+      mkdir -p $out/x86_64-unknown-linux-gnu
+      install -m 755 target/x86_64-unknown-linux-gnu/release/liana-business $out/x86_64-unknown-linux-gnu/liana-business
+      ${normalizeElf} $out/x86_64-unknown-linux-gnu/liana-business
+    '';
+  };
+
+  x86_64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
 
@@ -111,7 +150,7 @@ let
     '';
   };
 
-  aarch64-apple-darwin = craneLib.buildPackage {
+  aarch64-apple-darwin = craneLibBootstrapApple.buildPackage {
     inherit (commonBuildSettings) src strictDeps doCheck;
     inherit (lianaBusinessInfo) pname version;
 
@@ -156,10 +195,11 @@ let
   '';
 
 in {
-  inherit x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
+  inherit x86_64-unknown-linux-gnu x86_64-pc-windows-gnu x86_64-pc-windows-gnu-exe x86_64-apple-darwin aarch64-apple-darwin universal2-apple-darwin;
   release = pkgs.buildEnv {
     name = "release";
     paths = [
+      x86_64-unknown-linux-gnu
       x86_64-pc-windows-gnu
       x86_64-apple-darwin
       aarch64-apple-darwin

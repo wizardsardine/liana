@@ -93,7 +93,6 @@ The flow is the same, with its own version numbering, on the release branch of t
 ./contrib/release/release.sh <liana|liana-business>
 ```
 
-The script requires `guix` on the host for the Linux binaries, and re-enters `nix develop .#release`
-on its own for the packaging tools. It derives the version from `git describe`: an exact tag match
-gives `vA.B` -> `A.B`, otherwise it falls back to the latest matching tag suffixed with the short
-commit hash.
+The script builds every target with Nix and re-enters `nix develop .#release` on its own for the
+packaging tools. It derives the version from `git describe`: an exact tag match gives `vA.B` ->
+`A.B`, otherwise it falls back to the latest matching tag suffixed with the short commit hash.

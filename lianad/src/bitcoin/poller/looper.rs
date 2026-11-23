@@ -683,7 +683,7 @@ mod tests {
         set_label(&mut db_conn, address(1), RENT);
         let child = tx(&[moved], &[3]);
         let child_coin = OutPoint::new(child.compute_txid(), 0);
-        db_conn.new_txs(&[child.clone()]);
+        db_conn.new_txs(std::slice::from_ref(&child));
         db_conn.new_unspent_coins(&[coin(child_coin, None)]);
         update_default_labels(&mut db_conn);
 
@@ -701,7 +701,7 @@ mod tests {
         // Moving it to address 4, whose coin is only found in a later poll.
         let consolidation = tx(&[child_coin], &[4]);
         let consolidated = OutPoint::new(consolidation.compute_txid(), 0);
-        db_conn.new_txs(&[consolidation.clone()]);
+        db_conn.new_txs(std::slice::from_ref(&consolidation));
         db_conn.spend_coins(&[(child_coin, consolidation.compute_txid())]);
         update_default_labels(&mut db_conn);
 
@@ -904,7 +904,7 @@ mod tests {
         // The root address label changes, then a new child is found.
         set_label(&mut db_conn, address(1), RENT);
         let third = tx(&[OutPoint::new(second.compute_txid(), 0)], &[2]);
-        db_conn.new_txs(&[third.clone()]);
+        db_conn.new_txs(std::slice::from_ref(&third));
         db_conn.spend_coins(&[(
             OutPoint::new(second.compute_txid(), 0),
             third.compute_txid(),
@@ -927,7 +927,7 @@ mod tests {
         // Only an own label of the last coin passes the new text on.
         set_label(&mut db_conn, OutPoint::new(third.compute_txid(), 0), GIFT);
         let fourth = tx(&[OutPoint::new(third.compute_txid(), 0)], &[2]);
-        db_conn.new_txs(&[fourth.clone()]);
+        db_conn.new_txs(std::slice::from_ref(&fourth));
         db_conn.spend_coins(&[(
             OutPoint::new(third.compute_txid(), 0),
             fourth.compute_txid(),

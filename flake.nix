@@ -25,19 +25,28 @@
 
         toolchain = fenix.packages.${system}.fromToolchainFile {
           file = ./rust-toolchain.toml;
-          sha256 = "sha256-Qxt8XAuaUR2OMdKbN4u8dBJOhSHxS+uS06Wl9+flVEk=";
+          sha256 = "sha256-SJwZ8g0zF2WrKDVmHrVG3pD2RGoQeo24MEXnNx5FyuI=";
         };
 
         craneLib = (crane.mkLib pkgs).overrideToolchain toolchain;
 
+        # mrustc-bootstrapped rustc, used for every release build. fenix is kept
+        # for the dev shells only.
+        bootstrap = import ./nix/bootstrap {
+          inherit pkgs lib;
+        };
+
+        craneLibBootstrap = (crane.mkLib pkgs).overrideToolchain bootstrap.toolchain;
+        craneLibBootstrapApple = (crane.mkLib pkgs).overrideToolchain bootstrap.toolchainApple;
+
         lianaPackages = import ./nix/liana.nix {
-          inherit craneLib pkgs lib;
+          inherit craneLib craneLibBootstrap craneLibBootstrapApple pkgs lib;
           lipo = lipo.packages.${system}.lipo;
           rootPath = ./.;
         };
 
         lianaBusinessPackages = import ./nix/liana-business.nix {
-          inherit craneLib pkgs lib;
+          inherit craneLib craneLibBootstrap craneLibBootstrapApple pkgs lib;
           lipo = lipo.packages.${system}.lipo;
           rootPath = ./.;
         };
@@ -111,6 +120,7 @@
           liana-business = lianaBusinessPackages;
         } // pkgs.lib.optionalAttrs (system == "x86_64-linux") {
           certum-pkcs11 = certumPkcs11;
+          inherit (bootstrap) mrustc mrustc-minicargo rustc-bootstrap-stage1-build rustc-bootstrap-stage1 rustc-bootstrap darwin-std toolchainApple;
         };
 
         devShells = {
