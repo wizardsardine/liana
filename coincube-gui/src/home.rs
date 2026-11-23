@@ -2121,10 +2121,14 @@ impl Home {
                 );
                 self.cube_sync_errors.remove(&cube_id);
                 let network_dir = self.datadir_path.network_directory(network);
-                let owner = self.connect_owner();
+                // The owner was recorded on disk when the Cube was created
+                // (PIN, passkey or phrase restore).
+                // Whoever is active when this reply lands may be a different
+                // account (or one that signed in after a signed-out
+                // creation), so an ownerless Cube stays ownerless.
                 Task::perform(
                     async move {
-                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                        settings::mark_cube_synced(&network_dir, &cube_id, None)
                             .await
                             .ok();
                     },
@@ -2669,8 +2673,31 @@ impl Home {
             self.connect_account.forget_shared_session_for_logout();
         }
         let was_authenticated = self.connect_account.is_authenticated();
+        let account_before = self.launcher_account_key();
         let task = map_connect_task(self.connect_account.update_message(msg));
         let now_authenticated = self.connect_account.is_authenticated();
+        // The Cube list is filtered by the signed-in account, so a sign-in,
+        // sign-out, account switch or profile load must re-read it.
+        let task = if self.launcher_account_key() != account_before {
+            // Drop the previous account's Cubes from what is cached now, so
+            // they cannot be opened while the re-reads below are in flight,
+            // or linger if one of them fails.
+            self.hide_cached_foreign_cubes();
+            // A creation's pending auto-open belongs to the account it was
+            // queued under. Once that account is replaced, the Cube may be
+            // hidden, and the open would otherwise fire when it returns.
+            // (A profile loading for the same session is not a switch.)
+            if account_before.1.is_some() && self.launcher_account_key().1 != account_before.1 {
+                self.open_created_cube = None;
+                self.open_after_registration = None;
+            }
+            // Other listed networks' Cubes are filtered when read, so they
+            // are re-read too, or one account's Cubes would linger there.
+            let others = self.refresh_network_catalog(true);
+            Task::batch(vec![task, self.reload()].into_iter().chain(others))
+        } else {
+            task
+        };
         self.refresh_displayed_networks();
         self.reconcile_launcher_session(was_authenticated, now_authenticated, explicit_logout);
         self.redirect_unavailable_duress();
@@ -2829,10 +2856,18 @@ impl Home {
         // updates (already exists but name may have changed).
         if let Some(client) = self.connect_account.authenticated_client() {
             let datadir = self.datadir_path.clone();
-            let owner = self.connect_owner();
+            // Never register a Cube another account already owns under this
+            // one: that would hand it over on the first sign-in.
+            //
+            // Nor does catch-up ever *record* an owner. A Cube still without
+            // one here was created signed out (one created signed in is
+            // stamped at creation), so whoever happens to sign in first has
+            // no claim to it; stamping them would hide it from its creator
+            // on every other account. It stays ownerless, and so visible.
             let unsynced: Vec<CubeSettings> = locally_stored_cubes(&datadir)
                 .into_iter()
                 .filter(|cube| !cube.remote_synced)
+                .filter(|cube| !self.cube_hidden_from_account(cube))
                 .collect();
             if !unsynced.is_empty() {
                 tasks.push(Task::perform(
@@ -2870,9 +2905,7 @@ impl Home {
                             match outcome {
                                 Ok(()) => {
                                     let nd = datadir.network_directory(cube.network);
-                                    let _ =
-                                        settings::mark_cube_synced(&nd, &cube.id, owner.clone())
-                                            .await;
+                                    let _ = settings::mark_cube_synced(&nd, &cube.id, None).await;
                                     outcomes.push((cube.id.clone(), None));
                                 }
                                 Err(e) => {
@@ -3141,6 +3174,7 @@ impl Home {
             Some(id) => id,
             None => *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4),
         };
+        let owner = self.restoring_account();
 
         Task::perform(
             async move {
@@ -3213,6 +3247,7 @@ impl Home {
                 // evidence and opens immediately.
                 cube.backed_up = true;
                 cube.creation_backup_required = true;
+                cube.connect_owner = owner;
 
                 // Save Cube settings to settings file.
                 // Idempotency: skip insert if UUID already exists.
@@ -3603,7 +3638,12 @@ impl Home {
                  skipping the post-creation registration",
                 cube.id
             );
-            self.open_created_cube = Some(cube.id.clone());
+            // Only a Cube this account may see is opened. One created under
+            // an account that has since switched away stays hidden, and a
+            // queued open would fire, unprompted, once its owner returns.
+            if !self.cube_hidden_from_account(&cube) {
+                self.open_created_cube = Some(cube.id.clone());
+            }
             reload_task
         } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
             *uuid == cube.id && *account != self.connect_account_id()
@@ -3617,7 +3657,29 @@ impl Home {
                  not registering it with the current account",
                 cube.id
             );
-            self.open_created_cube = Some(cube.id.clone());
+            // As on the Kit branch: an account that switched in during the
+            // write may not see this Cube, so no open is queued for it.
+            if !self.cube_hidden_from_account(&cube) {
+                self.open_created_cube = Some(cube.id.clone());
+            }
+            reload_task
+        } else if self.connect_account.authenticated_client().is_some()
+            && cube.connect_owner.as_ref().is_some_and(|owner| {
+                self.connect_account.user.as_ref().map(|u| u.id) != Some(owner.user_id)
+            })
+        {
+            // The account signed in when the Cube was created owns it. If
+            // another account (or none with a loaded profile) is active now,
+            // registering here would put the Cube under the wrong account;
+            // it stays unsynced for catch-up under its owner.
+            // It is hidden from this account, so it is not auto-opened
+            // either: a pending open would fire, unprompted, once its owner
+            // signs back in.
+            tracing::warn!(
+                "Cube {} was created under another Connect account; \
+                 not registering it with the current account",
+                cube.id
+            );
             reload_task
         } else if let Some(client) = self.connect_account.authenticated_client() {
             let cube_id = cube.id.clone();
@@ -3699,16 +3761,26 @@ impl Home {
                 Task::none()
             }
             Ok(mut state) if matches!(self.state, State::CreationBackup(_)) => {
+                self.hide_foreign_cubes(&mut state);
                 // The backup step owns the screen and an unwritten Cube's
                 // seed. A reload that lands now (the catch-up sync after
                 // signing in from the hub, say) must not replace it; it
                 // only refreshes the list a Cancel returns to.
-                if let State::Cubes { cubes, .. } = &mut state {
-                    self.creation_backup_cubes = std::mem::take(cubes);
+                // Replace it for an emptied list too: a reload that hid
+                // every parked Cube must not have Cancel bring them back.
+                match &mut state {
+                    State::Cubes { cubes, .. } => {
+                        self.creation_backup_cubes = std::mem::take(cubes);
+                    }
+                    State::NoCube { .. } => self.creation_backup_cubes.clear(),
+                    _ => {}
                 }
                 Task::none()
             }
-            Ok(state) => self.apply_checked_state(state),
+            Ok(mut state) => {
+                self.hide_foreign_cubes(&mut state);
+                self.apply_checked_state(state)
+            }
         }
     }
 
@@ -4406,10 +4478,13 @@ impl Home {
         }
         self.network_catalog_unread.retain(|c| *c != chain);
         match cubes {
-            Ok(cubes) => match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
-                Some((_, list)) => *list = cubes,
-                None => self.network_catalog.push((chain, cubes)),
-            },
+            Ok(mut cubes) => {
+                cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+                match self.network_catalog.iter_mut().find(|(c, _)| *c == chain) {
+                    Some((_, list)) => *list = cubes,
+                    None => self.network_catalog.push((chain, cubes)),
+                }
+            }
             // Keep whatever was last read; the menu says the
             // network is unavailable rather than showing 0 Cubes.
             Err(_) => self.network_catalog_unread.push(chain),
@@ -4427,10 +4502,13 @@ impl Home {
             Ok(_) => {
                 log::info!("[LAUNCHER] Cube {} updated remotely", cube_id);
                 let network_dir = self.datadir_path.network_directory(network);
-                let owner = self.connect_owner();
+                // A rename re-syncs the Cube (`confirm_rename` clears
+                // `remote_synced`), but it is not the creation's own
+                // registration: an ownerless Cube must stay ownerless rather
+                // than be claimed by whoever renamed it.
                 Task::perform(
                     async move {
-                        settings::mark_cube_synced(&network_dir, &cube_id, owner)
+                        settings::mark_cube_synced(&network_dir, &cube_id, None)
                             .await
                             .ok();
                     },
@@ -4771,6 +4849,86 @@ impl Home {
             .user
             .as_ref()
             .map(settings::ConnectOwner::from_user)
+    }
+
+    /// The owner to stamp on a Cube created now: the signed-in account, or
+    /// `None` when signed out (or its profile hasn't loaded). A Cube created
+    /// signed out stays ownerless for good: the catch-up sync in
+    /// [`Self::first_connect_login`] registers it but never claims it.
+    fn creating_account(&self) -> Option<settings::ConnectOwner> {
+        self.connect_account
+            .authenticated_client()
+            .and_then(|_| self.connect_owner())
+    }
+
+    /// The owner to stamp on a Cube restored from its phrase now. A restore is
+    /// a creation, so this is [`Self::creating_account`]; but a ghost's Cube
+    /// belongs to the account that listed it, which `ghost_still_registered`
+    /// requires to be the signed-in one. If it is not, the Cube stays
+    /// ownerless rather than going to the wrong account.
+    fn restoring_account(&self) -> Option<settings::ConnectOwner> {
+        match &self.ghost_claim {
+            Some((_, account)) if *account != self.connect_account_id() => None,
+            _ => self.creating_account(),
+        }
+    }
+
+    /// Whether `cube` belongs to a different Connect account than the one
+    /// signed in. See [`settings::cube_hidden_from_account`].
+    fn cube_hidden_from_account(&self, cube: &CubeSettings) -> bool {
+        settings::cube_hidden_from_account(
+            cube.connect_owner.as_ref(),
+            self.connect_account.authenticated_client().is_some(),
+            self.connect_account.user.as_ref().map(|u| u.id),
+        )
+    }
+
+    /// Drops Cubes owned by another Connect account from a freshly read list.
+    ///
+    /// Filtering the list at its source (rather than in each view) keeps every
+    /// consumer honest: the floor, the list, the details panel and all the
+    /// index- and key-addressed open / rename / delete handlers only ever see
+    /// Cubes this account may use. A list emptied this way becomes `NoCube`.
+    fn hide_foreign_cubes(&self, state: &mut State) {
+        let State::Cubes {
+            cubes, create_cube, ..
+        } = state
+        else {
+            return;
+        };
+        cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+        if cubes.is_empty() {
+            *state = State::NoCube {
+                create_cube: *create_cube,
+            };
+        }
+    }
+
+    /// Applies [`Self::cube_hidden_from_account`] to every Cube list already
+    /// held: the current list (or the one parked by the creation backup step)
+    /// and each other network's catalog. Used when the signed-in account
+    /// changes, before the lists are read again.
+    fn hide_cached_foreign_cubes(&mut self) {
+        let mut state = std::mem::replace(&mut self.state, State::Unchecked);
+        self.hide_foreign_cubes(&mut state);
+        self.state = state;
+        let mut parked = std::mem::take(&mut self.creation_backup_cubes);
+        parked.retain(|cube| !self.cube_hidden_from_account(cube));
+        self.creation_backup_cubes = parked;
+        let mut catalog = std::mem::take(&mut self.network_catalog);
+        for (_, cubes) in &mut catalog {
+            cubes.retain(|cube| !self.cube_hidden_from_account(cube));
+        }
+        self.network_catalog = catalog;
+    }
+
+    /// The signed-in account as the launcher list sees it: whether a session
+    /// exists, and whose profile is loaded.
+    fn launcher_account_key(&self) -> (bool, Option<u32>) {
+        (
+            self.connect_account.authenticated_client().is_some(),
+            self.connect_account.user.as_ref().map(|u| u.id),
+        )
     }
 
     fn scrub_creation_seed(&mut self) {
@@ -5217,7 +5375,7 @@ impl Home {
         let cube_name = self.create_cube_name.value.trim().to_string();
         let datadir_path = self.datadir_path.clone();
         let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-        let owner = self.connect_owner();
+        let owner = self.creating_account();
         let pending_bitcoin_import = self.pending_bitcoin_import.clone();
 
         Task::perform(
@@ -5249,8 +5407,11 @@ impl Home {
                 // stops `CubeCreated` registering it a second time.
                 if recovery_kit.is_some() {
                     cube.remote_synced = true;
-                    cube.connect_owner = owner;
                 }
+                // The account signed in while the Cube is created is its
+                // owner, registered or not: a registration that fails now is
+                // retried by catch-up, which never records an owner itself.
+                cube.connect_owner = owner;
                 cube.creation_recovery_kit = recovery_kit;
                 // Armed, like every Cube created under the gate. Without this a
                 // passkey Cube reads as one that predates the gate and is waved
@@ -5360,7 +5521,7 @@ impl Home {
         let pin = self.create_cube_pin.value();
         let datadir_path = self.datadir_path.clone();
         let cube_id = *self.pending_cube_id.get_or_insert_with(uuid::Uuid::new_v4);
-        let owner = self.connect_owner();
+        let owner = self.creating_account();
         let pending_bitcoin_import = self.pending_bitcoin_import.clone();
 
         Task::perform(
@@ -5479,8 +5640,9 @@ impl Home {
                 // `finalize_passkey_cube_creation`, which does the same.
                 if recovery_kit.is_some() {
                     cube.remote_synced = true;
-                    cube.connect_owner = owner;
                 }
+                // The creating account owns it, as on the passkey path.
+                cube.connect_owner = owner;
                 cube.creation_recovery_kit = recovery_kit;
                 // Arm the gate. Reaching this line means one of the two
                 // fields above is set: the user either typed the challenge
@@ -11125,6 +11287,80 @@ mod tests {
         assert_eq!(home.connect_account.signed_out_by, None);
     }
 
+    fn owned_cube(name: &str, owner: Option<u32>) -> CubeSettings {
+        let mut cube = CubeSettings::new(name.to_string(), ChainId::Bitcoin);
+        cube.connect_owner = owner.map(|user_id| settings::ConnectOwner {
+            user_id,
+            email: format!("user{user_id}@example.com"),
+        });
+        cube
+    }
+
+    fn listed_names(state: &State) -> Vec<String> {
+        match state {
+            State::Cubes { cubes, .. } => cubes.iter().map(|c| c.name.clone()).collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_signed_in_account_never_lists_another_accounts_cubes() {
+        let home = signed_in_home(); // signed in as user 7
+        let mut state = State::Cubes {
+            cubes: vec![
+                owned_cube("mine", Some(7)),
+                owned_cube("theirs", Some(9)),
+                owned_cube("unowned", None),
+            ],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert_eq!(listed_names(&state), vec!["mine", "unowned"]);
+    }
+
+    #[test]
+    fn another_networks_catalog_hides_other_accounts_cubes() {
+        let mut home = signed_in_home(); // signed in as user 7
+        home.network_catalog_generation = 1;
+        home.network_catalog_requested = vec![ChainId::Testnet4];
+        let mut mine = owned_cube("mine", Some(7));
+        let mut theirs = owned_cube("theirs", Some(9));
+        mine.network = ChainId::Testnet4;
+        theirs.network = ChainId::Testnet4;
+        drop(home.network_catalog_loaded(1, ChainId::Testnet4, Ok(vec![mine, theirs])));
+        let names: Vec<_> = home
+            .network_catalog(ChainId::Testnet4)
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        assert_eq!(names, vec!["mine"]);
+    }
+
+    #[test]
+    fn a_list_of_only_foreign_cubes_becomes_the_empty_launcher() {
+        let home = signed_in_home();
+        let mut state = State::Cubes {
+            cubes: vec![owned_cube("theirs", Some(9))],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert!(matches!(state, State::NoCube { create_cube: false }));
+    }
+
+    #[test]
+    fn signed_out_lists_every_cube() {
+        let home = home();
+        let mut state = State::Cubes {
+            cubes: vec![owned_cube("theirs", Some(9)), owned_cube("unowned", None)],
+            create_cube: false,
+            source: ChainId::Bitcoin,
+        };
+        home.hide_foreign_cubes(&mut state);
+        assert_eq!(listed_names(&state), vec!["theirs", "unowned"]);
+    }
+
     fn signed_in_home() -> Home {
         let mut home = home();
         home.connect_account.step = ConnectFlowStep::Dashboard;
@@ -14771,6 +15007,25 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A phrase restore is a creation: the account signed in while it runs
+    /// owns the restored Cube, a restore made signed out leaves it ownerless,
+    /// and a ghost's Cube never goes to an account other than the one that
+    /// listed it. (The write itself needs the macOS data-protection keychain,
+    /// which unsigned test builds lack, so the owner choice is tested here.)
+    #[test]
+    fn a_phrase_restore_is_owned_by_the_account_signed_in_at_restore() {
+        let dir = tmp_datadir("restore-owner");
+        let mut home = signed_in_home_with_datadir(&dir);
+        assert_eq!(home.restoring_account().map(|o| o.user_id), Some(7));
+        home.ghost_claim = Some(("ghost".to_string(), Some(7)));
+        assert_eq!(home.restoring_account().map(|o| o.user_id), Some(7));
+        home.ghost_claim = Some(("ghost".to_string(), Some(8)));
+        assert_eq!(home.restoring_account(), None);
+        let signed_out = home_with_datadir(&dir);
+        assert_eq!(signed_out.restoring_account(), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// The verification challenge is real: wrong words do not pass, and a
     /// failed attempt neither creates a Cube nor loses the seed.
     #[test]
@@ -15594,6 +15849,251 @@ mod tests {
     /// A signed-in Home rooted at `dir`, so `can_create_recovery_kit()` is true.
     /// No network call is made by any test below: every one either stops at a
     /// synchronous gate or feeds the upload result in directly.
+    /// The account signed in at creation owns the Cube even when it is not
+    /// registered yet: catch-up registers it later but never records an
+    /// owner, so a Cube made signed out stays ownerless — and visible to its
+    /// creator — however many accounts sign in after it.
+    #[test]
+    fn only_the_account_signed_in_at_creation_owns_a_cube() {
+        for signed_in in [true, false] {
+            let dir = tmp_datadir(if signed_in {
+                "owner-signed-in"
+            } else {
+                "owner-signed-out"
+            });
+            let mut home = if signed_in {
+                signed_in_home_with_datadir(&dir)
+            } else {
+                home_with_datadir(&dir)
+            };
+            passkey_create_form(&mut home, "Owned");
+            let _ = drain(webview_registration(&mut home, "cred", 13));
+            let out = drain(walk_backup_to_verified(&mut home));
+            let [Message::CubeCreated(Ok(cube))] = out.as_slice() else {
+                panic!("verification must create the Cube, got {:?}", out);
+            };
+            assert!(!cube.remote_synced, "no Kit, so not registered yet");
+            assert_eq!(
+                cube.connect_owner.as_ref().map(|owner| owner.user_id),
+                signed_in.then_some(7),
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A Cube created under one account is not registered with another
+    /// account's client when the account changed during the async write; it
+    /// stays unsynced so catch-up registers it under its owner.
+    #[test]
+    fn a_created_cube_is_registered_only_under_its_owner() {
+        let dir = tmp_datadir("register-owner-only");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let mut cube = CubeSettings::new("Owned".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.connect_owner = Some(settings::ConnectOwner {
+            user_id: 7,
+            email: "founder@example.com".to_string(),
+        });
+        // Account 8 became active before the write returned.
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let out = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, Message::CubeRemoteRegistered { .. })),
+            "another account must not register the Cube: {:?}",
+            out
+        );
+        assert!(home.open_after_registration.is_none());
+        assert!(
+            home.open_created_cube.is_none(),
+            "a Cube hidden from this account must not be auto-opened later"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Cube registered by its creation Kit is auto-opened only when it
+    /// belongs to the active account; otherwise the queued open would fire,
+    /// unprompted, once its owner signs back in.
+    #[test]
+    fn a_kit_registered_cube_is_auto_opened_only_for_its_owner() {
+        for (active, opens) in [(7, true), (8, false)] {
+            let dir = tmp_datadir("kit-open-owner-only");
+            let mut home = signed_in_home_with_datadir(&dir);
+            home.connect_account.user.as_mut().unwrap().id = active;
+            let mut cube = CubeSettings::new("Kit".to_string(), Network::Bitcoin);
+            cube.remote_synced = true;
+            cube.creation_backup_required = true;
+            cube.creation_recovery_kit = Some(kit_evidence(99));
+            cube.connect_owner = Some(settings::ConnectOwner {
+                user_id: 7,
+                email: "founder@example.com".to_string(),
+            });
+            let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+            assert_eq!(
+                home.open_created_cube.as_deref(),
+                opens.then_some(cube.id.as_str()),
+                "active account {active}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A ghost reclaimed under account 7 whose write lands after account 8
+    /// switched in is not queued to open: it is hidden from 8, and the open
+    /// would fire, unprompted, once 7 signs back in.
+    #[test]
+    fn a_ghost_reclaimed_under_another_account_is_not_auto_opened() {
+        let dir = tmp_datadir("ghost-open-owner-only");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let mut cube = CubeSettings::new("Ghost".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.backed_up = true;
+        cube.connect_owner = Some(settings::ConnectOwner {
+            user_id: 7,
+            email: "founder@example.com".to_string(),
+        });
+        home.ghost_claim = Some((cube.id.clone(), Some(7)));
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let out = drain(home.update(Message::CubeCreated(Ok(cube))));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, Message::CubeRemoteRegistered { .. })),
+            "the reclaim must not register under account 8: {:?}",
+            out
+        );
+        assert!(home.open_created_cube.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pending auto-open belongs to the account it was queued under: an
+    /// account switch drops it (so a late registration reply cannot queue it
+    /// again), while a profile loading for the same session keeps it.
+    #[test]
+    fn an_account_switch_drops_pending_auto_opens() {
+        use crate::app::view::ConnectAccountMessage;
+        let profile = |id: u32| User {
+            id,
+            email: format!("user{id}@example.com"),
+            email_verified: Some(true),
+        };
+        let dir = tmp_datadir("switch-drops-open");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.open_after_registration = Some("pending".to_string());
+        home.open_created_cube = Some("queued".to_string());
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::UserProfileLoaded(profile(8), 0),
+        )));
+        assert!(home.open_after_registration.is_none());
+        assert!(home.open_created_cube.is_none());
+        let _ = drain(home.update(Message::CubeRemoteRegistered {
+            cube_id: "pending".to_string(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response("pending")),
+        }));
+        assert!(
+            home.open_created_cube.is_none(),
+            "a reply landing after the switch must not queue the open"
+        );
+
+        // The session's own profile arriving is not a switch.
+        home.connect_account.user = None;
+        home.open_after_registration = Some("pending".to_string());
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::UserProfileLoaded(profile(8), 0),
+        )));
+        assert_eq!(home.open_after_registration.as_deref(), Some("pending"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The reply to a creation's registration does not record whoever is
+    /// active when it lands: a Cube created signed out (or before the
+    /// profile loaded) stays ownerless even if an account signs in, or
+    /// switches, before the reply arrives.
+    #[test]
+    fn a_registration_reply_does_not_claim_an_ownerless_cube() {
+        let dir = tmp_datadir("register-reply-no-claim");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let cube = CubeSettings::new("Unowned".to_string(), Network::Bitcoin);
+        let network_dir = CoincubeDirectory::new(dir.clone()).network_directory(Network::Bitcoin);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(settings::SETTINGS_FILE_NAME),
+            serde_json::to_vec(&settings::Settings {
+                cubes: vec![cube.clone()],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let _ = drain(home.update(Message::CubeRemoteRegistered {
+            cube_id: cube.id.clone(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response(&cube.id)),
+        }));
+        let stored = cubes_on_disk(&dir);
+        let [stored] = stored.as_slice() else {
+            panic!("expected one Cube on disk, got {:?}", stored);
+        };
+        assert!(stored.remote_synced);
+        assert_eq!(stored.connect_owner, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rename re-syncs a Cube, but it is not the creation's registration:
+    /// an ownerless Cube must not be claimed by the account that renamed it.
+    #[test]
+    fn a_remote_rename_does_not_claim_an_ownerless_cube() {
+        let dir = tmp_datadir("rename-no-claim");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let cube = CubeSettings::new("Shared".to_string(), Network::Bitcoin);
+        let network_dir = CoincubeDirectory::new(dir.clone()).network_directory(Network::Bitcoin);
+        std::fs::create_dir_all(network_dir.path()).unwrap();
+        std::fs::write(
+            network_dir.path().join(settings::SETTINGS_FILE_NAME),
+            serde_json::to_vec(&settings::Settings {
+                cubes: vec![cube.clone()],
+                ..Default::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let _ = drain(home.update(Message::CubeRemoteUpdated {
+            cube_id: cube.id.clone(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response(&cube.id)),
+        }));
+        let stored = cubes_on_disk(&dir);
+        let [stored] = stored.as_slice() else {
+            panic!("expected one Cube on disk, got {:?}", stored);
+        };
+        assert!(stored.remote_synced);
+        assert_eq!(stored.connect_owner, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A reload landing during the creation backup step that hides every
+    /// parked Cube must empty the parked list, or Cancel restores them.
+    #[test]
+    fn a_reload_that_hides_every_parked_cube_empties_the_parked_list() {
+        let dir = tmp_datadir("parked-nocube");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.network = Network::Bitcoin.into();
+        let foreign = owned_cube("Theirs", Some(99));
+        home.creation_backup_cubes = vec![foreign.clone()];
+        home.state = State::CreationBackup(CreationBackupStep::Choice);
+        let _ = home.update(Message::Checked {
+            for_chain: home.network,
+            res: Ok(State::Cubes {
+                cubes: vec![foreign],
+                create_cube: false,
+                source: home.network,
+            }),
+        });
+        assert!(home.creation_backup_cubes.is_empty());
+        assert!(matches!(home.state, State::CreationBackup(_)));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn signed_in_home_with_datadir(dir: &std::path::Path) -> Home {
         let mut home = home_with_datadir(dir);
         home.connect_account.step = ConnectFlowStep::Dashboard;

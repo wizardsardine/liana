@@ -475,10 +475,15 @@ pub struct PasskeyMetadata {
 
 /// Mark a cube as synced with the remote Connect API.
 ///
-/// `owner` is the account the sync ran under. It is recorded as the Cube's
+/// `owner` is the account that created the Cube, when this sync is that
+/// creation's own registration. It is recorded as the Cube's
 /// [`CubeSettings::connect_owner`] only on the *first* sync of a Cube that has
 /// no owner yet — a later sync (or a Cube already marked synced before owners
 /// were tracked) must not attribute it to whoever happens to be signed in.
+/// Every sync path (catch-up, the creation's registration reply, a remote
+/// update such as a rename) now passes `None`: the creation paths (PIN,
+/// passkey and phrase restore) record the owner on disk themselves, and an ownerless Cube was made signed out, so no
+/// account that signs in or acts on it later has a claim to it.
 pub async fn mark_cube_synced(
     network_dir: &NetworkDirectory,
     cube_id: &str,
@@ -965,12 +970,14 @@ pub struct CubeSettings {
     /// account that owns its server-side record, and so its Vault and the
     /// Keychain signers attached to it.
     ///
-    /// Written once, on the Cube's first successful registration (see
-    /// [`mark_cube_synced`] and the creation Recovery Kit path), and never
+    /// Written once, when the Cube is created while signed in (or by its
+    /// post-creation registration, see [`mark_cube_synced`]), and never
     /// overwritten: signing in as another account re-registers the same local
     /// Cube UUID as a *new* server row, which must not claim ownership. `None`
-    /// on Cubes registered before this field existed, and on Cubes never
-    /// registered at all — callers treat that as "unknown", not "mismatch".
+    /// on Cubes registered before this field existed and on Cubes created
+    /// signed out — even once the catch-up sync has registered them, since
+    /// the first account to sign in is not evidence of who made the Cube.
+    /// Callers treat `None` as "unknown", not "mismatch".
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_owner: Option<ConnectOwner>,
 }
@@ -987,6 +994,33 @@ pub struct SplitFromRecord {
     pub completed_height: u64,
     /// The signed step 2's own txid.
     pub step2_txid: coincube_core::miniscript::bitcoin::Txid,
+}
+
+/// Whether a Cube must be hidden from the Connect account that is currently
+/// signed in on this device.
+///
+/// Cubes live in the device's `settings.json`, not in an account, so without
+/// this every account that signs in on a shared machine would list (and be
+/// able to open, rename or delete) the previous account's Cubes.
+///
+/// * No recorded owner -> never hidden: ownership is unknown, not foreign.
+/// * Signed out -> never hidden: Cubes must stay reachable offline, and the
+///   PIN / passkey still protects them.
+/// * Signed in, profile loaded -> hidden iff the owner is another user id.
+/// * Signed in, profile not loaded yet -> hidden (fail closed), so the list
+///   cannot flash the previous account's Cubes during sign-in.
+pub fn cube_hidden_from_account(
+    owner: Option<&ConnectOwner>,
+    signed_in: bool,
+    signed_in_user_id: Option<u32>,
+) -> bool {
+    let Some(owner) = owner else {
+        return false;
+    };
+    match signed_in_user_id {
+        Some(id) => owner.user_id != id,
+        None => signed_in,
+    }
 }
 
 /// Identity of the Connect account that owns a Cube. See
@@ -6282,6 +6316,24 @@ mod chain_identity_tests {
             Some(owner(1, "a@example.com"))
         );
         assert_eq!(find(&legacy_id).connect_owner, None);
+    }
+
+    #[test]
+    fn cubes_owned_by_another_account_are_hidden() {
+        let owner = ConnectOwner {
+            user_id: 1,
+            email: "a@example.com".to_string(),
+        };
+        // Another account signed in: hidden.
+        assert!(cube_hidden_from_account(Some(&owner), true, Some(2)));
+        // The owner, or nobody, signed in: visible.
+        assert!(!cube_hidden_from_account(Some(&owner), true, Some(1)));
+        assert!(!cube_hidden_from_account(Some(&owner), false, None));
+        // Signed in but profile not loaded yet: fail closed.
+        assert!(cube_hidden_from_account(Some(&owner), true, None));
+        // Unknown owner is never treated as foreign.
+        assert!(!cube_hidden_from_account(None, true, Some(2)));
+        assert!(!cube_hidden_from_account(None, true, None));
     }
 
     #[test]
