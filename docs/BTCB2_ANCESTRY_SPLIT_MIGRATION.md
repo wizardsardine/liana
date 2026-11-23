@@ -1,10 +1,13 @@
 # BTCB2 split migration: chain-specific inputs
 
-Status: superseded. This records the input-ancestry migration of the paired
-Claim and two-step Split flows. Robert's decision of 2026-10-29 (company-brain
+Status: superseded as a migration plan. This records the input-ancestry
+migration of the paired Claim and two-step Split flows. Robert's decision of
+2026-10-29 (company-brain
 `decisions/2026-10-29-coincube-desktop-btcb2-split-protection-in-coin-control.md`)
-replaced both with one-sided **Split coins** in Coin control
-(`coincube-gui/src/services/split_coins.rs`). S7a removed the Claim wizard, the
+replaced both with one-sided **Split coins**. The live flow is Tools › Split
+coins (`coincube-gui/src/app/state/vault/split_hub.rs` and
+`coincube-gui/src/services/split_coins.rs`). Coin control keeps the banner and
+sends its Split buttons to that tab. S7a removed the Claim wizard, the
 foreign-wallet Split and the launch gate from the GUI; S7b removed the paired
 engine, the OP_RETURN poison, `coincubed`'s `poison_broadcast`, the Claim
 observation assessment and the regtest bridges and consensus modules that
@@ -13,6 +16,35 @@ drove them. What this document says about the input-ancestry engine
 Split coins uses; what it says about Claim and Split intents, paired
 signing, staged submission, the 6-confirmation gate between sides and the
 acceptance gate describes removed code and is kept as history only.
+
+## Current desktop flow
+
+The step is derived from the Vault each time the tab is drawn: get a split
+coin, review and sign, wait out confirmations, then done or the coins still
+left. Waiting for a split coin can take an hour, so the flow is a tab, not a
+dialog. The panel keeps the user's choices (coins left out, split-key versus
+signature), the address a split coin is sent to, the fee rate, and a build
+in flight. Everything else is read back from the Vault.
+
+The fee rate is Connect's six-block (`"6"`) Esplora estimate for this chain
+only (`split_coins::fee_rate`). A missing quote, a rate outside
+`1..=MAX_FEERATE`, or a source for the other chain is unavailable. The
+Bitcoin read has to be a fresh Connect response. There is no local guess.
+An unavailable rate is retried on its own three times, five seconds
+apart, while the review still says it is getting the rate. After that the
+review says the rate is unavailable and offers Try again. A fee answer from
+an older fetch is ignored: each fetch has a generation, and a superseded one
+does not change the rate or start another retry.
+
+A saved ancestry path is not a split key. `chain-proofs.json`, next to the
+Vault's daemon data, loads as `ProofEntry::Saved`: the links fit, and a fresh
+check still has to show the chain holds them. A check that cannot finish
+(Connect down, a read that times out) does not erase that path. It becomes
+`SavedRetry`, is written back, stays "checking", and is tried again after
+`FAILED_RETRY` (30 minutes). A finished answer replaces the path, including a
+completed search that found none. A failed check that was not holding a path
+is not written, so the next launch retries it. A verified path from this
+session is not replaced by a later miss or failure.
 
 ## Decision and safety invariant
 
