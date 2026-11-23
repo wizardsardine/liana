@@ -2683,6 +2683,14 @@ impl Home {
             // they cannot be opened while the re-reads below are in flight,
             // or linger if one of them fails.
             self.hide_cached_foreign_cubes();
+            // A creation's pending auto-open belongs to the account it was
+            // queued under. Once that account is replaced, the Cube may be
+            // hidden, and the open would otherwise fire when it returns.
+            // (A profile loading for the same session is not a switch.)
+            if account_before.1.is_some() && self.launcher_account_key().1 != account_before.1 {
+                self.open_created_cube = None;
+                self.open_after_registration = None;
+            }
             // Other listed networks' Cubes are filtered when read, so they
             // are re-read too, or one account's Cubes would linger there.
             let others = self.refresh_network_catalog(true);
@@ -3630,7 +3638,12 @@ impl Home {
                  skipping the post-creation registration",
                 cube.id
             );
-            self.open_created_cube = Some(cube.id.clone());
+            // Only a Cube this account may see is opened. One created under
+            // an account that has since switched away stays hidden, and a
+            // queued open would fire, unprompted, once its owner returns.
+            if !self.cube_hidden_from_account(&cube) {
+                self.open_created_cube = Some(cube.id.clone());
+            }
             reload_task
         } else if ghost_claim.as_ref().is_some_and(|(uuid, account)| {
             *uuid == cube.id && *account != self.connect_account_id()
@@ -3644,7 +3657,11 @@ impl Home {
                  not registering it with the current account",
                 cube.id
             );
-            self.open_created_cube = Some(cube.id.clone());
+            // As on the Kit branch: an account that switched in during the
+            // write may not see this Cube, so no open is queued for it.
+            if !self.cube_hidden_from_account(&cube) {
+                self.open_created_cube = Some(cube.id.clone());
+            }
             reload_task
         } else if self.connect_account.authenticated_client().is_some()
             && cube.connect_owner.as_ref().is_some_and(|owner| {
@@ -15891,6 +15908,100 @@ mod tests {
             home.open_created_cube.is_none(),
             "a Cube hidden from this account must not be auto-opened later"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Cube registered by its creation Kit is auto-opened only when it
+    /// belongs to the active account; otherwise the queued open would fire,
+    /// unprompted, once its owner signs back in.
+    #[test]
+    fn a_kit_registered_cube_is_auto_opened_only_for_its_owner() {
+        for (active, opens) in [(7, true), (8, false)] {
+            let dir = tmp_datadir("kit-open-owner-only");
+            let mut home = signed_in_home_with_datadir(&dir);
+            home.connect_account.user.as_mut().unwrap().id = active;
+            let mut cube = CubeSettings::new("Kit".to_string(), Network::Bitcoin);
+            cube.remote_synced = true;
+            cube.creation_backup_required = true;
+            cube.creation_recovery_kit = Some(kit_evidence(99));
+            cube.connect_owner = Some(settings::ConnectOwner {
+                user_id: 7,
+                email: "founder@example.com".to_string(),
+            });
+            let _ = drain(home.update(Message::CubeCreated(Ok(cube.clone()))));
+            assert_eq!(
+                home.open_created_cube.as_deref(),
+                opens.then_some(cube.id.as_str()),
+                "active account {active}"
+            );
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A ghost reclaimed under account 7 whose write lands after account 8
+    /// switched in is not queued to open: it is hidden from 8, and the open
+    /// would fire, unprompted, once 7 signs back in.
+    #[test]
+    fn a_ghost_reclaimed_under_another_account_is_not_auto_opened() {
+        let dir = tmp_datadir("ghost-open-owner-only");
+        let mut home = signed_in_home_with_datadir(&dir);
+        let mut cube = CubeSettings::new("Ghost".to_string(), Network::Bitcoin);
+        cube.creation_backup_required = true;
+        cube.backed_up = true;
+        cube.connect_owner = Some(settings::ConnectOwner {
+            user_id: 7,
+            email: "founder@example.com".to_string(),
+        });
+        home.ghost_claim = Some((cube.id.clone(), Some(7)));
+        home.connect_account.user.as_mut().unwrap().id = 8;
+        let out = drain(home.update(Message::CubeCreated(Ok(cube))));
+        assert!(
+            !out.iter()
+                .any(|m| matches!(m, Message::CubeRemoteRegistered { .. })),
+            "the reclaim must not register under account 8: {:?}",
+            out
+        );
+        assert!(home.open_created_cube.is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A pending auto-open belongs to the account it was queued under: an
+    /// account switch drops it (so a late registration reply cannot queue it
+    /// again), while a profile loading for the same session keeps it.
+    #[test]
+    fn an_account_switch_drops_pending_auto_opens() {
+        use crate::app::view::ConnectAccountMessage;
+        let profile = |id: u32| User {
+            id,
+            email: format!("user{id}@example.com"),
+            email_verified: Some(true),
+        };
+        let dir = tmp_datadir("switch-drops-open");
+        let mut home = signed_in_home_with_datadir(&dir);
+        home.open_after_registration = Some("pending".to_string());
+        home.open_created_cube = Some("queued".to_string());
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::UserProfileLoaded(profile(8), 0),
+        )));
+        assert!(home.open_after_registration.is_none());
+        assert!(home.open_created_cube.is_none());
+        let _ = drain(home.update(Message::CubeRemoteRegistered {
+            cube_id: "pending".to_string(),
+            network: Network::Bitcoin.into(),
+            result: Ok(registered_cube_response("pending")),
+        }));
+        assert!(
+            home.open_created_cube.is_none(),
+            "a reply landing after the switch must not queue the open"
+        );
+
+        // The session's own profile arriving is not a switch.
+        home.connect_account.user = None;
+        home.open_after_registration = Some("pending".to_string());
+        let _ = home.update(Message::View(ViewMessage::ConnectAccount(
+            ConnectAccountMessage::UserProfileLoaded(profile(8), 0),
+        )));
+        assert_eq!(home.open_after_registration.as_deref(), Some("pending"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 
