@@ -1149,6 +1149,10 @@ pub struct DaemonControl {
     // The poller's latest tip and header time, read when setting a new spend's
     // anti-fee-sniping locktime for the same reason as `sync_progress_cache`.
     tip_time_cache: sync::Arc<crate::bitcoin::TipTimeCache>,
+    // Coins spent by a transaction we broadcast that the database does not
+    // record as spending yet, kept out of automatic coin selection. Shared by
+    // every clone of this control.
+    broadcast_holds: sync::Arc<commands::BroadcastHolds>,
 }
 
 impl DaemonControl {
@@ -1175,6 +1179,7 @@ impl DaemonControl {
             reorg_alert_cache,
             history_sync_cache,
             tip_time_cache,
+            broadcast_holds: Default::default(),
         }
     }
 

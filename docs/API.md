@@ -221,6 +221,9 @@ Create a transaction spending one or more of our coins. All coins must exist and
 If no coins are specified in `outpoints`, they will be selected automatically from the set of
 confirmed coins together with any unconfirmed coins that are change outputs
 (see [`listcoins`](#listcoins) for coin status definitions).
+Automatic selection leaves out a coin spent by a transaction this daemon broadcast, from the moment the
+network accepts it, even while `listcoins` still reports the coin as unspent because no poll has
+recorded the spend yet. Such a coin can still be named in `outpoints`.
 
 Will error if the given coins are not sufficient to cover the transaction cost at 90% (or more) of
 the given feerate. If on the contrary the transaction is more than sufficiently funded, it will
