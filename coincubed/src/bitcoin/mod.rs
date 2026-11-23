@@ -625,6 +625,11 @@ impl WalletRecordReplay {
     }
 }
 
+/// Broadcasts a transaction without the [`BitcoinInterface`] it came from.
+/// See [`BitcoinInterface::detached_broadcaster`].
+pub type DetachedBroadcaster =
+    sync::Arc<dyn Fn(&bitcoin::Transaction) -> Result<(), String> + Send + Sync>;
+
 pub trait BitcoinInterface: Send {
     fn request_wallet_record_replay(&mut self) -> Result<u64, String> {
         Err("Wallet record replay requires a regular Bitcoin Core/Knots backend".into())
@@ -831,6 +836,21 @@ pub trait BitcoinInterface: Send {
 
     /// Broadcast this transaction to the Bitcoin P2P network
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String>;
+
+    /// A handle that broadcasts exactly like [`Self::broadcast_tx`] but owns
+    /// what it needs, so it can be called without holding this interface.
+    ///
+    /// The daemon shares one interface behind a mutex, and the poller holds
+    /// that mutex for a whole wallet sync. A broadcast sent through the mutex
+    /// therefore waits for the sync in flight, which on a remote backend with
+    /// many addresses is minutes. The daemon takes this handle once at startup
+    /// and broadcasts through it instead.
+    ///
+    /// `None` (the default) for a backend with nothing to share safely; its
+    /// broadcasts keep going through [`Self::broadcast_tx`].
+    fn detached_broadcaster(&self) -> Option<DetachedBroadcaster> {
+        None
+    }
 
     /// Request that the next [`Self::sync_wallet`] call bypass any
     /// short-circuit optimisations (e.g. the smart-poll tip-guard
@@ -1821,6 +1841,15 @@ impl BitcoinInterface for esplora::Esplora {
         self.client().broadcast_tx(tx).map_err(|e| e.to_string())
     }
 
+    fn detached_broadcaster(&self) -> Option<DetachedBroadcaster> {
+        // The same client, so the same provider order, cooldowns and admission
+        // checks as `broadcast_tx`: only the interface mutex is left out.
+        let client = self.shared_client();
+        Some(sync::Arc::new(move |tx| {
+            client.broadcast_tx(tx).map_err(|e| e.to_string())
+        }))
+    }
+
     fn wallet_transaction(
         &self,
         txid: &bitcoin::Txid,
@@ -2031,6 +2060,10 @@ impl BitcoinInterface for sync::Arc<sync::Mutex<dyn BitcoinInterface + 'static>>
 
     fn broadcast_tx(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
         self.lock().unwrap().broadcast_tx(tx)
+    }
+
+    fn detached_broadcaster(&self) -> Option<DetachedBroadcaster> {
+        self.lock().unwrap().detached_broadcaster()
     }
 
     fn request_eager_sync(&mut self) {

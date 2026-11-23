@@ -1128,6 +1128,10 @@ fn setup_esplora(
 pub struct DaemonControl {
     config: Config,
     bitcoin: sync::Arc<sync::Mutex<dyn BitcoinInterface>>,
+    // Broadcasts without locking `bitcoin`, which the poller holds for a whole
+    // wallet sync. Taken once at startup, before the poller runs. `None` for a
+    // backend that has no such handle: its broadcasts lock `bitcoin`.
+    detached_broadcaster: Option<crate::bitcoin::DetachedBroadcaster>,
     poller_sender: mpsc::SyncSender<poller::PollerMessage>,
     // FIXME: Should we require Sync on DatabaseInterface rather than using a Mutex?
     db: sync::Arc<sync::Mutex<dyn DatabaseInterface>>,
@@ -1163,6 +1167,7 @@ impl DaemonControl {
         DaemonControl {
             config,
             bitcoin,
+            detached_broadcaster: None,
             poller_sender,
             db,
             secp,
@@ -1171,6 +1176,15 @@ impl DaemonControl {
             history_sync_cache,
             tip_time_cache,
         }
+    }
+
+    /// Broadcast through this handle instead of locking the backend.
+    pub(crate) fn with_detached_broadcaster(
+        mut self,
+        broadcaster: Option<crate::bitcoin::DetachedBroadcaster>,
+    ) -> DaemonControl {
+        self.detached_broadcaster = broadcaster;
+        self
     }
 
     // Useful for unit test to directly mess up with the DB
@@ -1428,6 +1442,12 @@ impl DaemonHandle {
         bit.lock()
             .expect("new backend lock is not poisoned")
             .set_history_sync_cache(history_sync_cache.clone());
+        // Taken here, before the poller exists: once it runs it holds this lock
+        // for a whole wallet sync, which is the wait this handle is there to avoid.
+        let detached_broadcaster = bit
+            .lock()
+            .expect("new backend lock is not poisoned")
+            .detached_broadcaster();
 
         // Shared, lock-free sync-progress mirror: the poller publishes into it,
         // `get_info` reads from it — so `get_info` (and the GUI's startup gate
@@ -1472,7 +1492,8 @@ impl DaemonHandle {
             reorg_alert_cache,
             history_sync_cache,
             tip_time_cache,
-        );
+        )
+        .with_detached_broadcaster(detached_broadcaster);
 
         if with_rpc_server {
             let rpcserver_shutdown = sync::Arc::from(sync::atomic::AtomicBool::from(false));

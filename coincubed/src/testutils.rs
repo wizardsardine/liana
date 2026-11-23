@@ -33,6 +33,9 @@ pub struct DummyBitcoind {
     pub poll_failure: Option<&'static str>,
     pub received: Vec<UTxO>,
     pub broadcasted: sync::Mutex<Vec<Transaction>>,
+    /// When set, this backend offers a detached broadcaster that records here
+    /// instead of in `broadcasted`.
+    pub detached_broadcasts: Option<sync::Arc<sync::Mutex<Vec<bitcoin::Txid>>>>,
     pub broadcast_error: Option<String>,
     pub rescan_requests: Vec<u32>,
     pub tip_timestamp: Option<u32>,
@@ -95,6 +98,7 @@ impl DummyBitcoind {
             poll_failure: None,
             received: Vec::new(),
             broadcasted: sync::Mutex::new(Vec::new()),
+            detached_broadcasts: None,
             broadcast_error: None,
             rescan_requests: Vec::new(),
             genesis_error: None,
@@ -269,6 +273,14 @@ impl BitcoinInterface for DummyBitcoind {
             Some(error) => Err(error.clone()),
             None => Ok(()),
         }
+    }
+
+    fn detached_broadcaster(&self) -> Option<crate::bitcoin::DetachedBroadcaster> {
+        let sent = self.detached_broadcasts.clone()?;
+        Some(sync::Arc::new(move |tx: &bitcoin::Transaction| {
+            sent.lock().unwrap().push(tx.compute_txid());
+            Ok(())
+        }))
     }
 
     fn start_rescan(
