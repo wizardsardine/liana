@@ -445,3 +445,43 @@ fn public_readiness_checks_genesis_and_tip_without_constructing_a_wallet() {
     assert!(matches!(ready, Ok(true)));
     assert!(matches!(wrong_chain, Ok(false)));
 }
+
+/// The poller holds the backend's mutex for a whole wallet sync. A broadcast
+/// must reach the server during it instead of queueing behind it.
+#[test]
+fn esplora_broadcast_reaches_the_server_while_the_backend_is_locked_for_a_sync() {
+    let tx = bitcoin::Transaction {
+        version: Version::TWO,
+        lock_time: absolute::LockTime::ZERO,
+        input: vec![bitcoin::TxIn::default()],
+        output: vec![],
+    };
+    let txid = tx.compute_txid().to_string();
+    let posted = Arc::new(AtomicBool::new(false));
+    let chain = tip_at(Arc::new(AtomicU64::new(0)), |_| None);
+    let answer = {
+        let posted = posted.clone();
+        move |path: &str| {
+            if path == "/tx" {
+                posted.store(true, Ordering::SeqCst);
+                return Some(txid.clone());
+            }
+            chain(path)
+        }
+    };
+    let sent = against_server(answer, |backend| {
+        let shared: Arc<Mutex<dyn BitcoinInterface>> = Arc::new(Mutex::new(backend));
+        let broadcast = shared
+            .detached_broadcaster()
+            .expect("the Esplora backend broadcasts without its lock");
+        let _syncing = shared.lock().unwrap();
+        let (done, finished) = mpsc::channel();
+        thread::spawn(move || done.send(broadcast(&tx)).unwrap());
+        finished.recv_timeout(Duration::from_secs(10))
+    });
+    assert_eq!(
+        sent.expect("the broadcast must not wait for the backend lock"),
+        Ok(())
+    );
+    assert!(posted.load(Ordering::SeqCst));
+}

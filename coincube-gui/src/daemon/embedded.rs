@@ -518,9 +518,12 @@ impl Daemon for EmbeddedDaemon {
     }
 
     async fn broadcast_spend_tx(&self, txid: &Txid) -> Result<(), DaemonError> {
+        // Not `broadcast_spend`: that one waits for a whole wallet sync after
+        // the network has the transaction, with the Broadcast dialog still up.
+        // The panels cover the gap with `Wallet::record_broadcast`.
         self.command(|daemon| {
             daemon
-                .broadcast_spend(txid)
+                .broadcast_spend_without_waiting(txid)
                 .map_err(map_spend_command_error)
         })
         .await

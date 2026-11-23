@@ -663,6 +663,16 @@ pub struct RescanTimeBounds {
     pub tip_timestamp: u32,
 }
 
+/// What a broadcast does about the wallet's state once the network has the
+/// transaction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterBroadcast {
+    /// Block until a poll has run.
+    WaitForPoll,
+    /// Request a poll and return.
+    PollInBackground,
+}
+
 impl DaemonControl {
     // Get the derived descriptor for this coin
     fn derived_desc(
@@ -1844,8 +1854,61 @@ impl DaemonControl {
         db_conn.delete_spend(txid);
     }
 
-    /// Finalize and broadcast this stored Spend transaction.
+    /// Finalize and broadcast this stored Spend transaction, then wait for a
+    /// poll so the caller reads the wallet's new state as soon as this returns.
+    ///
+    /// That wait is a whole wallet sync. A caller that shows the broadcast to a
+    /// user wants [`Self::broadcast_spend_without_waiting`] instead.
     pub fn broadcast_spend(&self, txid: &bitcoin::Txid) -> Result<(), CommandError> {
+        self.broadcast_spend_then(txid, AfterBroadcast::WaitForPoll)
+    }
+
+    /// Finalize and broadcast this stored Spend transaction, returning as soon
+    /// as the network has accepted it.
+    ///
+    /// The wallet's state is refreshed by a poll requested in the background,
+    /// so right after this returns the daemon may still report the spent coins
+    /// as unspent. Every check and every error is the same as
+    /// [`Self::broadcast_spend`]'s.
+    pub fn broadcast_spend_without_waiting(
+        &self,
+        txid: &bitcoin::Txid,
+    ) -> Result<(), CommandError> {
+        self.broadcast_spend_then(txid, AfterBroadcast::PollInBackground)
+    }
+
+    /// Hand a finalized transaction to the network, without the backend mutex
+    /// when the backend gave us a handle for that.
+    fn send_to_network(&self, tx: &bitcoin::Transaction) -> Result<(), String> {
+        match &self.detached_broadcaster {
+            Some(broadcast) => broadcast(tx),
+            None => self.bitcoin.broadcast_tx(tx),
+        }
+    }
+
+    /// Update our state with the changes from a transaction we just broadcast.
+    fn poll_after_broadcast(&self, after: AfterBroadcast) {
+        match after {
+            AfterBroadcast::WaitForPoll => {
+                let (tx, rx) = mpsc::sync_channel(0);
+                if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
+                    log::error!("Error requesting update from poller: {}", e);
+                }
+                if let Err(e) = rx.recv() {
+                    log::error!("Error receiving completion signal from poller: {}", e);
+                }
+            }
+            // An eager request, so a backend that skips the wallet walk while
+            // the tip is unchanged still looks for the transaction we just sent.
+            AfterBroadcast::PollInBackground => self.request_sync(),
+        }
+    }
+
+    fn broadcast_spend_then(
+        &self,
+        txid: &bitcoin::Txid,
+        after: AfterBroadcast,
+    ) -> Result<(), CommandError> {
         let mut db_conn = self.db.connection();
 
         // First, try to finalize the spending transaction with the elements contained
@@ -1899,8 +1962,7 @@ impl DaemonControl {
                 ));
             }
         }
-        self.bitcoin
-            .broadcast_tx(&final_tx)
+        self.send_to_network(&final_tx)
             .map_err(CommandError::TxBroadcast)?;
         if self.config.main_descriptor.as_imported().is_some() {
             db_conn.record_broadcast_txid(txid, &final_tx.compute_txid()).map_err(|error|
@@ -1910,13 +1972,7 @@ impl DaemonControl {
         }
 
         // Finally, update our state with the changes from this transaction.
-        let (tx, rx) = mpsc::sync_channel(0);
-        if let Err(e) = self.poller_sender.send(PollerMessage::PollNow(tx)) {
-            log::error!("Error requesting update from poller: {}", e);
-        }
-        if let Err(e) = rx.recv() {
-            log::error!("Error receiving completion signal from poller: {}", e);
-        }
+        self.poll_after_broadcast(after);
 
         Ok(())
     }
@@ -6425,6 +6481,142 @@ mod tests {
             receiver.try_recv(),
             Ok(PollerMessage::PollNowNoAck)
         ));
+    }
+
+    /// A control over `backend`, with a poller queue of one and its receiver.
+    fn control_with_backend(
+        backend: std::sync::Arc<std::sync::Mutex<dyn BitcoinInterface>>,
+    ) -> (
+        DaemonControl,
+        std::sync::Arc<crate::bitcoin::HistorySyncCache>,
+        std::sync::mpsc::Receiver<PollerMessage>,
+    ) {
+        let dummy = DummyCoincube::new(DummyBitcoind::new(), DummyDatabase::new());
+        let history = std::sync::Arc::new(crate::bitcoin::HistorySyncCache::default());
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        let control = DaemonControl::new(
+            dummy.control().config.clone(),
+            backend,
+            sender,
+            std::sync::Arc::new(std::sync::Mutex::new(DummyDatabase::new())),
+            bitcoin::secp256k1::Secp256k1::verification_only(),
+            Default::default(),
+            Default::default(),
+            history.clone(),
+            Default::default(),
+        );
+        (control, history, receiver)
+    }
+
+    fn any_transaction() -> bitcoin::Transaction {
+        bitcoin::Transaction {
+            version: bitcoin::transaction::Version::TWO,
+            lock_time: absolute::LockTime::ZERO,
+            input: vec![bitcoin::TxIn::default()],
+            output: vec![],
+        }
+    }
+
+    /// The poller holds the backend mutex for a whole wallet sync; a broadcast
+    /// with a detached handle must not queue behind it.
+    #[test]
+    fn broadcast_with_a_detached_handle_does_not_wait_for_the_backend_lock() {
+        let backend: std::sync::Arc<std::sync::Mutex<dyn BitcoinInterface>> =
+            std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
+        let (control, _history, _receiver) = control_with_backend(backend.clone());
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let broadcaster: crate::bitcoin::DetachedBroadcaster = {
+            let sent = sent.clone();
+            std::sync::Arc::new(move |tx: &bitcoin::Transaction| {
+                sent.lock().unwrap().push(tx.compute_txid());
+                Ok(())
+            })
+        };
+        let control = control.with_detached_broadcaster(Some(broadcaster));
+        let tx = any_transaction();
+        let txid = tx.compute_txid();
+
+        let _syncing = backend.lock().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done_tx.send(control.send_to_network(&tx)).unwrap());
+        let result = done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("broadcast must not wait for the sync's backend mutex");
+        assert_eq!(result, Ok(()));
+        assert_eq!(*sent.lock().unwrap(), vec![txid]);
+    }
+
+    /// A backend without a detached handle still broadcasts, through its lock,
+    /// and its refusal is still the caller's error.
+    #[test]
+    fn broadcast_without_a_detached_handle_goes_through_the_backend() {
+        let (control, _history, _receiver) = control_with_backend(std::sync::Arc::new(
+            std::sync::Mutex::new(DummyBitcoind::new()),
+        ));
+        let tx = any_transaction();
+        assert_eq!(control.send_to_network(&tx), Ok(()));
+
+        let mut refusing = DummyBitcoind::new();
+        refusing.broadcast_error = Some("refused".into());
+        let (control, _history, _receiver) =
+            control_with_backend(std::sync::Arc::new(std::sync::Mutex::new(refusing)));
+        assert_eq!(control.send_to_network(&tx), Err("refused".to_string()));
+    }
+
+    /// The non-waiting broadcast asks for an eager poll and returns, whether the
+    /// poller is free, mid-sync, or already has a wake-up queued.
+    #[test]
+    fn background_poll_after_broadcast_never_waits_for_the_poller() {
+        let backend: std::sync::Arc<std::sync::Mutex<dyn BitcoinInterface>> =
+            std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
+        let (control, history, receiver) = control_with_backend(backend.clone());
+
+        // Nobody reads the queue and the backend is locked, as during a sync.
+        let _syncing = backend.lock().unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            // Twice: the second finds the queue full.
+            control.poll_after_broadcast(AfterBroadcast::PollInBackground);
+            control.poll_after_broadcast(AfterBroadcast::PollInBackground);
+            done_tx.send(()).unwrap();
+        });
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .expect("a background poll request must return at once");
+        assert!(history.take_eager_sync_request());
+        assert!(matches!(
+            receiver.try_recv(),
+            Ok(PollerMessage::PollNowNoAck)
+        ));
+        assert!(receiver.try_recv().is_err());
+    }
+
+    /// The waiting broadcast, which the RPC keeps, returns only once the poller
+    /// has acknowledged a poll.
+    #[test]
+    fn waiting_poll_after_broadcast_returns_only_once_the_poller_acknowledges() {
+        let (control, _history, receiver) = control_with_backend(std::sync::Arc::new(
+            std::sync::Mutex::new(DummyBitcoind::new()),
+        ));
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            control.poll_after_broadcast(AfterBroadcast::WaitForPoll);
+            done_tx.send(()).unwrap();
+        });
+        let ack = match receiver
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the waiting broadcast requests a poll")
+        {
+            PollerMessage::PollNow(ack) => ack,
+            other => panic!("expected an acknowledged poll request, got {:?}", other),
+        };
+        assert!(done_rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_err());
+        ack.send(()).unwrap();
+        done_rx
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("the acknowledged poll releases the caller");
     }
 
     /// The daemon must hand its backend the very record `get_info` reports from:
