@@ -720,13 +720,12 @@ fn hold_immature_coinbase(
         .collect()
 }
 
-fn updates(
+fn sync_wallet_tip(
     db_conn: &mut Box<dyn DatabaseConnection>,
     bit: &mut impl BitcoinInterface,
-    descs: &[miniscript::Descriptor<miniscript::DescriptorPublicKey>],
-    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    current_tip: BlockChainTip,
     reorg_alert: &ReorgAlertCache,
-) -> Result<(), String> {
+) -> Result<BlockChainTip, String> {
     // Check if there was a new block before we update our state.
     //
     // Some backends (such as Electrum) need to perform an explicit sync to provide updated data
@@ -735,33 +734,28 @@ fn updates(
     // `Ok(None)`. We leverage this to query the next tip and poll for reorgs only in this case.
     // FIXME: harmonize the Bitcoin backend interface, this intricacy is due to the introduction of
     // an Electrum backend with the bitcoind-specific backend interface.
-    let current_tip = db_conn.chain_tip().expect("Always set at first startup");
     let (receive_index, change_index) = (db_conn.receive_index(), db_conn.change_index());
-    let latest_tip = match bit.sync_wallet(receive_index, change_index) {
-        Ok(None) => {
-            match new_tip(bit, &current_tip) {
-                TipUpdate::Same => current_tip,
-                TipUpdate::Progress(new_tip) => new_tip,
-                TipUpdate::Reorged(new_tip) => {
-                    // The block chain was reorganized. Rollback our state down to the common ancestor
-                    // between our former chain and the new one, then restart fresh.
-                    db_conn.rollback_tip(&new_tip);
-                    log::info!("Tip was rolled back to '{}'.", new_tip);
-                    return Err("Chain rollback requires a new scheduled poll".into());
-                }
-                TipUpdate::ImplausibleReorg { min_depth } => {
-                    refuse_deep_reorg(reorg_alert, &current_tip, RefusedDepth::AtLeast(min_depth));
-                    return Err("Poll did not produce a coherent chain update".into());
-                }
-                TipUpdate::Diverged { backend_tip } => {
-                    report_divergence(reorg_alert, &current_tip, &backend_tip);
-                    return Err("Poll did not produce a coherent chain update".into());
-                }
-                TipUpdate::Unavailable => {
-                    return Err("Backend unavailable during tip lookup".into())
-                }
+    match bit.sync_wallet(receive_index, change_index) {
+        Ok(None) => match new_tip(bit, &current_tip) {
+            TipUpdate::Same => Ok(current_tip),
+            TipUpdate::Progress(new_tip) => Ok(new_tip),
+            TipUpdate::Reorged(new_tip) => {
+                // The block chain was reorganized. Rollback our state down to the common ancestor
+                // between our former chain and the new one, then restart fresh.
+                db_conn.rollback_tip(&new_tip);
+                log::info!("Tip was rolled back to '{}'.", new_tip);
+                Err("Chain rollback requires a new scheduled poll".into())
             }
-        }
+            TipUpdate::ImplausibleReorg { min_depth } => {
+                refuse_deep_reorg(reorg_alert, &current_tip, RefusedDepth::AtLeast(min_depth));
+                Err("Poll did not produce a coherent chain update".into())
+            }
+            TipUpdate::Diverged { backend_tip } => {
+                report_divergence(reorg_alert, &current_tip, &backend_tip);
+                Err("Poll did not produce a coherent chain update".into())
+            }
+            TipUpdate::Unavailable => Err("Backend unavailable during tip lookup".into()),
+        },
         Ok(Some(reorg_common_ancestor)) => {
             // The block chain was reorganized. Rollback our state down to the common ancestor
             // between our former chain and the new one, then restart fresh.
@@ -788,10 +782,21 @@ fn updates(
                     reorg_common_ancestor
                 );
             }
-            return Err("Chain rollback requires a new scheduled poll".into());
+            Err("Chain rollback requires a new scheduled poll".into())
         }
-        Err(e) => return Err(e),
-    };
+        Err(e) => Err(e),
+    }
+}
+
+fn updates(
+    db_conn: &mut Box<dyn DatabaseConnection>,
+    bit: &mut impl BitcoinInterface,
+    descs: &[miniscript::Descriptor<miniscript::DescriptorPublicKey>],
+    secp: &secp256k1::Secp256k1<secp256k1::VerifyOnly>,
+    reorg_alert: &ReorgAlertCache,
+) -> Result<(), String> {
+    let current_tip = db_conn.chain_tip().expect("Always set at first startup");
+    let latest_tip = sync_wallet_tip(db_conn, bit, current_tip, reorg_alert)?;
 
     // Then check the state of our coins. Do it even if the tip did not change since last poll, as
     // we may have unconfirmed transactions.
