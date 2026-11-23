@@ -18,7 +18,7 @@ Commands must be sent as valid JSONRPC 2.0 requests, ending with a `\n`.
 | [`updatespend`](#updatespend)                         | Store a created Spend transaction                             |
 | [`listspendtxs`](#listspendtxs)                       | List all stored Spend transactions                            |
 | [`delspendtx`](#delspendtx)                           | Delete a stored Spend transaction                             |
-| [`broadcastspend`](#broadcastspend)                   | Finalize a stored Spend PSBT, and broadcast it                |
+| [`broadcastspend`](#broadcastspend)                   | Finalize a stored Spend PSBT, broadcast it, and wait for a poll |
 | [`rbfpsbt`](#rbfpsbt)                                 | Create a new RBF Spend transaction                            |
 | [`startrescan`](#startrescan)                         | Start rescanning the block chain from a given date            |
 | [`listconfirmed`](#listconfirmed)                     | List of confirmed transactions of incoming and outgoing funds |
@@ -332,6 +332,10 @@ This command does not return anything for now.
 
 ### `broadcastspend`
 
+Finalize the stored Spend PSBT, hand it to the network, then wait until a wallet poll has finished. The wait is a full sync, so a caller that reads coins after this returns sees the spend. The socket command is `DaemonControl::broadcast_spend`. An interactive Broadcast dialog cannot sit through that sync; the embedded desktop daemon uses the non-waiting path described below.
+
+An imported descriptor stores the finalized txid on the spend row before the poll (`record_broadcast_txid`). Broadcasting that same finalized txid again returns success. A stored txid that does not match the finalized transaction is an error, including when the broadcast may already have reached the network.
+
 #### Request
 
 | Field  | Type   | Description                                            |
@@ -344,6 +348,21 @@ This command does not return anything for now.
 
 | Field | Type | Description |
 | ----- | ---- | ----------- |
+
+#### Waiting, and the desktop path
+
+`broadcast_spend` asks the poller to run and blocks until that poll completes. `broadcast_spend_without_waiting` returns once the network has accepted the transaction and requests an eager poll in the background. Until that poll lands, `listcoins` can still show the inputs as unspent. Every check and every error is otherwise the same.
+
+The embedded GUI calls the non-waiting method (`coincube-gui/src/daemon/embedded.rs`). A GUI attached to an already-running `coincubed` calls this socket command, so it waits (`coincube-gui/src/daemon/client/mod.rs`).
+
+Esplora broadcasts through a handle taken from the shared client at startup (`BitcoinInterface::detached_broadcaster`). The send does not queue behind a sync that holds the backend mutex. Provider order, cooldowns, and admission checks are the same as `broadcast_tx`. bitcoind and Electrum have no detached handle; their broadcasts still take that mutex, and a sync in flight can hold the send.
+
+After `broadcast_spend_tx` returns `Ok`, the panels call `Wallet::record_broadcast`. That record is what covers the non-waiting path: the coin cache treats the inputs as spent before the poller has seen them, so a second spend started immediately cannot select the same coins. The record needs the input coins and the change-output indexes:
+
+- The Send review's `SpendTx` already carries both (`coincube-gui/src/app/state/vault/psbt.rs`).
+- A Vault transfer's `SpendTx` carries neither. `transfer_broadcast_record` in `coincube-gui/src/app/state/global_home.rs` takes the inputs from the coin cache and the change indexes from the descriptor. It records nothing unless the cache holds every input. A record with no inputs hides nothing, and it is never reconciled away, so it would leave a pending history row after the transaction confirms.
+
+Record only after the broadcast returns `Ok`. A failed broadcast never enters the override set. The cache drops the record once the daemon reports an input gone or a wallet output of the broadcast present.
 
 ### `rbfpsbt`
 

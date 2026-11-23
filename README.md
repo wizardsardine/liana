@@ -78,6 +78,10 @@ cargo build --manifest-path coincube-spark-bridge/Cargo.toml
 
 At runtime the gui looks for the bridge binary next to the gui executable, then falls back to `coincube-spark-bridge/target/{debug,release}/coincube-spark-bridge`. A custom location can be provided via the `COINCUBE_SPARK_BRIDGE_PATH` environment variable. Released artifacts ship the bridge next to the app executable on every platform, and CI asserts it is there — see [`docs/SPARK_WALLET.md`](docs/SPARK_WALLET.md#packaging).
 
+## Cube ownership
+
+Cubes on a shared computer stay with the Connect account that created them. Ownerless Cubes (created signed out, or from before the field existed) stay visible and are not claimed by the next sign-in. See [`docs/CUBE_OWNERSHIP.md`](docs/CUBE_OWNERSHIP.md).
+
 ## Connect billing
 
 Plan & billing, card and bitcoin checkout, and per-network Cube limits are rendered from Connect. The desktop contract — what may be omitted, which response wins, and when Create Cube closes — is [`docs/BILLING.md`](docs/BILLING.md).
