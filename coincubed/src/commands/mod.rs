@@ -1967,8 +1967,9 @@ impl DaemonControl {
         }
         self.send_to_network(&final_tx)
             .map_err(CommandError::TxBroadcast)?;
-        // The database lists these inputs as unspent until a poll records the
-        // spend. Keep automatic coin selection off them until then.
+        // The database does not show these inputs as spent by this transaction
+        // until a poll records it. Keep automatic coin selection off them
+        // until then.
         self.broadcast_holds
             .hold_inputs_of(&final_tx, time::Instant::now());
         if self.config.main_descriptor.as_imported().is_some() {
@@ -2714,11 +2715,15 @@ impl DaemonControl {
     }
 
     /// How long a coin spent by a broadcast stays out of automatic coin
-    /// selection when the database never records the spend.
+    /// selection when the poller never records the spend.
     ///
     /// Counted in polls because a poll is what records it. Esplora walks the
-    /// wallet on an unchanged tip only every few polls, so the count leaves
-    /// room for two such walks to start after the broadcast.
+    /// wallet on an unchanged tip only every sixth poll, so twelve leave room
+    /// for one such walk to finish after the broadcast whenever it fell in the
+    /// cycle. That is 2 hours at the Esplora default interval. It errs long on
+    /// purpose: ending a hold early can build a spend that replaces a payment
+    /// just made, while keeping one late only leaves a coin out of automatic
+    /// selection, and the coin can still be named by outpoint.
     fn broadcast_hold_max_age(&self) -> time::Duration {
         const POLLS: u32 = 12;
         const FLOOR: time::Duration = time::Duration::from_secs(120);
@@ -2729,17 +2734,16 @@ impl DaemonControl {
             .max(FLOOR)
     }
 
-    /// The unspent coins a transaction we broadcast is spending, which the
-    /// database does not record as such yet. See [`BroadcastHolds`].
+    /// The coins spent by a transaction we broadcast that the poller has not
+    /// recorded yet. See [`BroadcastHolds`].
     fn coins_held_by_a_broadcast(
         &self,
         db: &mut Box<dyn DatabaseConnection>,
     ) -> HashSet<bitcoin::OutPoint> {
-        self.broadcast_holds.held(
-            time::Instant::now(),
-            self.broadcast_hold_max_age(),
-            |outpoints| db.coins(&[], outpoints),
-        )
+        self.broadcast_holds
+            .held(time::Instant::now(), self.broadcast_hold_max_age(), || {
+                db.list_saved_txids().into_iter().collect()
+            })
     }
 
     fn optional_regular_candidates(
@@ -6976,6 +6980,8 @@ mod tests {
             descriptor: CoincubeDescriptor,
             /// The fixture's coin, the signed spend's only input.
             coin: OutPoint,
+            /// The stored spend's transaction, as the poller would store it.
+            spend: Transaction,
             spend_txid: btc::Txid,
             sent: std::sync::Arc<std::sync::Mutex<Vec<btc::Txid>>>,
             poller_receiver: std::sync::mpsc::Receiver<PollerMessage>,
@@ -7050,6 +7056,7 @@ mod tests {
                     control,
                     descriptor,
                     coin,
+                    spend: signed.unsigned_tx.clone(),
                     spend_txid,
                     sent,
                     poller_receiver,
@@ -7058,6 +7065,14 @@ mod tests {
 
             fn db(&self) -> Box<dyn DatabaseConnection> {
                 self.control.db().lock().unwrap().connection()
+            }
+
+            /// What a poll writes when the backend shows `tx` spending the
+            /// fixture's coin: the transaction, then the coin's spender.
+            fn poller_records(&self, tx: &Transaction) {
+                let mut conn = self.db();
+                conn.new_txs(std::slice::from_ref(tx));
+                conn.spend_coins(&[(self.coin, tx.compute_txid())]);
             }
 
             /// Receive another confirmed coin of `sats` at receive `index`.
@@ -7182,10 +7197,78 @@ mod tests {
                 .broadcast_spend_without_waiting(&wallet.spend_txid)
                 .unwrap();
 
-            wallet.db().spend_coins(&[(wallet.coin, wallet.spend_txid)]);
+            wallet.poller_records(&wallet.spend);
             assert_eq!(wallet.auto_selected(), None);
             wallet.db().unspend_coins(&[wallet.coin]);
             assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        /// The same when nothing asked for a coin selection in between: the
+        /// hold is not left behind on a coin the poller has since freed.
+        #[test]
+        fn a_coin_recorded_and_freed_between_two_selections_is_selectable() {
+            let wallet = BroadcastWallet::new();
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(wallet.auto_selected(), None);
+
+            wallet.poller_records(&wallet.spend);
+            wallet.db().unspend_coins(&[wallet.coin]);
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        /// A coin the database marks as spent by another transaction, then
+        /// frees, stays held: the poller has yet to record ours. This is a
+        /// replacement whose predecessor the backend stops showing first.
+        #[test]
+        fn a_coin_freed_from_another_spend_stays_held_for_ours() {
+            let wallet = BroadcastWallet::new();
+            let mut earlier = wallet.spend.clone();
+            earlier.lock_time = absolute::LockTime::from_consensus(1);
+            wallet.poller_records(&earlier);
+
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(wallet.auto_selected(), None);
+            wallet.db().unspend_coins(&[wallet.coin]);
+            assert_eq!(wallet.auto_selected(), None);
+        }
+
+        /// A transaction the network refuses holds nothing.
+        #[test]
+        fn a_refused_broadcast_holds_no_coin() {
+            let mut wallet = BroadcastWallet::new();
+            let refuse: crate::bitcoin::DetachedBroadcaster =
+                std::sync::Arc::new(|_: &Transaction| Err("refused".to_string()));
+            wallet.control = wallet.control.with_detached_broadcaster(Some(refuse));
+            assert!(matches!(
+                wallet
+                    .control
+                    .broadcast_spend_without_waiting(&wallet.spend_txid),
+                Err(CommandError::TxBroadcast(_))
+            ));
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        #[test]
+        fn the_longest_hold_is_twelve_polls_and_never_under_two_minutes() {
+            let mut wallet = BroadcastWallet::new();
+            let mut max_age_at = |secs: u64| {
+                wallet.control.config.bitcoin_config.poll_interval_secs =
+                    std::time::Duration::from_secs(secs);
+                wallet.control.broadcast_hold_max_age().as_secs()
+            };
+            assert_eq!(max_age_at(1), 120);
+            assert_eq!(
+                max_age_at(crate::config::LOCAL_BACKEND_POLL_INTERVAL_SECS),
+                120
+            );
+            assert_eq!(max_age_at(crate::config::ESPLORA_POLL_INTERVAL_SECS), 7_200);
+            assert_eq!(max_age_at(u64::MAX), u64::MAX);
         }
 
         /// Naming the coin is the caller's decision and stays possible: that

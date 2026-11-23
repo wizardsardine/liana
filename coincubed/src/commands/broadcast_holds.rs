@@ -1,5 +1,5 @@
 //! Coins spent by a transaction this daemon broadcast, held out of automatic
-//! coin selection until the wallet database records that they are being spent.
+//! coin selection until the poller has recorded that transaction.
 //!
 //! The database learns of a spend from the poller, which reads it back from the
 //! Bitcoin backend. Between the network accepting a transaction and the poller
@@ -15,13 +15,11 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Mutex,
+    sync::{Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
 };
 
 use miniscript::bitcoin::{OutPoint, Transaction, Txid};
-
-use crate::database::Coin;
 
 #[derive(Debug, Clone, Copy)]
 struct Hold {
@@ -37,6 +35,13 @@ pub(crate) struct BroadcastHolds {
 }
 
 impl BroadcastHolds {
+    /// The map has no invariant a panic could break halfway, so a poisoned
+    /// lock is still good to use. Refusing it would fail every later broadcast
+    /// after its transaction was sent.
+    fn lock(&self) -> MutexGuard<'_, HashMap<OutPoint, Hold>> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
     /// Hold the inputs of a transaction the network has just accepted.
     ///
     /// The network accepting `tx` means any transaction we broadcast earlier
@@ -44,7 +49,7 @@ impl BroadcastHolds {
     /// dropped, since the inputs `tx` does not spend are free again.
     pub(crate) fn hold_inputs_of(&self, tx: &Transaction, now: Instant) {
         let spender = tx.compute_txid();
-        let mut held = self.held.lock().expect("no panic while holding the lock");
+        let mut held = self.lock();
         let replaced: HashSet<Txid> = tx
             .input
             .iter()
@@ -66,26 +71,30 @@ impl BroadcastHolds {
 
     /// The coins automatic coin selection must leave alone.
     ///
-    /// `wallet_coins` returns the wallet's coins among the given outpoints,
-    /// whatever their status. A hold ends, for good, once the wallet records a
-    /// spender for the coin or no longer has the coin: from then on the poller
-    /// keeps the coin's state, including freeing it again if the spend is
-    /// dropped or replaced. A hold also ends after `max_age`, so a transaction
-    /// the backend never shows cannot keep a coin out of selection forever.
+    /// `saved_txids` returns the transactions the wallet database has stored.
+    /// The poller stores a spending transaction when it first records the
+    /// spend, and keeps it. So a hold ends, for good, once its transaction is
+    /// among them: from then on the poller keeps the coin's state, including
+    /// freeing it again if the spend is dropped or replaced. What the database
+    /// says of the coin itself does not end a hold: a coin still marked as
+    /// spent by the transaction this one replaced is not yet recorded as spent
+    /// by this one.
+    ///
+    /// A hold also ends after `max_age`, so a transaction the backend never
+    /// shows cannot keep a coin out of selection forever.
     pub(crate) fn held(
         &self,
         now: Instant,
         max_age: Duration,
-        wallet_coins: impl FnOnce(&[OutPoint]) -> HashMap<OutPoint, Coin>,
+        saved_txids: impl FnOnce() -> HashSet<Txid>,
     ) -> HashSet<OutPoint> {
-        let mut held = self.held.lock().expect("no panic while holding the lock");
+        let mut held = self.lock();
         if held.is_empty() {
             return HashSet::new();
         }
-        let outpoints: Vec<OutPoint> = held.keys().copied().collect();
-        let coins = wallet_coins(&outpoints);
+        let saved = saved_txids();
         held.retain(|outpoint, hold| {
-            if !coins.get(outpoint).is_some_and(|coin| !coin.is_spent()) {
+            if saved.contains(&hold.spender) {
                 return false;
             }
             if now.saturating_duration_since(hold.since) >= max_age {
@@ -108,7 +117,7 @@ impl BroadcastHolds {
 mod tests {
     use super::*;
     use miniscript::bitcoin::{
-        absolute, hashes::Hash, transaction, Amount, ScriptBuf, Sequence, TxIn, Witness,
+        absolute, hashes::Hash, transaction, ScriptBuf, Sequence, TxIn, Witness,
     };
 
     const MAX_AGE: Duration = Duration::from_secs(600);
@@ -139,29 +148,10 @@ mod tests {
         }
     }
 
-    fn coin(outpoint: OutPoint, spend_txid: Option<Txid>) -> Coin {
-        Coin {
-            outpoint,
-            is_immature: false,
-            block_info: None,
-            amount: Amount::from_sat(10_000),
-            derivation_index: 0.into(),
-            is_change: false,
-            spend_txid,
-            spend_block: None,
-            is_from_self: false,
-        }
-    }
-
-    /// A wallet holding exactly `coins`, as the lookup `held` asks for.
-    fn wallet(coins: &[Coin]) -> impl FnOnce(&[OutPoint]) -> HashMap<OutPoint, Coin> + '_ {
-        move |outpoints| {
-            coins
-                .iter()
-                .filter(|coin| outpoints.contains(&coin.outpoint))
-                .map(|coin| (coin.outpoint, *coin))
-                .collect()
-        }
+    /// A wallet database that has stored exactly `txs`.
+    fn saved(txs: &[&Transaction]) -> impl FnOnce() -> HashSet<Txid> {
+        let txids: HashSet<Txid> = txs.iter().map(|tx| tx.compute_txid()).collect();
+        move || txids
     }
 
     fn set(outpoints: &[OutPoint]) -> HashSet<OutPoint> {
@@ -171,51 +161,37 @@ mod tests {
     #[test]
     fn nothing_is_held_and_the_wallet_is_not_read_before_a_broadcast() {
         let holds = BroadcastHolds::default();
-        let held = holds.held(Instant::now(), MAX_AGE, |_| {
+        let held = holds.held(Instant::now(), MAX_AGE, || {
             panic!("no hold, so no reason to read the wallet")
         });
         assert!(held.is_empty());
     }
 
     #[test]
-    fn inputs_are_held_while_the_wallet_shows_them_unspent() {
+    fn inputs_are_held_while_the_wallet_has_not_stored_the_transaction() {
         let (a, b) = (outpoint(1), outpoint(2));
         let holds = BroadcastHolds::default();
         let now = Instant::now();
         holds.hold_inputs_of(&spend_of(&[a, b], 0), now);
-        let unspent = [coin(a, None), coin(b, None), coin(outpoint(3), None)];
-        assert_eq!(holds.held(now, MAX_AGE, wallet(&unspent)), set(&[a, b]));
+        let unrelated = spend_of(&[outpoint(3)], 0);
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[&unrelated])), set(&[a, b]));
         // Still held on a later look, short of the maximum age.
         let later = now + MAX_AGE - Duration::from_secs(1);
-        assert_eq!(holds.held(later, MAX_AGE, wallet(&unspent)), set(&[a, b]));
+        assert_eq!(holds.held(later, MAX_AGE, saved(&[])), set(&[a, b]));
     }
 
-    /// Once the poller has recorded a spender the coin's state is the
-    /// poller's to keep. If it later frees the coin (the spend was dropped
-    /// from the mempool), the hold must not come back.
+    /// Once the poller has recorded the transaction the coins' state is the
+    /// poller's to keep, and the holds do not come back.
     #[test]
-    fn a_hold_ends_for_good_once_the_wallet_records_a_spender() {
-        let (a, b) = (outpoint(1), outpoint(2));
+    fn a_hold_ends_for_good_once_the_wallet_stores_the_transaction() {
+        let (a, b, c) = (outpoint(1), outpoint(2), outpoint(3));
         let holds = BroadcastHolds::default();
         let now = Instant::now();
-        let tx = spend_of(&[a, b], 0);
-        holds.hold_inputs_of(&tx, now);
-        let recorded = [coin(a, Some(tx.compute_txid())), coin(b, None)];
-        assert_eq!(holds.held(now, MAX_AGE, wallet(&recorded)), set(&[b]));
-        let freed = [coin(a, None), coin(b, None)];
-        assert_eq!(holds.held(now, MAX_AGE, wallet(&freed)), set(&[b]));
-    }
-
-    #[test]
-    fn a_hold_ends_when_the_wallet_no_longer_has_the_coin() {
-        let a = outpoint(1);
-        let holds = BroadcastHolds::default();
-        let now = Instant::now();
-        holds.hold_inputs_of(&spend_of(&[a], 0), now);
-        assert!(holds.held(now, MAX_AGE, wallet(&[])).is_empty());
-        assert!(holds
-            .held(now, MAX_AGE, wallet(&[coin(a, None)]))
-            .is_empty());
+        let first = spend_of(&[a, b], 0);
+        holds.hold_inputs_of(&first, now);
+        holds.hold_inputs_of(&spend_of(&[c], 0), now);
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[&first])), set(&[c]));
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[])), set(&[c]));
     }
 
     #[test]
@@ -224,11 +200,8 @@ mod tests {
         let holds = BroadcastHolds::default();
         let now = Instant::now();
         holds.hold_inputs_of(&spend_of(&[a], 0), now);
-        let unspent = [coin(a, None)];
-        assert!(holds
-            .held(now + MAX_AGE, MAX_AGE, wallet(&unspent))
-            .is_empty());
-        assert!(holds.held(now, MAX_AGE, wallet(&unspent)).is_empty());
+        assert!(holds.held(now + MAX_AGE, MAX_AGE, saved(&[])).is_empty());
+        assert!(holds.held(now, MAX_AGE, saved(&[])).is_empty());
     }
 
     /// A replacement that spends only some of the first transaction's inputs
@@ -241,8 +214,25 @@ mod tests {
         holds.hold_inputs_of(&spend_of(&[a, b], 0), now);
         holds.hold_inputs_of(&spend_of(&[c], 0), now);
         holds.hold_inputs_of(&spend_of(&[a], 1), now);
-        let unspent = [coin(a, None), coin(b, None), coin(c, None)];
-        assert_eq!(holds.held(now, MAX_AGE, wallet(&unspent)), set(&[a, c]));
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[])), set(&[a, c]));
+    }
+
+    /// The wallet having stored the replaced transaction says nothing of the
+    /// replacement: its inputs stay held until the replacement is stored.
+    #[test]
+    fn a_replacement_is_held_while_the_wallet_only_knows_what_it_replaced() {
+        let (a, b) = (outpoint(1), outpoint(2));
+        let holds = BroadcastHolds::default();
+        let now = Instant::now();
+        let first = spend_of(&[a, b], 0);
+        let replacement = spend_of(&[a, b], 1);
+        holds.hold_inputs_of(&first, now);
+        assert!(holds.held(now, MAX_AGE, saved(&[&first])).is_empty());
+        holds.hold_inputs_of(&replacement, now);
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[&first])), set(&[a, b]));
+        assert!(holds
+            .held(now, MAX_AGE, saved(&[&first, &replacement]))
+            .is_empty());
     }
 
     #[test]
@@ -254,10 +244,20 @@ mod tests {
         holds.hold_inputs_of(&tx, now);
         let again = now + MAX_AGE - Duration::from_secs(1);
         holds.hold_inputs_of(&tx, again);
-        let unspent = [coin(a, None)];
-        assert_eq!(
-            holds.held(now + MAX_AGE, MAX_AGE, wallet(&unspent)),
-            set(&[a])
-        );
+        assert_eq!(holds.held(now + MAX_AGE, MAX_AGE, saved(&[])), set(&[a]));
+    }
+
+    #[test]
+    fn a_panic_while_reading_the_wallet_does_not_disable_the_holds() {
+        let a = outpoint(1);
+        let holds = BroadcastHolds::default();
+        let now = Instant::now();
+        holds.hold_inputs_of(&spend_of(&[a], 0), now);
+        let read = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            holds.held(now, MAX_AGE, || panic!("the database failed"))
+        }));
+        assert!(read.is_err());
+        holds.hold_inputs_of(&spend_of(&[outpoint(2)], 0), now);
+        assert_eq!(holds.held(now, MAX_AGE, saved(&[])), set(&[a, outpoint(2)]));
     }
 }
