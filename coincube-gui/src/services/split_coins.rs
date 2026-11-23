@@ -2209,7 +2209,14 @@ mod tests {
             )
             .await;
             assert!(result.is_ok(), "{:?}", result.err());
-            assert_eq!(stages, [BuildStage::CheckingCoins, BuildStage::Building]);
+            assert_eq!(
+                stages,
+                [
+                    BuildStage::CheckingCoins,
+                    BuildStage::Building,
+                    BuildStage::Saving,
+                ]
+            );
         }
 
         #[tokio::test]
