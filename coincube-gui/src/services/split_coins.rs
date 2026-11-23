@@ -728,6 +728,7 @@ pub enum BuildStage {
     CheckingKey,
     CheckingCoins,
     Building,
+    Saving,
 }
 
 impl BuildStage {
@@ -736,6 +737,16 @@ impl BuildStage {
             BuildStage::CheckingKey => "Checking the split key on both chains",
             BuildStage::CheckingCoins => "Checking the coins",
             BuildStage::Building => "Building the transaction",
+            BuildStage::Saving => "Saving the split",
+        }
+    }
+
+    /// The stage a build of `method` starts in, shown from the moment the
+    /// user presses Sign and send.
+    pub fn first(method: Method) -> Self {
+        match method {
+            Method::SplitKey => BuildStage::CheckingKey,
+            Method::Signature => BuildStage::CheckingCoins,
         }
     }
 }
@@ -823,6 +834,7 @@ pub async fn prepare(
         }
     };
     check_construction(&psbt, &requested)?;
+    progress.send(BuildStage::Saving).await;
     daemon
         .update_spend_tx(&psbt)
         .await

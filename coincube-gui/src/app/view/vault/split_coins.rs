@@ -962,34 +962,31 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
     }
     column = column.push(actions);
     if flow.working {
-        column = column.push(build_status(flow.stage));
+        column = column.push(build_status(flow.method, flow.stage));
     }
     panel(column)
 }
 
 /// What the build in flight is doing, with moving dots so a slow step
-/// doesn't look stuck. Checking the split key asks about both chains and is
-/// the slow one.
-fn build_status<'a>(stage: Option<BuildStage>) -> Element<'a, Message> {
-    let label = stage.map_or("Building the split", BuildStage::label);
-    let mut status = Column::new().spacing(4).push(
-        Row::new()
-            .align_y(Alignment::Center)
-            .push(p2_regular(localized_copy(label)).style(theme::text::secondary))
-            .push(
-                Container::new(spinner::ellipsis(|dots| {
+/// doesn't look stuck. The hint stays for the whole build so the panel
+/// doesn't change height between stages.
+fn build_status<'a>(method: Method, stage: Option<BuildStage>) -> Element<'a, Message> {
+    let label = stage.unwrap_or(BuildStage::first(method)).label();
+    Column::new()
+        .spacing(4)
+        .push(
+            Row::new()
+                .align_y(Alignment::Center)
+                .push(p2_regular(localized_copy(label)).style(theme::text::secondary))
+                .push(spinner::ellipsis(|dots| {
                     p2_regular(dots).style(theme::text::secondary)
-                }))
-                .width(Length::Fixed(20.0)),
-            ),
-    );
-    if stage == Some(BuildStage::CheckingKey) {
-        status = status.push(
+                })),
+        )
+        .push(
             caption(localized_copy("This can take a minute. Keep this open."))
                 .style(theme::text::secondary),
-        );
-    }
-    status.into()
+        )
+        .into()
 }
 
 /// Another split is built and waiting to be signed; the flow goes on with
@@ -1370,7 +1367,17 @@ mod tests {
             stage: None,
             ..flow()
         };
-        assert!(mount("vault-split-building", &started, (1280, 900)).contains("Building the split"));
+        // Before the build reports, the method's first stage shows: never a
+        // second "Building" beside the button.
+        let mounted = mount("vault-split-building", &started, (1280, 900));
+        assert!(mounted.contains("Checking the split key on both chains"));
+        assert!(!mounted.contains("Building the split"));
+        let signature = SplitFlow {
+            method: Method::Signature,
+            ..started.clone()
+        };
+        assert!(mount("vault-split-building-sig", &signature, (1280, 900))
+            .contains("Checking the coins"));
         let key = SplitFlow {
             stage: Some(BuildStage::CheckingKey),
             ..started.clone()
@@ -1384,12 +1391,14 @@ mod tests {
         };
         let mounted = mount("vault-split-building-tx", &building, (1280, 900));
         assert!(mounted.contains("Building the transaction"));
-        assert!(!mounted.contains("This can take a minute."));
+        // The hint stays, so the panel keeps its height between stages.
+        assert!(mounted.contains("This can take a minute. Keep this open."));
         // Every stage has its Spanish.
         for stage in [
             BuildStage::CheckingKey,
             BuildStage::CheckingCoins,
             BuildStage::Building,
+            BuildStage::Saving,
         ] {
             let es = render_in(Language::Spanish, || {
                 localized_copy(stage.label()).to_string()

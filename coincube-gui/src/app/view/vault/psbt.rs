@@ -1583,16 +1583,13 @@ fn broadcast_status<'a>(chain: crate::chain::ChainId) -> Element<'a, Message> {
                     ))
                     .style(theme::text::secondary),
                 )
-                .push(
-                    Container::new(spinner::ellipsis(|dots| {
-                        p2_regular(dots).style(theme::text::secondary)
-                    }))
-                    .width(Length::Fixed(20.0)),
-                ),
+                .push(spinner::ellipsis(|dots| {
+                    p2_regular(dots).style(theme::text::secondary)
+                })),
         )
         .push(
             caption(localized_copy(
-                "This can take a few minutes when the network is busy. Keep this open.",
+                "This can take a few minutes if the network or server is slow. Keep this open.",
             ))
             .style(theme::text::secondary),
         )
@@ -4112,8 +4109,9 @@ mod tests {
             "Sending to {}",
             crate::chain::canonical_network_name(crate::chain::ChainId::BitcoinBlake2b)
         )));
-        assert!(sending
-            .contains("This can take a few minutes when the network is busy. Keep this open."));
+        assert!(sending.contains(
+            "This can take a few minutes if the network or server is slow. Keep this open."
+        ));
         let idle = render("psbt-broadcast-idle", false);
         assert!(!idle.contains("Keep this open."));
     }
