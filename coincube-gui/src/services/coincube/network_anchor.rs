@@ -613,6 +613,94 @@ mod tests {
             .trusted(ChainId::BitcoinBlake2b, SystemTime::now())
             .is_ok());
     }
+
+    /// A Blake2b resync deletes chain data only after this admits the reopen.
+    /// Availability alone is not enough: an anchor too old to start the daemon
+    /// must still refuse, and an unavailable or unreadable status must say why.
+    #[tokio::test]
+    async fn anchor_start_admits_only_a_fresh_trusted_blake2b_anchor() {
+        let chain = ChainId::BitcoinBlake2b;
+
+        let fresh = MockServer::start_async().await;
+        fresh
+            .mock_async(|when, then| {
+                when.method(GET);
+                then.status(200).json_body(body(chain));
+            })
+            .await;
+        assert!(client(&fresh).anchor_admits_start(chain).await.is_ok());
+
+        // No `served_at`, so the stamp is this desktop's clock. 120s is past
+        // the 90s window `authenticated_backend` uses to admit a start.
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let mut expired = body(chain);
+        expired["data"]["anchor"]["observed_at"] = json!(now - 120);
+        let expired_server = MockServer::start_async().await;
+        expired_server
+            .mock_async(|when, then| {
+                when.method(GET);
+                then.status(200).json_body(expired);
+            })
+            .await;
+        let expired_err = client(&expired_server)
+            .anchor_admits_start(chain)
+            .await
+            .expect_err("an expired anchor must not admit the reopen");
+        assert!(
+            expired_err.contains("not trusted"),
+            "an available but expired anchor is not an unavailable backend: {}",
+            expired_err
+        );
+
+        let syncing = MockServer::start_async().await;
+        syncing
+            .mock_async(|when, then| {
+                when.method(GET);
+                then.status(503).json_body(json!({
+                    "success": false,
+                    "error": {"code": "SERVICE_UNAVAILABLE"},
+                    "data": {"network": chain.api_str(), "state": "syncing"}
+                }));
+            })
+            .await;
+        let syncing_err = client(&syncing)
+            .anchor_admits_start(chain)
+            .await
+            .unwrap_err();
+        assert!(syncing_err.contains("not available"), "{}", syncing_err);
+
+        let broken = MockServer::start_async().await;
+        broken
+            .mock_async(|when, then| {
+                when.method(GET);
+                then.status(500).body("no");
+            })
+            .await;
+        let broken_err = client(&broken)
+            .anchor_admits_start(chain)
+            .await
+            .unwrap_err();
+        assert!(broken_err.contains("could not be read"), "{}", broken_err);
+
+        // Bitcoin is not this admission. It must refuse before any request.
+        let bitcoin = MockServer::start_async().await;
+        let request = bitcoin
+            .mock_async(|when, then| {
+                when.method(GET);
+                then.status(200).json_body(body(chain));
+            })
+            .await;
+        let bitcoin_err = client(&bitcoin)
+            .anchor_admits_start(ChainId::Bitcoin)
+            .await
+            .unwrap_err();
+        assert!(bitcoin_err.contains("could not be read"), "{}", bitcoin_err);
+        request.assert_hits_async(0).await;
+    }
+
     #[test]
     fn a_missing_served_at_keeps_the_server_stamp() {
         // An older API does not get a desktop stamp invented for it. A stamp
