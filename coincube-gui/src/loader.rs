@@ -863,38 +863,38 @@ impl Loader {
         cmd
     }
 
-    pub fn update(&mut self, message: Message) -> Task<Message> {
-        match message {
-            Message::View(ViewMessage::Retry) => {
-                // After a resync that did not finish, the node's chain data
-                // is partly deleted: only finishing the resync may start it.
-                if matches!(&self.step, Step::Error(e) if matches!(**e, Error::ForkResyncFailed(_)))
-                {
-                    return Task::none();
-                }
-                if self.cube_settings.network.is_blake2b() {
-                    // Reopening must establish a fresh session after revocation.
-                    // Keep the specific refusal instead of rebuilding without auth.
-                    if self.fork_session_revoked {
+    fn on_retry(&mut self) -> Task<Message> {
+        // After a resync that did not finish, the node's chain data
+        // is partly deleted: only finishing the resync may start it.
+        if matches!(&self.step, Step::Error(e) if matches!(**e, Error::ForkResyncFailed(_))) {
+            return Task::none();
+        }
+        if self.cube_settings.network.is_blake2b() {
+            // Reopening must establish a fresh session after revocation.
+            // Keep the specific refusal instead of rebuilding without auth.
+            if self.fork_session_revoked {
+                return Task::none();
+            }
+            if let Some(deadline) = self.fork_retry_not_before {
+                let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+                if !remaining.is_zero() {
+                    // The resync is not held to this delay; keep its
+                    // page (and button) rather than replace it.
+                    if matches!(&self.step, Step::Error(e) if e.offers_fork_resync()) {
                         return Task::none();
                     }
-                    if let Some(deadline) = self.fork_retry_not_before {
-                        let remaining =
-                            deadline.saturating_duration_since(std::time::Instant::now());
-                        if !remaining.is_zero() {
-                            // The resync is not held to this delay; keep its
-                            // page (and button) rather than replace it.
-                            if matches!(&self.step, Step::Error(e) if e.offers_fork_resync()) {
-                                return Task::none();
-                            }
-                            self.step = Step::Error(Box::new(Error::Unexpected(format!(
-                                "Connect startup can be retried in {} seconds. Wait for the backend to be ready, then Retry.", remaining.as_secs() + 1))));
-                            return Task::none();
-                        }
-                    }
+                    self.step = Step::Error(Box::new(Error::Unexpected(format!(
+                        "Connect startup can be retried in {} seconds. Wait for the backend to be ready, then Retry.", remaining.as_secs() + 1))));
+                    return Task::none();
                 }
-                self.rebuild()
             }
+        }
+        self.rebuild()
+    }
+
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::View(ViewMessage::Retry) => self.on_retry(),
             Message::View(ViewMessage::ResyncForkNode) => {
                 // Only from the errors it recovers, and never past a revoked
                 // session (Retry refuses that too).
@@ -1846,46 +1846,7 @@ async fn start_fork_daemon(
             .map_err(Error::Unexpected)?;
     }
     let internal = if let Some(node) = local {
-        // Only the pinned Blake2b build is ever started, so after a pin bump an
-        // existing install has no binary to start: fetch and verify the pinned
-        // release first, instead of failing the open with `ExecutableNotFound`.
-        // A failed fetch does not stop the start: a pinned node that is already
-        // running needs no binary on disk. Its reason is reported only if the
-        // start then needs the binary it could not install.
-        let provision_error = provision_pinned_fork_binary(root.clone(), chain)
-            .await
-            .err();
-        if let Some(e) = &provision_error {
-            warn!("Could not install the pinned Bitcoin Blake2b node: {}", e);
-        }
-        let root = root.clone();
-        tokio::task::spawn_blocking(move || {
-            Bitcoind::preflight_for_chain(chain, &root)?;
-            let lifecycle = crate::node::bitcoind::ManagedNodeLifecycle::acquire(
-                &root,
-                crate::node::bitcoind::NodeChainFamily::from_chain(chain),
-            )?;
-            crate::node::tor::prepare_inbound_tor_for_chain_locked(&root, chain, &lifecycle)
-                .map_err(|e| {
-                    crate::node::bitcoind::StartInternalBitcoindError::ConfigUnavailable(
-                        e.to_string(),
-                    )
-                })?;
-            Bitcoind::maybe_start_for_chain_locked(chain, node, &root, &lifecycle).map(|node| {
-                PendingForkNode {
-                    node: Some(node),
-                    cleanup: true,
-                }
-            })
-        })
-        .await
-        .map_err(|e| Error::Unexpected(e.to_string()))?
-        .map_err(|e| match (e, provision_error) {
-            (crate::node::bitcoind::StartInternalBitcoindError::ExecutableNotFound, Some(why)) => {
-                Error::Unexpected(why)
-            }
-            (e, _) => Error::Bitcoind(e),
-        })?
+        start_fork_node(&root, chain, node).await?
     } else {
         PendingForkNode {
             node: None,
@@ -1912,6 +1873,50 @@ async fn start_fork_daemon(
         };
     let info = daemon.get_info().await.map_err(Error::Daemon)?;
     Ok((daemon, internal, info))
+}
+
+async fn start_fork_node(
+    root: &CoincubeDirectory,
+    chain: crate::chain::ChainId,
+    node: BitcoindConfig,
+) -> Result<PendingForkNode, Error> {
+    // Only the pinned Blake2b build is ever started, so after a pin bump an
+    // existing install has no binary to start: fetch and verify the pinned
+    // release first, instead of failing the open with `ExecutableNotFound`.
+    // A failed fetch does not stop the start: a pinned node that is already
+    // running needs no binary on disk. Its reason is reported only if the
+    // start then needs the binary it could not install.
+    let provision_error = provision_pinned_fork_binary(root.clone(), chain)
+        .await
+        .err();
+    if let Some(e) = &provision_error {
+        warn!("Could not install the pinned Bitcoin Blake2b node: {}", e);
+    }
+    let root = root.clone();
+    tokio::task::spawn_blocking(move || {
+        Bitcoind::preflight_for_chain(chain, &root)?;
+        let lifecycle = crate::node::bitcoind::ManagedNodeLifecycle::acquire(
+            &root,
+            crate::node::bitcoind::NodeChainFamily::from_chain(chain),
+        )?;
+        crate::node::tor::prepare_inbound_tor_for_chain_locked(&root, chain, &lifecycle).map_err(
+            |e| crate::node::bitcoind::StartInternalBitcoindError::ConfigUnavailable(e.to_string()),
+        )?;
+        Bitcoind::maybe_start_for_chain_locked(chain, node, &root, &lifecycle).map(|node| {
+            PendingForkNode {
+                node: Some(node),
+                cleanup: true,
+            }
+        })
+    })
+    .await
+    .map_err(|e| Error::Unexpected(e.to_string()))?
+    .map_err(|e| match (e, provision_error) {
+        (crate::node::bitcoind::StartInternalBitcoindError::ExecutableNotFound, Some(why)) => {
+            Error::Unexpected(why)
+        }
+        (e, _) => Error::Bitcoind(e),
+    })
 }
 
 /// Compare the Cube's durable imported attachment with the wallet row and
