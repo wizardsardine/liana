@@ -2,7 +2,10 @@
 //!
 //! External interface to the Coincube daemon.
 
+mod broadcast_holds;
 mod utils;
+
+pub(crate) use broadcast_holds::BroadcastHolds;
 
 pub use crate::bitcoin::{HistorySync, PollFailure};
 // Real cache transitions are used by opt-in native integration guards/tests.
@@ -35,7 +38,7 @@ use std::{
     convert::TryInto,
     fmt,
     sync::{self, mpsc},
-    time::SystemTime,
+    time::{self, SystemTime},
 };
 
 /// Stable JSON-RPC server error code for [`CommandError::TxBroadcast`], a failure
@@ -1964,6 +1967,11 @@ impl DaemonControl {
         }
         self.send_to_network(&final_tx)
             .map_err(CommandError::TxBroadcast)?;
+        // The database does not show these inputs as spent by this transaction
+        // until a poll records it. Keep automatic coin selection off them
+        // until then.
+        self.broadcast_holds
+            .hold_inputs_of(&final_tx, time::Instant::now());
         if self.config.main_descriptor.as_imported().is_some() {
             db_conn.record_broadcast_txid(txid, &final_tx.compute_txid()).map_err(|error|
                 CommandError::ImportedSpendValidation(format!(
@@ -2239,7 +2247,10 @@ impl DaemonControl {
         let timelock = timelock.unwrap_or_else(|| vault.first_timelock_value());
         let height_delta: i32 = timelock.into();
         let coins = if coins_outpoints.is_empty() {
-            db_conn.coins(&[CoinStatus::Confirmed], &[])
+            let held = self.coins_held_by_a_broadcast(&mut db_conn);
+            let mut coins = db_conn.coins(&[CoinStatus::Confirmed], &[]);
+            coins.retain(|op, _| !held.contains(op));
+            coins
         } else {
             // We could have used the same DB call for both cases by specifying the status and outpoints,
             // but in order to give more helpful errors, we filter the DB call here only for outpoints
@@ -2703,15 +2714,49 @@ impl DaemonControl {
         Ok(change_address)
     }
 
+    /// How long a coin spent by a broadcast stays out of automatic coin
+    /// selection when the poller never records the spend.
+    ///
+    /// Counted in polls because a poll is what records it. Esplora walks the
+    /// wallet on an unchanged tip only every sixth poll, so twelve leave room
+    /// for one such walk to finish after the broadcast whenever it fell in the
+    /// cycle. That is 2 hours at the Esplora default interval. It errs long on
+    /// purpose: ending a hold early can build a spend that replaces a payment
+    /// just made, while keeping one late only leaves a coin out of automatic
+    /// selection, and the coin can still be named by outpoint.
+    fn broadcast_hold_max_age(&self) -> time::Duration {
+        const POLLS: u32 = 12;
+        const FLOOR: time::Duration = time::Duration::from_secs(120);
+        self.config
+            .bitcoin_config
+            .poll_interval_secs
+            .saturating_mul(POLLS)
+            .max(FLOOR)
+    }
+
+    /// The coins spent by a transaction we broadcast that the poller has not
+    /// recorded yet. See [`BroadcastHolds`].
+    fn coins_held_by_a_broadcast(
+        &self,
+        db: &mut Box<dyn DatabaseConnection>,
+    ) -> HashSet<bitcoin::OutPoint> {
+        self.broadcast_holds
+            .held(time::Instant::now(), self.broadcast_hold_max_age(), || {
+                db.list_saved_txids().into_iter().collect()
+            })
+    }
+
     fn optional_regular_candidates(
         &self,
         db: &mut Box<dyn DatabaseConnection>,
     ) -> Result<Vec<CandidateCoin>, CommandError> {
+        let held = self.coins_held_by_a_broadcast(db);
         // From our unconfirmed coins, we only include those that are from self
         // since unconfirmed external deposits are more at risk of being dropped
         // unexpectedly from the mempool as they are beyond the user's control.
         db.coins(&[CoinStatus::Unconfirmed, CoinStatus::Confirmed], &[])
             .into_iter()
+            .filter(|(op, _)| !held.contains(op))
             .filter_map(|(op, c)| {
                 if c.block_info.is_some() {
                     Some(Ok((c, None))) // confirmed coins have no ancestor info
@@ -2986,13 +3031,16 @@ impl DaemonControl {
                 )
             })
             .collect();
+        // The replaced transaction's own inputs are candidates above whether or
+        // not a broadcast holds them. A hold only keeps out the other coins.
+        let held = self.coins_held_by_a_broadcast(db);
         let confirmed_cands: Vec<CandidateCoin> = db
             .coins(&[CoinStatus::Confirmed], &[])
             .into_values()
             .filter_map(|c| {
                 // Make sure we don't have duplicate candidates in case any of the coins are not
                 // currently set as spending in the DB (and are therefore still confirmed).
-                if !previous.contains_key(&c.outpoint) {
+                if !previous.contains_key(&c.outpoint) && !held.contains(&c.outpoint) {
                     Some(coin_to_candidate(
                         &c, /*must_select=*/ false, /*sequence=*/ None,
                         /*ancestor_info=*/ None,
@@ -6922,6 +6970,403 @@ mod tests {
                 poller_receiver.try_recv(),
                 Ok(PollerMessage::PollNowNoAck)
             ));
+        }
+
+        /// A Bitcoin wallet over the dummy backend and database that holds the
+        /// fixture's coin, confirmed, and its signed spend. Nothing reads the
+        /// poller queue, so the database only changes when a test changes it.
+        struct BroadcastWallet {
+            control: DaemonControl,
+            descriptor: CoincubeDescriptor,
+            /// The fixture's coin, the signed spend's only input.
+            coin: OutPoint,
+            /// The stored spend's transaction, as the poller would store it.
+            spend: Transaction,
+            spend_txid: btc::Txid,
+            sent: std::sync::Arc<std::sync::Mutex<Vec<btc::Txid>>>,
+            poller_receiver: std::sync::mpsc::Receiver<PollerMessage>,
+        }
+
+        fn confirmed_coin(outpoint: OutPoint, sats: u64, index: u32) -> Coin {
+            Coin {
+                outpoint,
+                is_immature: false,
+                // Deep enough under the dummy backend's tip (height 100) for
+                // the fixture's 46-block recovery path.
+                block_info: Some(BlockInfo {
+                    height: 10,
+                    time: 1_700_000_000,
+                }),
+                amount: Amount::from_sat(sats),
+                derivation_index: index.into(),
+                is_change: false,
+                spend_txid: None,
+                spend_block: None,
+                is_from_self: false,
+            }
+        }
+
+        impl BroadcastWallet {
+            fn new() -> Self {
+                let (signers, descriptor, psbt) = vault_fixture();
+                let signed = legacy(&legacy(&psbt, &signers[0]), &signers[1]);
+                let spend_txid = signed.unsigned_tx.compute_txid();
+                let coin = signed.unsigned_tx.input[0].previous_output;
+                let tmp = tmp_dir();
+                std::fs::create_dir_all(&tmp).unwrap();
+                let config = crate::config::Config::new(
+                    crate::config::BitcoinConfig::new(
+                        ChainId::Bitcoin,
+                        std::time::Duration::from_secs(2),
+                    ),
+                    None,
+                    log::LevelFilter::Debug,
+                    descriptor.clone(),
+                    crate::datadir::DataDirectory::new(tmp.join("d")),
+                );
+                let db = DummyDatabase::new();
+                {
+                    let mut conn = db.connection();
+                    conn.new_txs(&[psbt.inputs[0].non_witness_utxo.clone().unwrap()]);
+                    conn.new_unspent_coins(&[confirmed_coin(coin, 50_000, 3)]);
+                    conn.store_spend(&signed);
+                }
+                let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+                let broadcaster: crate::bitcoin::DetachedBroadcaster = {
+                    let sent = sent.clone();
+                    std::sync::Arc::new(move |tx: &Transaction| {
+                        sent.lock().unwrap().push(tx.compute_txid());
+                        Ok(())
+                    })
+                };
+                let (poller_sender, poller_receiver) = std::sync::mpsc::sync_channel(1);
+                let control = DaemonControl::new(
+                    config,
+                    std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new())),
+                    poller_sender,
+                    std::sync::Arc::new(std::sync::Mutex::new(db)),
+                    secp256k1::Secp256k1::verification_only(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                    Default::default(),
+                )
+                .with_detached_broadcaster(Some(broadcaster));
+                Self {
+                    control,
+                    descriptor,
+                    coin,
+                    spend: signed.unsigned_tx.clone(),
+                    spend_txid,
+                    sent,
+                    poller_receiver,
+                }
+            }
+
+            fn db(&self) -> Box<dyn DatabaseConnection> {
+                self.control.db().lock().unwrap().connection()
+            }
+
+            /// What a poll writes when the backend shows `tx` spending the
+            /// fixture's coin: the transaction, then the coin's spender.
+            fn poller_records(&self, tx: &Transaction) {
+                let mut conn = self.db();
+                conn.new_txs(std::slice::from_ref(tx));
+                conn.spend_coins(&[(self.coin, tx.compute_txid())]);
+            }
+
+            /// Receive another confirmed coin of `sats` at receive `index`.
+            fn fund(&self, sats: u64, index: u32) -> OutPoint {
+                let secp = secp256k1::Secp256k1::new();
+                let derived = self
+                    .descriptor
+                    .receive_descriptor()
+                    .derive(index.into(), &secp);
+                let funding = Transaction {
+                    version: transaction::Version::TWO,
+                    lock_time: absolute::LockTime::ZERO,
+                    input: vec![TxIn {
+                        previous_output: OutPoint::null(),
+                        script_sig: ScriptBuf::new(),
+                        sequence: Sequence(index),
+                        witness: btc::Witness::new(),
+                    }],
+                    output: vec![TxOut {
+                        value: Amount::from_sat(sats),
+                        script_pubkey: derived.script_pubkey(),
+                    }],
+                };
+                let outpoint = OutPoint {
+                    txid: funding.compute_txid(),
+                    vout: 0,
+                };
+                let mut conn = self.db();
+                conn.new_txs(&[funding]);
+                conn.new_unspent_coins(&[confirmed_coin(outpoint, sats, index)]);
+                outpoint
+            }
+
+            /// The inputs automatic coin selection picks to pay 20,000 sats,
+            /// or `None` when it finds the wallet short of funds.
+            fn auto_selected(&self) -> Option<Vec<OutPoint>> {
+                let destinations = std::iter::once((Self::address(), 20_000)).collect();
+                Self::inputs(
+                    self.control
+                        .create_spend(&destinations, &[], 1, None)
+                        .unwrap(),
+                )
+            }
+
+            fn address() -> btc::Address<btc::address::NetworkUnchecked> {
+                btc::Address::from_str("bc1qnsexk3gnuyayu92fc3tczvc7k62u22a22ua2kv").unwrap()
+            }
+
+            fn inputs(result: CreateSpendResult) -> Option<Vec<OutPoint>> {
+                match result {
+                    CreateSpendResult::Success { psbt, .. } => Some(Self::inputs_of(&psbt)),
+                    CreateSpendResult::InsufficientFunds { .. } => None,
+                }
+            }
+
+            fn inputs_of(psbt: &Psbt) -> Vec<OutPoint> {
+                let mut inputs: Vec<OutPoint> = psbt
+                    .unsigned_tx
+                    .input
+                    .iter()
+                    .map(|txin| txin.previous_output)
+                    .collect();
+                inputs.sort();
+                inputs
+            }
+        }
+
+        /// A broadcast that returns before the poll leaves the database
+        /// showing its input as unspent. Automatic coin selection must not
+        /// build a second spend of that coin in the meantime.
+        #[test]
+        fn coin_selection_skips_a_coin_spent_by_a_broadcast_not_yet_polled() {
+            let wallet = BroadcastWallet::new();
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(*wallet.sent.lock().unwrap(), vec![wallet.spend_txid]);
+            // No poll has run: the database still reports the coin as unspent.
+            assert!(!wallet.db().coins(&[], &[wallet.coin])[&wallet.coin].is_spent());
+
+            assert_eq!(wallet.auto_selected(), None);
+            let other = wallet.fund(60_000, 4);
+            assert_eq!(wallet.auto_selected(), Some(vec![other]));
+        }
+
+        /// The waiting broadcast holds its inputs too: its poll can come back
+        /// without the spend, as on Esplora while the server has yet to show
+        /// the transaction.
+        #[test]
+        fn coin_selection_skips_a_coin_whose_broadcast_a_poll_did_not_record() {
+            let wallet = BroadcastWallet::new();
+            let BroadcastWallet {
+                control,
+                spend_txid,
+                poller_receiver,
+                ..
+            } = &wallet;
+            std::thread::scope(|scope| {
+                let broadcast = scope.spawn(move || control.broadcast_spend(spend_txid));
+                // A poll that completes and changes nothing.
+                match poller_receiver.recv().unwrap() {
+                    PollerMessage::PollNow(done) => done.send(()).unwrap(),
+                    _ => panic!("the waiting broadcast asks for an acknowledged poll"),
+                }
+                broadcast.join().unwrap().unwrap();
+            });
+            assert_eq!(*wallet.sent.lock().unwrap(), vec![wallet.spend_txid]);
+            assert_eq!(wallet.auto_selected(), None);
+        }
+
+        /// Once a poll records the spend, the coin's state is the database's
+        /// alone. A later poll that frees the coin (the spend was dropped from
+        /// the mempool) makes it selectable again.
+        #[test]
+        fn a_coin_the_poller_frees_after_recording_its_spend_is_selectable_again() {
+            let wallet = BroadcastWallet::new();
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+
+            wallet.poller_records(&wallet.spend);
+            assert_eq!(wallet.auto_selected(), None);
+            wallet.db().unspend_coins(&[wallet.coin]);
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        /// The same when nothing asked for a coin selection in between: the
+        /// hold is not left behind on a coin the poller has since freed.
+        #[test]
+        fn a_coin_recorded_and_freed_between_two_selections_is_selectable() {
+            let wallet = BroadcastWallet::new();
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(wallet.auto_selected(), None);
+
+            wallet.poller_records(&wallet.spend);
+            wallet.db().unspend_coins(&[wallet.coin]);
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        /// A coin the database marks as spent by another transaction, then
+        /// frees, stays held: the poller has yet to record ours. This is a
+        /// replacement whose predecessor the backend stops showing first.
+        #[test]
+        fn a_coin_freed_from_another_spend_stays_held_for_ours() {
+            let wallet = BroadcastWallet::new();
+            let mut earlier = wallet.spend.clone();
+            earlier.lock_time = absolute::LockTime::from_consensus(1);
+            wallet.poller_records(&earlier);
+
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(wallet.auto_selected(), None);
+            wallet.db().unspend_coins(&[wallet.coin]);
+            assert_eq!(wallet.auto_selected(), None);
+        }
+
+        /// A transaction the network refuses holds nothing.
+        #[test]
+        fn a_refused_broadcast_holds_no_coin() {
+            let mut wallet = BroadcastWallet::new();
+            let refuse: crate::bitcoin::DetachedBroadcaster =
+                std::sync::Arc::new(|_: &Transaction| Err("refused".to_string()));
+            wallet.control = wallet.control.with_detached_broadcaster(Some(refuse));
+            assert!(matches!(
+                wallet
+                    .control
+                    .broadcast_spend_without_waiting(&wallet.spend_txid),
+                Err(CommandError::TxBroadcast(_))
+            ));
+            assert_eq!(wallet.auto_selected(), Some(vec![wallet.coin]));
+        }
+
+        #[test]
+        fn the_longest_hold_is_twelve_polls_and_never_under_two_minutes() {
+            let mut wallet = BroadcastWallet::new();
+            let mut max_age_at = |secs: u64| {
+                wallet.control.config.bitcoin_config.poll_interval_secs =
+                    std::time::Duration::from_secs(secs);
+                wallet.control.broadcast_hold_max_age().as_secs()
+            };
+            assert_eq!(max_age_at(1), 120);
+            assert_eq!(
+                max_age_at(crate::config::LOCAL_BACKEND_POLL_INTERVAL_SECS),
+                120
+            );
+            assert_eq!(max_age_at(crate::config::ESPLORA_POLL_INTERVAL_SECS), 7_200);
+            assert_eq!(max_age_at(u64::MAX), u64::MAX);
+        }
+
+        /// Naming the coin is the caller's decision and stays possible: that
+        /// is how a spend is deliberately replaced.
+        #[test]
+        fn a_coin_spent_by_a_broadcast_can_still_be_chosen_by_outpoint() {
+            let wallet = BroadcastWallet::new();
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            let destinations = std::iter::once((BroadcastWallet::address(), 20_000)).collect();
+            let chosen = wallet
+                .control
+                .create_spend(&destinations, &[wallet.coin], 1, None)
+                .unwrap();
+            assert_eq!(BroadcastWallet::inputs(chosen), Some(vec![wallet.coin]));
+        }
+
+        /// A recovery that sweeps every coin past the timelock leaves out one
+        /// a broadcast is spending.
+        #[test]
+        fn a_recovery_sweep_skips_a_coin_spent_by_a_broadcast_not_yet_polled() {
+            let wallet = BroadcastWallet::new();
+            let other = wallet.fund(60_000, 4);
+            let swept = || {
+                let recovery = wallet
+                    .control
+                    .create_recovery(BroadcastWallet::address(), &[], 1, None)
+                    .unwrap();
+                BroadcastWallet::inputs_of(&recovery.psbt)
+            };
+            let mut both = vec![wallet.coin, other];
+            both.sort();
+            assert_eq!(swept(), both);
+
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(swept(), vec![other]);
+        }
+
+        /// Bumping the fee of another spend may add confirmed coins to pay
+        /// for it. One a broadcast is spending is not among them.
+        #[test]
+        fn a_fee_bump_does_not_add_a_coin_spent_by_a_broadcast_not_yet_polled() {
+            let wallet = BroadcastWallet::new();
+            let other = wallet.fund(30_000, 4);
+            // A second, stored spend of the other coin alone.
+            let destinations = std::iter::once((BroadcastWallet::address(), 20_000)).collect();
+            let second = match wallet
+                .control
+                .create_spend(&destinations, &[other], 1, None)
+                .unwrap()
+            {
+                CreateSpendResult::Success { psbt, .. } => psbt,
+                CreateSpendResult::InsufficientFunds { .. } => panic!("30,000 sats pay 20,000"),
+            };
+            let second_txid = second.unsigned_tx.compute_txid();
+            wallet.control.update_spend(second).unwrap();
+            // At this rate the other coin cannot pay the fee on its own.
+            const BUMP_FEERATE: u64 = 100;
+            let bump = || {
+                BroadcastWallet::inputs(
+                    wallet
+                        .control
+                        .rbf_psbt(&second_txid, false, Some(BUMP_FEERATE))
+                        .unwrap(),
+                )
+            };
+            let mut both = vec![wallet.coin, other];
+            both.sort();
+            assert_eq!(bump(), Some(both));
+
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            assert_eq!(bump(), None);
+        }
+
+        /// Replacing the broadcast spend itself still uses its own inputs.
+        #[test]
+        fn a_broadcast_spend_can_be_replaced_before_a_poll_records_it() {
+            let wallet = BroadcastWallet::new();
+            wallet
+                .control
+                .broadcast_spend_without_waiting(&wallet.spend_txid)
+                .unwrap();
+            let replacement = wallet
+                .control
+                .rbf_psbt(&wallet.spend_txid, true, None)
+                .unwrap();
+            assert_eq!(
+                BroadcastWallet::inputs(replacement),
+                Some(vec![wallet.coin])
+            );
         }
 
         fn unified(psbt: &Psbt, signer: &MasterSigner) -> Psbt {
