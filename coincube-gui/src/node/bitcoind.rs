@@ -2703,71 +2703,19 @@ impl Bitcoind {
         // configured one rather than whichever is found first.
         let selected_exe = select_managed_bitcoind_exe(coincube_datadir, configured_flavor);
 
-        // Is a managed node already running on this RPC endpoint? Its flavour
-        // is read from its own subversion; `configured_flavor` is assumed when
-        // it does not say. A Bitcoin Blake2b node's flavour is not readable
-        // that way, but its build is: anything other than the pinned build (an
-        // orphaned node from before a pin bump, or one whose subversion cannot
-        // be read) is not reused, since a pin bump changes consensus.
-        let running = coincubed::BitcoinD::new(&config, "internal_bitcoind_start".to_string())
-            .ok()
-            .map(|running| {
-                if chain.is_blake2b() {
-                    // Replaced only on a build positively read as another
-                    // one; identifying it is bounded, since the lifecycle
-                    // lock is held.
-                    let (build, subversion) = identify_blake2b_build(&config);
-                    return (running, configured_flavor, build, subversion);
-                }
-                let subversion = running.subversion();
-                let running_flavor = subversion
-                    .as_deref()
-                    .map(NodeFlavor::from_subversion)
-                    .unwrap_or(configured_flavor);
-                let build = if running_flavor == configured_flavor {
-                    Blake2bBuild::Pinned
-                } else {
-                    Blake2bBuild::Other
-                };
-                (running, running_flavor, build, subversion)
-            });
-        // For Bitcoin, `Pinned` above just means "the configured flavour".
-        // Blake2b: a node whose build cannot be read is neither reused (it may
-        // be a stale build) nor stopped (it may be a healthy shared node that
-        // is just busy); the start is refused and can be retried.
-        let running = match running {
-            Some((_, _, Blake2bBuild::Unreadable, subversion)) => {
-                warn!(
-                    "Could not identify the running Bitcoin Blake2b node's build ({:?}); \
-                     leaving it running",
-                    subversion
-                );
-                return Err(StartInternalBitcoindError::BitcoinDError(
-                    "Could not read which build the running Bitcoin Blake2b node is; it was \
-                     left running. Try again in a moment."
-                        .into(),
-                ));
-            }
-            Some((running, running_flavor, build, subversion)) => {
-                let reusable = build == Blake2bBuild::Pinned;
-                if chain.is_blake2b() && !reusable {
-                    warn!(
-                        "A Bitcoin Blake2b node that is not the pinned {KNOTS_BLAKE2B_VERSION} \
-                         build is running on the managed RPC port ({}); it will be replaced",
-                        subversion.as_deref().unwrap_or_default()
-                    );
-                }
-                Some((running, running_flavor, reusable))
-            }
-            None => None,
-        };
+        let running = probe_managed_node(chain, &config, configured_flavor)?;
         verify_managed_replacement(
-            running.as_ref().map(|(_, _, reusable)| *reusable),
+            running.as_ref().map(|running| running.reusable),
             existing_owners,
             foreign_owners,
             authorized_restart,
         )?;
-        if let Some((running_node, running_flavor, reusable)) = &running {
+        if let Some(RunningManagedNode {
+            node: running_node,
+            flavor: running_flavor,
+            reusable,
+        }) = &running
+        {
             if chain.is_blake2b() && *reusable {
                 running_node
                     .check_local_fork_chain(chain, false)
@@ -2817,7 +2765,12 @@ impl Bitcoind {
         // stopped with nothing started in its place.
         let (bitcoind_exe_path, exe_flavor) =
             selected_exe.ok_or(StartInternalBitcoindError::ExecutableNotFound)?;
-        if let Some((running, running_flavor, _)) = running {
+        if let Some(RunningManagedNode {
+            node: running,
+            flavor: running_flavor,
+            ..
+        }) = running
+        {
             // A global flavour switch — e.g. Core is up for existing Vaults and
             // the user just picked Knots — or, for Bitcoin Blake2b, a build
             // other than the pinned one: stop it so we can relaunch the
@@ -2920,6 +2873,81 @@ impl Bitcoind {
         // reference must not release the token while another still needs it.
         // BitcoindOwner::drop schedules release after the final Arc goes away.
     }
+}
+
+struct RunningManagedNode {
+    node: coincubed::BitcoinD,
+    flavor: NodeFlavor,
+    reusable: bool,
+}
+
+fn probe_managed_node(
+    chain: crate::chain::ChainId,
+    config: &BitcoindConfig,
+    configured_flavor: NodeFlavor,
+) -> Result<Option<RunningManagedNode>, StartInternalBitcoindError> {
+    // Is a managed node already running on this RPC endpoint? Its flavour
+    // is read from its own subversion; `configured_flavor` is assumed when
+    // it does not say. A Bitcoin Blake2b node's flavour is not readable
+    // that way, but its build is: anything other than the pinned build (an
+    // orphaned node from before a pin bump, or one whose subversion cannot
+    // be read) is not reused, since a pin bump changes consensus.
+    let running = coincubed::BitcoinD::new(config, "internal_bitcoind_start".to_string())
+        .ok()
+        .map(|running| {
+            if chain.is_blake2b() {
+                // Replaced only on a build positively read as another
+                // one; identifying it is bounded, since the lifecycle
+                // lock is held.
+                let (build, subversion) = identify_blake2b_build(config);
+                return (running, configured_flavor, build, subversion);
+            }
+            let subversion = running.subversion();
+            let running_flavor = subversion
+                .as_deref()
+                .map(NodeFlavor::from_subversion)
+                .unwrap_or(configured_flavor);
+            let build = if running_flavor == configured_flavor {
+                Blake2bBuild::Pinned
+            } else {
+                Blake2bBuild::Other
+            };
+            (running, running_flavor, build, subversion)
+        });
+    // For Bitcoin, `Pinned` above just means "the configured flavour".
+    // Blake2b: a node whose build cannot be read is neither reused (it may
+    // be a stale build) nor stopped (it may be a healthy shared node that
+    // is just busy); the start is refused and can be retried.
+    Ok(match running {
+        Some((_, _, Blake2bBuild::Unreadable, subversion)) => {
+            warn!(
+                "Could not identify the running Bitcoin Blake2b node's build ({:?}); \
+                     leaving it running",
+                subversion
+            );
+            return Err(StartInternalBitcoindError::BitcoinDError(
+                "Could not read which build the running Bitcoin Blake2b node is; it was \
+                     left running. Try again in a moment."
+                    .into(),
+            ));
+        }
+        Some((running, running_flavor, build, subversion)) => {
+            let reusable = build == Blake2bBuild::Pinned;
+            if chain.is_blake2b() && !reusable {
+                warn!(
+                    "A Bitcoin Blake2b node that is not the pinned {KNOTS_BLAKE2B_VERSION} \
+                         build is running on the managed RPC port ({}); it will be replaced",
+                    subversion.as_deref().unwrap_or_default()
+                );
+            }
+            Some(RunningManagedNode {
+                node: running,
+                flavor: running_flavor,
+                reusable,
+            })
+        }
+        None => None,
+    })
 }
 
 fn verify_managed_fork_rpc_config(
@@ -6761,6 +6789,33 @@ mod blake2b_pin_bump {
         assert!(started.elapsed() < time::Duration::from_secs(10));
     }
 
+    fn read_fake_rpc_body(stream: &mut impl std::io::Read) -> Option<String> {
+        let mut request = Vec::new();
+        let mut buf = [0u8; 4096];
+        loop {
+            let n = stream.read(&mut buf).ok()?;
+            if n == 0 {
+                break None;
+            }
+            request.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&request).to_string();
+            let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                continue;
+            };
+            let length = head
+                .lines()
+                .find_map(|l| {
+                    l.to_ascii_lowercase()
+                        .strip_prefix("content-length:")
+                        .map(|v| v.trim().parse::<usize>().unwrap_or(0))
+                })
+                .unwrap_or(0);
+            if body.len() >= length {
+                break Some(body[..length].to_string());
+            }
+        }
+    }
+
     /// A minimal JSON-RPC node on `listener`: answers `echo`, reports
     /// `subversion` from `getnetworkinfo`, refuses every other method, and on
     /// `stop` records it and closes the port, as a stopping node does.
@@ -6770,7 +6825,7 @@ mod blake2b_pin_bump {
         stopped: std::sync::Arc<std::sync::atomic::AtomicBool>,
         done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> std::thread::JoinHandle<()> {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::sync::atomic::Ordering;
         std::thread::spawn(move || {
             for stream in listener.incoming() {
@@ -6779,32 +6834,7 @@ mod blake2b_pin_bump {
                 }
                 let Ok(mut stream) = stream else { break };
                 let _ = stream.set_read_timeout(Some(time::Duration::from_secs(2)));
-                let mut request = Vec::new();
-                let mut buf = [0u8; 4096];
-                let body = loop {
-                    let Ok(n) = stream.read(&mut buf) else {
-                        break None;
-                    };
-                    if n == 0 {
-                        break None;
-                    }
-                    request.extend_from_slice(&buf[..n]);
-                    let text = String::from_utf8_lossy(&request).to_string();
-                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
-                        continue;
-                    };
-                    let length = head
-                        .lines()
-                        .find_map(|l| {
-                            l.to_ascii_lowercase()
-                                .strip_prefix("content-length:")
-                                .map(|v| v.trim().parse::<usize>().unwrap_or(0))
-                        })
-                        .unwrap_or(0);
-                    if body.len() >= length {
-                        break Some(body[..length].to_string());
-                    }
-                };
+                let body = read_fake_rpc_body(&mut stream);
                 let Some(body) = body else { continue };
                 let request: serde_json::Value =
                     serde_json::from_str(&body).unwrap_or(serde_json::Value::Null);
