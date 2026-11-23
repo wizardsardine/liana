@@ -361,6 +361,32 @@ impl SplitHubPanel {
         }
     }
 
+    fn update_split_view(&mut self, cache: &Cache, message: SplitMessage) -> Task<Message> {
+        match message {
+            SplitMessage::ToggleCoin(outpoint) => {
+                if !self.working && !self.excluded.remove(&outpoint) {
+                    self.excluded.insert(outpoint);
+                }
+            }
+            SplitMessage::Method(method) => {
+                if !self.working && (method == Method::SplitKey || self.signature_available()) {
+                    self.method = Some(method);
+                }
+            }
+            SplitMessage::Sign => return self.sign(cache),
+            SplitMessage::SplitRest => {
+                self.continuing = true;
+                self.excluded.clear();
+            }
+            SplitMessage::RetryFee => {
+                if !self.working && self.fee_failed {
+                    return Task::done(fetch_fee(self.start_fee_fetch()));
+                }
+            }
+        }
+        Task::none()
+    }
+
     fn sign(&mut self, cache: &Cache) -> Task<Message> {
         let flow = self.flow(cache);
         if flow.step != Step::Review {
@@ -448,28 +474,9 @@ impl State for SplitHubPanel {
         message: Message,
     ) -> Task<Message> {
         match message {
-            Message::View(ViewMessage::Split(message)) => match message {
-                SplitMessage::ToggleCoin(outpoint) => {
-                    if !self.working && !self.excluded.remove(&outpoint) {
-                        self.excluded.insert(outpoint);
-                    }
-                }
-                SplitMessage::Method(method) => {
-                    if !self.working && (method == Method::SplitKey || self.signature_available()) {
-                        self.method = Some(method);
-                    }
-                }
-                SplitMessage::Sign => return self.sign(cache),
-                SplitMessage::SplitRest => {
-                    self.continuing = true;
-                    self.excluded.clear();
-                }
-                SplitMessage::RetryFee => {
-                    if !self.working && self.fee_failed {
-                        return Task::done(fetch_fee(self.start_fee_fetch()));
-                    }
-                }
-            },
+            Message::View(ViewMessage::Split(message)) => {
+                return self.update_split_view(cache, message);
+            }
             Message::SplitFeeRate { generation, rate } => {
                 return self.set_feerate(generation, rate)
             }

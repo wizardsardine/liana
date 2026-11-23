@@ -7974,6 +7974,20 @@ impl App {
         )
     }
 
+    fn route_split_build_stage(
+        &mut self,
+        stage: crate::services::split_coins::BuildStage,
+    ) -> Task<Message> {
+        if let Some(panel) = self.panels.split_hub.as_mut() {
+            return panel.update(
+                self.daemon.clone(),
+                &self.cache,
+                Message::SplitBuildStage(stage),
+            );
+        }
+        Task::none()
+    }
+
     fn route_split_prepared(
         &mut self,
         result: Result<Box<crate::services::split_coins::SplitRecord>, String>,
@@ -8893,16 +8907,7 @@ impl App {
                 return self.route_split_prepared(result);
             }
             // To Split coins whichever panel is showing, like the result.
-            Message::SplitBuildStage(stage) => {
-                if let Some(panel) = self.panels.split_hub.as_mut() {
-                    return panel.update(
-                        self.daemon.clone(),
-                        &self.cache,
-                        Message::SplitBuildStage(stage),
-                    );
-                }
-                return Task::none();
-            }
+            Message::SplitBuildStage(stage) => return self.route_split_build_stage(stage),
             Message::View(view::Message::CreateBlake2bCopy) => {
                 return self.route_create_blake2b_copy();
             }
