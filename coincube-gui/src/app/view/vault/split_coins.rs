@@ -934,6 +934,14 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
         column = column
             .push(p2_regular(coincube_ui::locale::notice(error.clone())).style(theme::text::error));
     }
+    column = column.push(review_actions(flow));
+    if flow.working {
+        column = column.push(build_status(flow.method, flow.stage));
+    }
+    panel(column)
+}
+
+fn review_actions<'a>(flow: &SplitFlow) -> Row<'a, Message> {
     let blocked = flow.blocked();
     let sign_label = if flow.working {
         localized_copy("Building…")
@@ -960,11 +968,7 @@ fn review_step<'a>(flow: &SplitFlow) -> Element<'a, Message> {
             );
         }
     }
-    column = column.push(actions);
-    if flow.working {
-        column = column.push(build_status(flow.method, flow.stage));
-    }
-    panel(column)
+    actions
 }
 
 /// What the build in flight is doing, with moving dots so a slow step

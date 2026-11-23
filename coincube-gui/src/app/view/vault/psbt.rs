@@ -689,47 +689,11 @@ fn ledger_view<'a>(
     let unsigned = &tx.psbt.unsigned_tx;
     let txid = unsigned.compute_txid();
     let labels = &tx.labels;
-    let value = move |amount: coincube_core::miniscript::bitcoin::Amount| -> Element<'a, Message> {
-        if mask_amounts {
-            coincube_ui::component::tenshu::text::label("••••").into()
-        } else {
-            amount_with_size_and_unit(&amount, 14, bitcoin_unit).into()
-        }
-    };
+    let value = move |amount| ledger_amount(amount, bitcoin_unit, mask_amounts);
 
     let mut column = Column::new().width(Length::Fill).push(hairline());
 
-    let coins = unsigned.input.len();
-    column = column.push(ledger_group(
-        icon::coins_icon(),
-        if coins == 1 {
-            localized_copy("Spends 1 coin").to_string()
-        } else {
-            localized_format!("Spends {} coins", "Gasta {} monedas", coins)
-        },
-        false,
-    ));
-    for input in &unsigned.input {
-        let outpoint = input.previous_output.to_string();
-        let coin = tx.coins.get(&input.previous_output);
-        let fallback = coin
-            .and_then(|c| labels.get(&c.address.to_string()))
-            .filter(|l| !l.is_empty())
-            .cloned()
-            .unwrap_or_else(|| localized_copy("Coin").to_string());
-        column = column.push(ledger_row(
-            ledger_title(
-                vec![outpoint.clone()],
-                labels.get(&outpoint),
-                fallback,
-                labels_editing.get(&outpoint),
-                true,
-                None,
-            ),
-            Some(copyable(outpoint)),
-            coin.map(|c| value(c.amount)),
-        ));
-    }
+    column = push_ledger_inputs(column, tx, labels_editing, &value);
 
     let self_transfer = tx.is_send_to_self();
     let payments: Vec<usize> = (0..unsigned.output.len())
@@ -799,22 +763,112 @@ fn ledger_view<'a>(
             }),
             Some(value(output.value)),
         ));
-        if let Some((_, crate::services::branta::LookupResult::Identified(matches))) =
-            identities.iter().find(|(vout, _)| *vout == i)
-        {
-            for (identity_index, identity) in matches.iter().enumerate() {
-                column = column.push(
-                    Container::new(crate::app::view::shared::recipient_identity::card(
-                        identity,
-                        Message::OpenVaultRecipientIdentity(i, identity_index),
-                        theme_mode,
-                    ))
-                    .padding([8, 0]),
-                );
-            }
-        }
+        column = push_ledger_payment_identities(column, identities, theme_mode, i);
     }
 
+    column = push_ledger_change(column, tx, network, self_transfer, &value);
+
+    if let Some(fee) = tx.fee_amount {
+        use coincube_ui::component::tenshu::text as tt;
+        use coincube_ui::theme::tenshu::text as tone_text;
+        column = column.push(ledger_row(
+            tt::label(localized_copy("Network fee")).into(),
+            tx.min_feerate_vb().map(|rate| {
+                tt::caption(format!("~{} sat/vB · {} vB", rate, tx.max_vbytes))
+                    .style(tone_text::muted)
+                    .into()
+            }),
+            Some(value(fee)),
+        ));
+    }
+    column.into()
+}
+
+fn ledger_amount<'a>(
+    amount: coincube_core::miniscript::bitcoin::Amount,
+    bitcoin_unit: BitcoinDisplayUnit,
+    mask_amounts: bool,
+) -> Element<'a, Message> {
+    if mask_amounts {
+        coincube_ui::component::tenshu::text::label("••••").into()
+    } else {
+        amount_with_size_and_unit(&amount, 14, bitcoin_unit).into()
+    }
+}
+
+fn push_ledger_inputs<'a>(
+    mut column: Column<'a, Message>,
+    tx: &'a SpendTx,
+    labels_editing: &'a HashMap<String, form::Value<String>>,
+    value: &impl Fn(coincube_core::miniscript::bitcoin::Amount) -> Element<'a, Message>,
+) -> Column<'a, Message> {
+    let unsigned = &tx.psbt.unsigned_tx;
+    let labels = &tx.labels;
+    let coins = unsigned.input.len();
+    column = column.push(ledger_group(
+        icon::coins_icon(),
+        if coins == 1 {
+            localized_copy("Spends 1 coin").to_string()
+        } else {
+            localized_format!("Spends {} coins", "Gasta {} monedas", coins)
+        },
+        false,
+    ));
+    for input in &unsigned.input {
+        let outpoint = input.previous_output.to_string();
+        let coin = tx.coins.get(&input.previous_output);
+        let fallback = coin
+            .and_then(|c| labels.get(&c.address.to_string()))
+            .filter(|l| !l.is_empty())
+            .cloned()
+            .unwrap_or_else(|| localized_copy("Coin").to_string());
+        column = column.push(ledger_row(
+            ledger_title(
+                vec![outpoint.clone()],
+                labels.get(&outpoint),
+                fallback,
+                labels_editing.get(&outpoint),
+                true,
+                None,
+            ),
+            Some(copyable(outpoint)),
+            coin.map(|c| value(c.amount)),
+        ));
+    }
+    column
+}
+
+fn push_ledger_payment_identities<'a>(
+    mut column: Column<'a, Message>,
+    identities: &'a [(usize, crate::services::branta::LookupResult)],
+    theme_mode: coincube_ui::theme::palette::ThemeMode,
+    i: usize,
+) -> Column<'a, Message> {
+    if let Some((_, crate::services::branta::LookupResult::Identified(matches))) =
+        identities.iter().find(|(vout, _)| *vout == i)
+    {
+        for (identity_index, identity) in matches.iter().enumerate() {
+            column = column.push(
+                Container::new(crate::app::view::shared::recipient_identity::card(
+                    identity,
+                    Message::OpenVaultRecipientIdentity(i, identity_index),
+                    theme_mode,
+                ))
+                .padding([8, 0]),
+            );
+        }
+    }
+    column
+}
+
+fn push_ledger_change<'a>(
+    mut column: Column<'a, Message>,
+    tx: &SpendTx,
+    network: Network,
+    self_transfer: bool,
+    value: &impl Fn(coincube_core::miniscript::bitcoin::Amount) -> Element<'a, Message>,
+) -> Column<'a, Message> {
+    let unsigned = &tx.psbt.unsigned_tx;
     if !self_transfer {
         for &i in &tx.change_indexes {
             let Some(output) = unsigned.output.get(i) else {
@@ -840,21 +894,7 @@ fn ledger_view<'a>(
             ));
         }
     }
-
-    if let Some(fee) = tx.fee_amount {
-        use coincube_ui::component::tenshu::text as tt;
-        use coincube_ui::theme::tenshu::text as tone_text;
-        column = column.push(ledger_row(
-            tt::label(localized_copy("Network fee")).into(),
-            tx.min_feerate_vb().map(|rate| {
-                tt::caption(format!("~{} sat/vB · {} vB", rate, tx.max_vbytes))
-                    .style(tone_text::muted)
-                    .into()
-            }),
-            Some(value(fee)),
-        ));
-    }
-    column.into()
+    column
 }
 
 /// A 1px rule in the shell's line colour.
