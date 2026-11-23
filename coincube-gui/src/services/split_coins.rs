@@ -2121,6 +2121,153 @@ mod tests {
         }
     }
 
+    /// What a build reports while it runs: the stages in order, none for a
+    /// request refused up front, and nothing past the step that failed.
+    mod build_stages {
+        use super::*;
+        use crate::{
+            daemon::{client::Coincubed, DaemonError},
+            services::split_test_wallets::{imported_fork_vault, Shape},
+            utils::mock::Daemon as MockDaemon,
+        };
+        use iced::futures::{channel::mpsc, StreamExt};
+        use serde_json::{json, Value};
+
+        type Reply = (Option<Value>, Result<Value, DaemonError>);
+
+        fn shared() -> [OutPoint; 2] {
+            [
+                OutPoint::new(Txid::from_str(&"11".repeat(32)).unwrap(), 0),
+                OutPoint::new(Txid::from_str(&"22".repeat(32)).unwrap(), 1),
+            ]
+        }
+
+        fn list_coins(outpoints: &[OutPoint]) -> Reply {
+            let coins: Vec<_> = outpoints
+                .iter()
+                .map(|outpoint| coin(*outpoint, Some(100)))
+                .collect();
+            (None, Ok(json!({ "coins": coins })))
+        }
+
+        /// A self-send of exactly `inputs` into one output of the wallet.
+        fn create_spend(inputs: &[OutPoint]) -> Reply {
+            let mut psbt = Psbt::from_unsigned_tx(tx(inputs.to_vec(), None)).unwrap();
+            psbt.outputs[0].bip32_derivation.insert(
+                coincube_core::miniscript::bitcoin::secp256k1::PublicKey::from_str(
+                    "02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5",
+                )
+                .unwrap(),
+                (Default::default(), Default::default()),
+            );
+            (
+                None,
+                Ok(json!({ "psbt": psbt.to_string(), "warnings": [] })),
+            )
+        }
+
+        async fn run(
+            replies: Vec<Reply>,
+            method: Method,
+            coins: Vec<OutPoint>,
+            key: Option<KeyChoice>,
+        ) -> (Result<Prepared, String>, Vec<BuildStage>) {
+            let daemon: Arc<dyn Daemon + Send + Sync> =
+                Arc::new(Coincubed::new(MockDaemon::new(replies).run()));
+            let wallet = Arc::new(imported_fork_vault(Shape::Wpkh));
+            assert!(wallet.chain.is_blake2b());
+            let (_session, live) = tokio::sync::watch::channel(7);
+            let (sender, receiver) = mpsc::channel(16);
+            let result = prepare(
+                daemon,
+                wallet,
+                method,
+                coins,
+                key,
+                2,
+                crate::services::coincube::CoincubeClient::new(),
+                7,
+                live,
+                sender.into(),
+            )
+            .await;
+            (result, receiver.collect().await)
+        }
+
+        #[tokio::test]
+        async fn a_build_reports_its_stages_in_order() {
+            let coins = shared();
+            let (result, stages) = run(
+                vec![
+                    list_coins(&coins),
+                    create_spend(&coins),
+                    (None, Ok(json!({}))),
+                ],
+                Method::Signature,
+                coins.to_vec(),
+                None,
+            )
+            .await;
+            assert!(result.is_ok(), "{:?}", result.err());
+            assert_eq!(stages, [BuildStage::CheckingCoins, BuildStage::Building]);
+        }
+
+        #[tokio::test]
+        async fn a_refused_request_reports_no_stage() {
+            let (result, stages) = run(vec![], Method::Signature, vec![], None).await;
+            assert!(result.is_err());
+            assert!(stages.is_empty(), "{:?}", stages);
+        }
+
+        #[tokio::test]
+        async fn a_failed_step_reports_nothing_after_it() {
+            let coins = shared();
+            // The coins changed: never "Building".
+            let (result, stages) = run(
+                vec![list_coins(&coins[..1])],
+                Method::Signature,
+                coins.to_vec(),
+                None,
+            )
+            .await;
+            assert!(result.is_err());
+            assert_eq!(stages, [BuildStage::CheckingCoins]);
+
+            // Not enough for the fee: stops at "Building".
+            let (result, stages) = run(
+                vec![list_coins(&coins), (None, Ok(json!({ "missing": 500 })))],
+                Method::Signature,
+                coins.to_vec(),
+                None,
+            )
+            .await;
+            assert!(result.unwrap_err().contains("500 sats short"));
+            assert_eq!(stages, [BuildStage::CheckingCoins, BuildStage::Building]);
+        }
+
+        /// A split key is checked first; a proof that fails stops the build
+        /// before the coins are read.
+        #[tokio::test]
+        async fn a_split_key_is_checked_first() {
+            let (record, _) = split_fixture();
+            let path = RetainedPath::decode(
+                record.key.unwrap(),
+                &hex::decode(record.key_path.unwrap()).unwrap(),
+            )
+            .unwrap();
+            // The proof is for another coin than the key, so it fails before
+            // anything asks Connect.
+            let key = KeyChoice {
+                outpoint: shared()[1],
+                path,
+            };
+            let (result, stages) =
+                run(vec![], Method::SplitKey, vec![shared()[0]], Some(key)).await;
+            assert!(result.unwrap_err().contains("doesn't match"));
+            assert_eq!(stages, [BuildStage::CheckingKey]);
+        }
+    }
+
     #[test]
     fn construction_must_spend_exactly_the_request_into_one_owned_output() {
         let (_, split) = split_fixture();

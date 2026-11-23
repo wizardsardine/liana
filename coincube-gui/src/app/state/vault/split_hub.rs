@@ -419,6 +419,12 @@ impl SplitHubPanel {
         self.working = true;
     }
 
+    /// The stage the review shows, for the App's routing test.
+    #[cfg(test)]
+    pub(crate) fn build_stage_for_test(&self) -> Option<split_coins::BuildStage> {
+        self.stage.filter(|_| self.working)
+    }
+
     /// `(working, error)`, for the App's routing test.
     #[cfg(test)]
     pub(crate) fn split_progress_for_test(&self) -> (bool, Option<String>) {
