@@ -1518,13 +1518,29 @@ impl GlobalHome {
             )));
         };
         self.is_sending = true;
+        // The daemon returns before its poller has seen the spend, so record it
+        // on the wallet as the Send dialog does: until the daemon catches up,
+        // the coin cache keeps these inputs out of the next transfer.
+        let broadcast_record = self.wallet.clone().map(|wallet| {
+            (
+                wallet,
+                spend_tx.psbt.unsigned_tx.clone(),
+                spend_tx.coins.values().cloned().collect::<Vec<_>>(),
+                spend_tx.change_indexes.clone(),
+                spend_tx.network,
+            )
+        });
 
         Task::perform(
             async move {
                 daemon_clone
                     .broadcast_spend_tx(&txid)
                     .await
-                    .map_err(|e| format!("Failed to broadcast: {}", e))
+                    .map_err(|e| format!("Failed to broadcast: {}", e))?;
+                if let Some((wallet, tx, coins, change_indexes, network)) = broadcast_record {
+                    wallet.record_broadcast(tx, coins, change_indexes, network);
+                }
+                Ok(())
             },
             move |result| Self::vault_broadcast_message(to_kind, amount_sat, result),
         )

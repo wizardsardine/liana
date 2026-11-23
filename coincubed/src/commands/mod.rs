@@ -6546,6 +6546,18 @@ mod tests {
         assert_eq!(*sent.lock().unwrap(), vec![txid]);
     }
 
+    /// `DaemonHandle::start` is what gives the control its backend's handle.
+    #[test]
+    fn a_started_daemon_broadcasts_through_its_backends_detached_handle() {
+        let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let mut backend = DummyBitcoind::new();
+        backend.detached_broadcasts = Some(sent.clone());
+        let ms = DummyCoincube::new(backend, DummyDatabase::new());
+        let tx = any_transaction();
+        assert_eq!(ms.control().send_to_network(&tx), Ok(()));
+        assert_eq!(*sent.lock().unwrap(), vec![tx.compute_txid()]);
+    }
+
     /// A backend without a detached handle still broadcasts, through its lock,
     /// and its refusal is still the caller's error.
     #[test]
@@ -6844,6 +6856,72 @@ mod tests {
             assert!(matches!(broadcast, Err(CommandError::UnknownSpend(_))));
             let rbf = control.rbf_psbt(&txid, false, Some(1)).map(|_| ());
             assert!(!gated(&rbf), "{:?}", rbf);
+        }
+
+        /// End to end on a stored, signed spend: with the backend locked as
+        /// during a sync and nothing reading the poller queue, the non-waiting
+        /// broadcast still sends and returns, leaving an eager poll requested.
+        #[test]
+        fn broadcast_without_waiting_sends_a_stored_spend_while_the_poller_is_busy() {
+            let (signers, descriptor, psbt) = vault_fixture();
+            let signed = legacy(&legacy(&psbt, &signers[0]), &signers[1]);
+            let txid = signed.unsigned_tx.compute_txid();
+            let tmp = tmp_dir();
+            std::fs::create_dir_all(&tmp).unwrap();
+            let config = crate::config::Config::new(
+                crate::config::BitcoinConfig::new(
+                    ChainId::Bitcoin,
+                    std::time::Duration::from_secs(2),
+                ),
+                None,
+                log::LevelFilter::Debug,
+                descriptor,
+                crate::datadir::DataDirectory::new(tmp.join("d")),
+            );
+            let backend: std::sync::Arc<std::sync::Mutex<dyn BitcoinInterface>> =
+                std::sync::Arc::new(std::sync::Mutex::new(DummyBitcoind::new()));
+            let db = DummyDatabase::new();
+            db.connection().store_spend(&signed);
+            let history = std::sync::Arc::new(crate::bitcoin::HistorySyncCache::default());
+            let sent = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let broadcaster: crate::bitcoin::DetachedBroadcaster = {
+                let sent = sent.clone();
+                std::sync::Arc::new(move |tx: &Transaction| {
+                    sent.lock().unwrap().push(tx.compute_txid());
+                    Ok(())
+                })
+            };
+            let (poller_sender, poller_receiver) = std::sync::mpsc::sync_channel(1);
+            let control = DaemonControl::new(
+                config,
+                backend.clone(),
+                poller_sender,
+                std::sync::Arc::new(std::sync::Mutex::new(db)),
+                secp256k1::Secp256k1::verification_only(),
+                Default::default(),
+                Default::default(),
+                history.clone(),
+                Default::default(),
+            )
+            .with_detached_broadcaster(Some(broadcaster));
+
+            let _syncing = backend.lock().unwrap();
+            let (done_tx, done_rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                done_tx
+                    .send(control.broadcast_spend_without_waiting(&txid))
+                    .unwrap()
+            });
+            let result = done_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("the non-waiting broadcast must not wait for the sync or a poll");
+            assert!(result.is_ok(), "{:?}", result);
+            assert_eq!(*sent.lock().unwrap(), vec![txid]);
+            assert!(history.take_eager_sync_request());
+            assert!(matches!(
+                poller_receiver.try_recv(),
+                Ok(PollerMessage::PollNowNoAck)
+            ));
         }
 
         fn unified(psbt: &Psbt, signer: &MasterSigner) -> Psbt {
