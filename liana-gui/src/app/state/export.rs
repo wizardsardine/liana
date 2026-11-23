@@ -104,7 +104,7 @@ impl ExportModal {
                     .map(|(_, checksum)| checksum)
                     .expect("cannot fail")
                     .to_string();
-                format!("liana-{checksum}.txt")
+                format!("Liana-{checksum}.txt")
             }
             ImportExportType::ExportEncryptedDescriptor { .. } => "liana.bip138".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
