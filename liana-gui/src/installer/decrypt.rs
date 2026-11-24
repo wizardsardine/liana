@@ -44,7 +44,7 @@ use liana_ui::{
 
 use crate::{
     app::state::export::ExportModal,
-    backup::Backup,
+    backup::LegacyBackup,
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
     installer,
@@ -113,7 +113,7 @@ impl Debug for DecryptModal {
 #[derive(Debug, Clone)]
 pub enum Decrypt {
     Fetched(Fingerprint, String /* name */),
-    Backup(Backup),
+    Backup(LegacyBackup),
     Xpub(String),
     Xpubs(Vec<bip32::Xpub>),
     PasteXpub,
@@ -198,7 +198,7 @@ fn decrypted_to_decrypt(decrypted: Decrypted) -> Option<Decrypt> {
         }
         Decrypted::WalletBackup(backup_bytes) => {
             let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
-            let backup: Backup = serde_json::from_str(&backup_str).ok()?;
+            let backup: LegacyBackup = serde_json::from_str(&backup_str).ok()?;
             if backup.accounts.len() != 1 {
                 return None;
             }
@@ -227,7 +227,7 @@ fn descriptor_to_decrypt(descriptor: &str, decrypted: Decrypted) -> Decrypt {
     } else {
         Network::Signet
     };
-    Decrypt::Backup(Backup::from_descriptor(descr, network))
+    Decrypt::Backup(LegacyBackup::from_descriptor(descr, network))
 }
 
 /// As in the bip138 binary: a Ledger refuses a path it does not consider standard unless it shows

@@ -34,7 +34,7 @@ use liana_ui::widget::*;
 
 use crate::{
     app::settings::{ProviderKey, WalletSettings},
-    backup::Backup,
+    backup::LegacyBackup,
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
@@ -76,7 +76,7 @@ pub struct Final {
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
     key_redemptions: HashMap<ProviderKey, Option<Result<(), liana_connect::keys::Error>>>,
-    backup: Option<Backup>,
+    backup: Option<LegacyBackup>,
     network: Network,
 }
 

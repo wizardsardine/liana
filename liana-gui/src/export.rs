@@ -44,7 +44,7 @@ use crate::{
         wallet::Wallet,
         Config,
     },
-    backup::{self, Backup},
+    backup::{self, LegacyBackup},
     daemon::{
         model::{HistoryCursor, HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
@@ -271,7 +271,7 @@ pub enum Progress {
             LianaDescriptor,
             Option<Network>,
             HashMap<Fingerprint, settings::KeySetting>,
-            Backup,
+            LegacyBackup,
         ),
     ),
     EncryptedFile(Vec<u8>),
@@ -705,7 +705,7 @@ pub async fn import_descriptor(
     let descriptor = if let Ok(d) = LianaDescriptor::from_str(descr_str) {
         Some(d)
     } else {
-        let backup: Result<Backup, _> = serde_json::from_str(descr_str);
+        let backup: Result<LegacyBackup, _> = serde_json::from_str(descr_str);
         backup.ok().and_then(|b| {
             if b.accounts.len() == 1 {
                 LianaDescriptor::from_str(&b.accounts[0].descriptor).ok()
@@ -911,7 +911,7 @@ pub async fn import_backup(
     file.read_to_string(&mut backup_str)?;
     backup_str = backup_str.trim().to_string();
 
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
+    let backup: Result<LegacyBackup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(psbt) => psbt,
         Err(e) => {
@@ -1229,7 +1229,7 @@ pub async fn from_backup(
     };
 
     // try to parse as plaintext descriptor or backup file
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
+    let backup: Result<LegacyBackup, _> = serde_json::from_str(&backup_str);
     let backup = match backup {
         Ok(b) => b,
         Err(e) => {
@@ -1249,7 +1249,7 @@ pub async fn from_backup(
                     } else {
                         Network::Signet
                     };
-                    Backup::from_descriptor(descr, network)
+                    LegacyBackup::from_descriptor(descr, network)
                 }
                 Err(e2) => {
                     return Err(Error::BackupImport(format!(
@@ -1327,7 +1327,7 @@ pub async fn import_backup_at_launch(
     daemon: Arc<dyn Daemon + Sync + Send>,
     datadir: LianaDirectory,
     internal_bitcoind: Option<Bitcoind>,
-    backup: Backup,
+    backup: LegacyBackup,
 ) -> Result<
     (
         Cache,
@@ -1478,7 +1478,7 @@ pub async fn app_backup(
     daemon: Arc<dyn Daemon + Sync + Send>,
     sender: &UnboundedSender<Progress>,
 ) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
+    let backup = LegacyBackup::from_app(datadir, network, config, wallet, daemon, sender).await?;
     serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
 }
 

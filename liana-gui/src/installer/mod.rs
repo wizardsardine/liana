@@ -33,7 +33,7 @@ use crate::{
         },
         wallet::wallet_name,
     },
-    backup::Backup,
+    backup::LegacyBackup,
     daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
@@ -94,7 +94,7 @@ pub enum NextState {
         datadir: LianaDirectory,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-        backup: Option<Backup>,
+        backup: Option<LegacyBackup>,
         wallet_settings: WalletSettings,
     },
     Launcher {

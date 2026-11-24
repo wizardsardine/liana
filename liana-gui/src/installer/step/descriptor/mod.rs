@@ -29,7 +29,7 @@ use crate::{
         },
         wallet::wallet_name,
     },
-    backup::Backup,
+    backup::LegacyBackup,
     dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
@@ -48,7 +48,7 @@ pub struct ImportDescriptor {
     error: Option<String>,
     modal: ImportDescriptorModal,
     imported_descriptor: form::Value<String>,
-    imported_backup: Option<Backup>,
+    imported_backup: Option<LegacyBackup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
     paste_descriptor_expanded: bool,
 }
@@ -222,7 +222,7 @@ impl Step for ImportDescriptor {
             ctx.descriptor = Some(desc.clone());
             ctx.backup = Some(match &self.imported_backup {
                 Some(backup) => backup.clone(),
-                None => Backup::from_descriptor(desc, self.network),
+                None => LegacyBackup::from_descriptor(desc, self.network),
             });
         } else {
             return false;

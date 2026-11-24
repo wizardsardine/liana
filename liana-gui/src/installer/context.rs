@@ -7,7 +7,7 @@ use std::{
 use crate::{
     airgap::device::AirgappedDevice,
     app::settings::KeySetting,
-    backup::Backup,
+    backup::LegacyBackup,
     dir::LianaDirectory,
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
     services::connect::client::backend::{BackendClient, BackendWalletClient},
@@ -85,7 +85,7 @@ pub struct Context {
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
     pub remote_backend: RemoteBackend,
-    pub backup: Option<Backup>,
+    pub backup: Option<LegacyBackup>,
     pub wallet_alias: String,
     pub pending_compile: Option<CompileInputs>,
     pub encrypted_backup_privacy_mode: bool,

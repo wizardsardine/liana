@@ -27,7 +27,7 @@ use lianad::{
 use crate::app;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{LianaSettings, WalletSettings};
-use crate::backup::Backup;
+use crate::backup::LegacyBackup;
 use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
 use crate::{
@@ -65,7 +65,7 @@ pub struct Loader {
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
-    pub backup: Option<Backup>,
+    pub backup: Option<LegacyBackup>,
     pub wallet_settings: WalletSettings,
     step: Step,
 }
@@ -94,7 +94,7 @@ pub enum Message {
                 Cache,
                 Arc<dyn Daemon + Sync + Send>,
                 Option<Bitcoind>,
-                Option<Backup>,
+                Option<LegacyBackup>,
             ),
             Error,
         >,
@@ -126,7 +126,7 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-        backup: Option<Backup>,
+        backup: Option<LegacyBackup>,
         wallet_settings: WalletSettings,
     ) -> (Self, Task<Message>) {
         let socket_path = datadir_path
@@ -425,14 +425,14 @@ pub async fn load_application(
     datadir_path: LianaDirectory,
     network: bitcoin::Network,
     internal_bitcoind: Option<Bitcoind>,
-    backup: Option<Backup>,
+    backup: Option<LegacyBackup>,
 ) -> Result<
     (
         Arc<Wallet>,
         Cache,
         Arc<dyn Daemon + Sync + Send>,
         Option<Bitcoind>,
-        Option<Backup>,
+        Option<LegacyBackup>,
     ),
     Error,
 > {

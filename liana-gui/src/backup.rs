@@ -49,12 +49,12 @@ fn strip_version_suffix(version: &str) -> &str {
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Backup {
+pub struct LegacyBackup {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    pub accounts: Vec<Account>,
+    pub accounts: Vec<LegacyAccount>,
     pub network: Network,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<u64>,
@@ -99,29 +99,29 @@ impl From<DaemonError> for Error {
     }
 }
 
-impl Display for Backup {
+impl Display for LegacyBackup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = serde_json::to_string(self).map_err(|_| std::fmt::Error)?;
         write!(f, "{str}")
     }
 }
 
-impl Debug for Backup {
+impl Debug for LegacyBackup {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let str = serde_json::to_string_pretty(self).map_err(|_| std::fmt::Error)?;
         write!(f, "{str}")
     }
 }
 
-impl Backup {
+impl LegacyBackup {
     /// Create a Backup from a descriptor
     ///
     /// # Arguments
     /// * `descriptor` - the descriptor
     /// * `network` - the network
     pub fn from_descriptor(descriptor: LianaDescriptor, network: Network) -> Self {
-        let account = Account::new(descriptor.to_string());
-        Backup {
+        let account = LegacyAccount::new(descriptor.to_string());
+        LegacyBackup {
             name: None,
             alias: None,
             accounts: vec![account],
@@ -169,9 +169,9 @@ impl Backup {
 
         let _ = sender.send(Progress::Progress(20.0));
 
-        let mut account = Account::new(descriptor);
+        let mut account = LegacyAccount::new(descriptor);
 
-        account.chain_tip = Some(ChainTip {
+        account.chain_tip = Some(LegacyChainTip {
             block_height: info.block_height,
             block_hash: None,
         });
@@ -233,12 +233,12 @@ impl Backup {
             .await?
             .coins
             .into_iter()
-            .map(|c| (c.outpoint.clone().to_string(), Coin::from(c)))
+            .map(|c| (c.outpoint.clone().to_string(), LegacyCoin::from(c)))
             .collect();
 
         let _ = sender.send(Progress::Progress(60.0));
 
-        Ok(Backup {
+        Ok(LegacyBackup {
             name: Some(name),
             alias: wallet_alias,
             accounts: vec![account],
@@ -250,7 +250,7 @@ impl Backup {
         })
     }
 
-    fn account(&self) -> Result<&Account, Error> {
+    fn account(&self) -> Result<&LegacyAccount, Error> {
         if self.accounts.len() != 1 {
             Err(Error::NotSingleWallet)
         } else {
@@ -315,7 +315,7 @@ async fn get_transactions(
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Account {
+pub struct LegacyAccount {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub descriptor: String,
@@ -334,21 +334,21 @@ pub struct Account {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub psbts: Vec<String>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub coins: BTreeMap<String, Coin>,
+    pub coins: BTreeMap<String, LegacyCoin>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chain_tip: Option<ChainTip>,
+    pub chain_tip: Option<LegacyChainTip>,
     #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
     pub proprietary: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct ChainTip {
+pub struct LegacyChainTip {
     pub block_height: i32,
     pub block_hash: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-pub struct Coin {
+pub struct LegacyCoin {
     amount: u64,
     outpoint: String,
     address: String,
@@ -359,7 +359,7 @@ pub struct Coin {
     is_from_self: Option<bool>,
 }
 
-impl From<ListCoinsEntry> for Coin {
+impl From<ListCoinsEntry> for LegacyCoin {
     fn from(value: ListCoinsEntry) -> Self {
         Self {
             amount: value.amount.to_sat(),
@@ -374,7 +374,7 @@ impl From<ListCoinsEntry> for Coin {
     }
 }
 
-impl Account {
+impl LegacyAccount {
     pub fn new(descriptor: String) -> Self {
         Self {
             name: None,
@@ -432,9 +432,9 @@ pub enum KeyType {
 mod test {
     use super::*;
 
-    fn round_trip(backup: &Backup) -> bool {
+    fn round_trip(backup: &LegacyBackup) -> bool {
         let serialized = serde_json::to_string(backup).unwrap();
-        let parsed: Backup = serde_json::from_str(&serialized).unwrap();
+        let parsed: LegacyBackup = serde_json::from_str(&serialized).unwrap();
         *backup == parsed
     }
 
@@ -448,7 +448,7 @@ mod test {
 
     #[test]
     fn backup_serde() {
-        let mut backup = Backup {
+        let mut backup = LegacyBackup {
             name: None,
             alias: None,
             accounts: Vec::new(),
@@ -472,7 +472,7 @@ mod test {
 
         let descr_str = r#"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"#.to_string();
 
-        let account = Account::new(descr_str);
+        let account = LegacyAccount::new(descr_str);
         backup.accounts.push(account);
 
         let serialized = serde_json::to_string(&backup).unwrap();
@@ -483,16 +483,16 @@ mod test {
 
         // if there is no version, the default is 0
         let no_version = r#"{"name":"Liana","accounts":[{"descriptor":"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"}],"network":"signet","date":0}"#;
-        let parsed: Backup = serde_json::from_str(no_version).unwrap();
+        let parsed: LegacyBackup = serde_json::from_str(no_version).unwrap();
         assert_eq!(parsed.version, 0);
 
         // Network is mandatory for an account
         let no_network = r#"{"name":"Liana","accounts":[{"descriptor":"wsh(or_d(pk([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<0;1>/*),and_v(v:pkh([19608592/48'/1'/0'/2']tpubDEjf1AbrUjxnw8jg6Gi12CunPqnCobLP6Ktoy4Hd52pa65d6QRPg5CSkdFrqPDjJ8BAUuMEDVDRQVjtuWWksMqBeZCqyABFucN9ErQq8oVX/<2;3>/*),older(52596))))#x6u6lmej"}],"date":0,"version":0}"#;
-        let parsed: Result<Backup, _> = serde_json::from_str(no_network);
+        let parsed: Result<LegacyBackup, _> = serde_json::from_str(no_network);
         assert!(parsed.is_err());
 
         // But it's the only mandatory field, w/ accounts array
         let minimal = r#"{"network":"signet","accounts":[]}"#;
-        let _parsed: Backup = serde_json::from_str(minimal).unwrap();
+        let _parsed: LegacyBackup = serde_json::from_str(minimal).unwrap();
     }
 }
