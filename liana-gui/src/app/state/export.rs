@@ -102,13 +102,7 @@ impl ExportModal {
             | ImportExportType::ImportXpub(_)
             | ImportExportType::ImportXpubs(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
-                let checksum = descriptor
-                    .to_string()
-                    .split_once('#')
-                    .map(|(_, checksum)| checksum)
-                    .expect("cannot fail")
-                    .to_string();
-                format!("Liana-{checksum}.txt")
+                format!("Liana-{}.txt", descriptor.checksum())
             }
             ImportExportType::ExportEncryptedDescriptor { .. } => "liana.bip138".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),

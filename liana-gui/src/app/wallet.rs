@@ -26,11 +26,7 @@ use super::settings::{fiat, WalletId, WalletSettings};
 const DEFAULT_WALLET_NAME: &str = "Liana";
 
 pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
-    let desc = main_descriptor.to_string();
-    let checksum = desc
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .unwrap_or("");
+    let checksum = main_descriptor.checksum();
     format!(
         "{}{}{}",
         DEFAULT_WALLET_NAME,
@@ -62,12 +58,7 @@ impl Wallet {
         Self {
             name: wallet_name(&main_descriptor),
             alias: None,
-            descriptor_checksum: main_descriptor
-                .to_string()
-                .split_once('#')
-                .map(|(_, checksum)| checksum)
-                .unwrap()
-                .to_string(),
+            descriptor_checksum: main_descriptor.checksum(),
             pinned_at: None,
             main_descriptor,
             keys_aliases: HashMap::new(),

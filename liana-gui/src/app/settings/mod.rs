@@ -433,12 +433,7 @@ impl WalletId {
     pub fn generate(descriptor: &LianaDescriptor) -> Self {
         WalletId {
             timestamp: Some(chrono::Utc::now().timestamp()),
-            descriptor_checksum: descriptor
-                .to_string()
-                .split_once('#')
-                .map(|(_, checksum)| checksum)
-                .expect("LianaDescriptor.to_string() always include the checksum")
-                .to_string(),
+            descriptor_checksum: descriptor.checksum(),
         }
     }
     pub fn is_legacy(&self) -> bool {
