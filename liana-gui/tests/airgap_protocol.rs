@@ -18,12 +18,14 @@ use liana::{
     descriptors::LianaDescriptor,
     miniscript::bitcoin::{
         base64::{prelude::BASE64_STANDARD, Engine},
-        bip32::{ChildNumber, Fingerprint, Xpub},
+        bip32::{ChildNumber, DerivationPath, Fingerprint, Xpub},
         psbt::{Input, Output, Psbt},
         Address, Network,
     },
 };
-use liana_gui::airgap::device::{get_keys, Answer, Exchange, Registration, RequestBuilder};
+use liana_gui::airgap::device::{
+    get_descriptor_keys, get_keys, Answer, Exchange, Registration, RequestBuilder,
+};
 use liana_ui::component::modal::LIANA_ACCOUNTS;
 
 const ID: RequestId = RequestId([0, 1]);
@@ -162,13 +164,60 @@ fn get_xpubs_reads_every_account_back() {
     assert!(signer
         .capabilities
         .supports(response::Capability::MiniscriptTaproot));
-    assert_eq!(signer.accounts.len(), LIANA_ACCOUNTS as usize);
-    assert_eq!(signer.accounts[0].0, ChildNumber::Hardened { index: 0 });
+    assert_eq!(signer.keys.len(), LIANA_ACCOUNTS as usize);
     assert_eq!(
-        signer.accounts[0].1.to_string(),
-        format!("[{SIGNER_FINGERPRINT}/48'/1'/0'/2']{SIGNER_XPUB}")
+        signer.keys[0],
+        (
+            DerivationPath::from_str("m/48'/1'/0'/2'").unwrap(),
+            Xpub::from_str(SIGNER_XPUB).unwrap()
+        )
     );
-    assert_eq!(signer.accounts[9].0, ChildNumber::Hardened { index: 9 });
+    assert_eq!(
+        signer.keys[9].0,
+        DerivationPath::from_str("m/48'/1'/9'/2'").unwrap()
+    );
+}
+
+#[test]
+fn the_descriptor_key_request_asks_each_origin_path_once() {
+    let bip377::request::Body::GetKeys(request) = get_descriptor_keys(&descriptor()) else {
+        panic!("not a key request");
+    };
+    assert_eq!(
+        request.keys,
+        vec![DerivationPath::from_str("m/48'/1'/0'/2'").unwrap()]
+    );
+}
+
+fn scanned_for_descriptor(body: response::Body) -> liana_gui::airgap::device::Signer {
+    let exchange = exchange(get_descriptor_keys(&descriptor()));
+    let Answer::Xpubs(signer) = answer(&exchange, body).unwrap() else {
+        panic!("not a key answer");
+    };
+    signer
+}
+
+#[test]
+fn a_device_holding_a_wallet_key_is_recognised() {
+    assert!(scanned_for_descriptor(xpubs_body(1)).holds_keys_of(&descriptor()));
+}
+
+#[test]
+fn a_device_returning_another_key_is_not_recognised() {
+    let response::Body::Keys(mut keys) = xpubs_body(1) else {
+        unreachable!();
+    };
+    keys.keys = vec![RustBitcoin::to_ll_xpub(&Xpub::from_str("tpubDDwKEc4i4k8rBgVLGxytHrP13VVYucUGmL2cadux7AfMwMnRHKcw1YZKt9SMB4fWut7ZAiZqPefzm3BBCNXLZMxDrWJ4Q6VA1AFB6b8GzbT").unwrap())];
+    assert!(!scanned_for_descriptor(response::Body::Keys(keys)).holds_keys_of(&descriptor()));
+}
+
+#[test]
+fn a_device_outside_the_wallet_is_not_recognised() {
+    let response::Body::Keys(mut keys) = xpubs_body(1) else {
+        unreachable!();
+    };
+    keys.fingerprint = RustBitcoin::to_ll_fingerprint(&Fingerprint::from_str("00000001").unwrap());
+    assert!(!scanned_for_descriptor(response::Body::Keys(keys)).holds_keys_of(&descriptor()));
 }
 
 #[test]
@@ -190,31 +239,6 @@ fn a_signer_answering_more_accounts_than_asked_is_rejected() {
         Err(liana_gui::airgap::error::Error::Mismatch(
             Mismatch::KeyCount { .. }
         ))
-    ));
-}
-
-#[test]
-fn keys_for_another_network_are_refused() {
-    let exchange = exchange(get_keys(NETWORK));
-    let mainnet = Xpub::from_str("xpub6ERApfZwUNrhLCkDtcHTcxd75RbzS1ed54G1LkBUHQVHQKqhMkhgbmJbZRkrgZw4koxb5JaHWkY4ALHY2grBGRjaDMzQLcgJvLJuZZvRcEL").unwrap();
-    let body = response::Body::Keys(response::Keys {
-        keys: vec![RustBitcoin::to_ll_xpub(&mainnet); LIANA_ACCOUNTS as usize],
-        fingerprint: RustBitcoin::to_ll_fingerprint(
-            &Fingerprint::from_str(SIGNER_FINGERPRINT).unwrap(),
-        ),
-        vendor: "test vendor".to_owned(),
-        model: "test signer".to_owned(),
-        version: response::FirmwareVersion {
-            major: 1,
-            minor: 0,
-            patch: 0,
-            flag: response::ReleaseFlag::Stable,
-        },
-        capabilities: response::Capabilities(1),
-    });
-    assert!(matches!(
-        answer(&exchange, body),
-        Err(liana_gui::airgap::error::Error::WrongNetwork)
     ));
 }
 

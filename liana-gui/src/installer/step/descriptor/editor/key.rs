@@ -34,7 +34,10 @@ use liana_ui::{
 };
 
 use crate::{
-    airgap::device::{get_keys, AirgappedDevice, Answer, Signer as AirgapSigner},
+    airgap::{
+        device::{get_keys, AirgappedDevice, Answer, Signer as AirgapSigner},
+        error::Error as AirgapError,
+    },
     app::{
         settings::ProviderKey,
         state::{
@@ -73,6 +76,19 @@ pub fn new_multixkey_from_xpub(
         .unwrap(),
         wildcard: Wildcard::Unhardened,
     }
+}
+
+fn xpub_with_origin(
+    fingerprint: Fingerprint,
+    path: &DerivationPath,
+    xpub: &Xpub,
+) -> DescriptorPublicKey {
+    DescriptorPublicKey::XPub(DescriptorXKey {
+        origin: Some((fingerprint, path.clone())),
+        derivation_path: DerivationPath::master(),
+        wildcard: Wildcard::None,
+        xkey: *xpub,
+    })
 }
 
 pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
@@ -541,6 +557,15 @@ impl SelectKeySource {
     }
 
     fn on_airgapped_signer(&mut self, signer: AirgapSigner) -> Task<Message> {
+        if signer.keys.iter().any(|(path, xpub)| {
+            !check_key_network(
+                &xpub_with_origin(signer.fingerprint, path, xpub),
+                self.network,
+            )
+        }) {
+            self.error = Some(AirgapError::WrongNetwork.to_string());
+            return Task::none();
+        }
         if let Some((_, key)) = self.keys.get(&signer.fingerprint) {
             if !matches!(key.source, KeySource::Airgapped(..)) {
                 self.error = Some(crate::t!(
@@ -568,11 +593,8 @@ impl SelectKeySource {
             log::warn!("account {account} picked with no scanned signing device");
             return;
         };
-        let Some((_, key)) = signer
-            .accounts
-            .iter()
-            .find(|(candidate, _)| *candidate == account)
-        else {
+        let path = derivation_path(self.network, account);
+        let Some((_, xpub)) = signer.keys.iter().find(|(candidate, _)| *candidate == path) else {
             log::warn!("account {account} is not among the scanned signing device's keys");
             return;
         };
@@ -583,7 +605,7 @@ impl SelectKeySource {
             source: KeySource::Airgapped(record),
             name: self.form_alias.value.clone(),
             fingerprint: signer.fingerprint,
-            key: key.clone(),
+            key: xpub_with_origin(signer.fingerprint, &path, xpub),
             account: Some(account),
         }));
     }
@@ -1698,7 +1720,7 @@ mod tests {
     use liana::miniscript::{
         bitcoin::{
             bip32::{ChildNumber, Fingerprint},
-            Network,
+            Network, NetworkKind,
         },
         descriptor::DescriptorPublicKey,
     };
@@ -1731,14 +1753,11 @@ mod tests {
                 flag: ReleaseFlag::Stable,
             },
             capabilities: Capabilities(1),
-            accounts: ACCOUNT_KEYS
+            keys: ACCOUNT_KEYS
                 .iter()
-                .enumerate()
-                .map(|(index, key)| {
-                    (
-                        ChildNumber::from_hardened_idx(index as u32).unwrap(),
-                        DescriptorPublicKey::from_str(key).unwrap(),
-                    )
+                .map(|key| match DescriptorPublicKey::from_str(key).unwrap() {
+                    DescriptorPublicKey::XPub(key) => (key.origin.unwrap().1, key.xkey),
+                    _ => unreachable!("the fixtures are xpubs"),
                 })
                 .collect(),
         }
@@ -1811,6 +1830,18 @@ mod tests {
             ACCOUNT_KEYS[0],
             "the previous choice must stand"
         );
+    }
+
+    #[test]
+    fn keys_for_another_network_are_refused() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let mut signer = scanned_signer();
+        signer.keys[0].1.network = NetworkKind::Main;
+        let _ = step.on_airgapped_signer(signer);
+
+        assert!(step.error.is_some());
+        assert!(matches!(step.selected_key, SelectedKey::None));
     }
 
     fn step_with_existing_key(source: KeySource) -> (SelectKeySource, Fingerprint) {

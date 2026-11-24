@@ -471,6 +471,21 @@ where
     signer_entry(Tile::Qr, fingerprint, model, alias, status, on_press)
 }
 
+pub fn add_qr_signer_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("settings-add-qr-signer"),
+        None::<String>,
+        None,
+        None,
+        on_press,
+    )
+}
+
 fn signer_entry<'a, M, F, K, A>(
     tile: Tile,
     fingerprint: Option<F>,

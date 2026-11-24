@@ -3,6 +3,8 @@
 # Format: id => "English" => "Translation"
 # Use \n for line breaks
 
+airgap-add-signer-title => "Add a signing device" => NONE
+
 airgap-error-title => "Signing device" => NONE
 
 airgap-looking-for-qr => "Looking for the signer's QR code..." => NONE
@@ -2288,6 +2290,8 @@ recovery-paths-available
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
 => "{ $count ->\n    [one] 1 signature de\n   *[other] {$count} signatures de\n}";;
+
+settings-add-qr-signer => "Add a signing device by QR code" => NONE
 
 settings-alias => "Alias" => "Alias"
 

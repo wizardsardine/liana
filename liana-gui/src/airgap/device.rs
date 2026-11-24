@@ -13,11 +13,11 @@ use liana::{
     descriptors::LianaDescriptor,
     miniscript::{
         bitcoin::{
-            bip32::{ChildNumber, DerivationPath, Fingerprint},
+            bip32::{ChildNumber, DerivationPath, Fingerprint, Xpub},
             psbt::Psbt,
-            Address, Network, NetworkKind,
+            Address, Network,
         },
-        descriptor::{DescriptorPublicKey, DescriptorXKey, Wildcard},
+        descriptor::{DescriptorPublicKey, DescriptorXKey},
     },
 };
 use liana_ui::component::modal::LIANA_ACCOUNTS;
@@ -228,6 +228,22 @@ pub fn get_keys(network: Network) -> request::Body<RustBitcoin> {
     })
 }
 
+pub fn get_descriptor_keys(descriptor: &LianaDescriptor) -> request::Body<RustBitcoin> {
+    let mut paths: Vec<DerivationPath> = Vec::new();
+    for key in descriptor.spendable_keys() {
+        if let DescriptorPublicKey::XPub(DescriptorXKey {
+            origin: Some((_, path)),
+            ..
+        }) = key
+        {
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    request::Body::GetKeys(request::GetKeys { keys: paths })
+}
+
 fn process_response(
     request: &request::Body<RustBitcoin>,
     response: response::Body<RustBitcoin>,
@@ -273,7 +289,7 @@ pub struct Signer {
     pub model: String,
     pub version: FirmwareVersion,
     pub capabilities: Capabilities,
-    pub accounts: Vec<(ChildNumber, DescriptorPublicKey)>,
+    pub keys: Vec<(DerivationPath, Xpub)>,
 }
 
 impl Signer {
@@ -282,36 +298,34 @@ impl Signer {
         keys: response::Keys<RustBitcoin>,
     ) -> Result<Self, Error> {
         let fingerprint = keys.fingerprint;
-        let accounts = paths
-            .iter()
-            .zip(keys.keys)
-            .map(|(path, xkey)| {
-                let network = if path[1] == (ChildNumber::Hardened { index: 0 }) {
-                    NetworkKind::Main
-                } else {
-                    NetworkKind::Test
-                };
-                if xkey.network != network {
-                    return Err(Error::WrongNetwork);
-                }
-                let account = path[2];
-                let key = DescriptorPublicKey::XPub(DescriptorXKey {
-                    origin: Some((fingerprint, path.clone())),
-                    derivation_path: DerivationPath::master(),
-                    wildcard: Wildcard::None,
-                    xkey,
-                });
-                Ok((account, key))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
         Ok(Self {
             fingerprint,
             vendor: keys.vendor,
             model: keys.model,
             version: keys.version,
             capabilities: keys.capabilities,
-            accounts,
+            keys: paths.iter().cloned().zip(keys.keys).collect(),
         })
+    }
+
+    pub fn holds_keys_of(&self, descriptor: &LianaDescriptor) -> bool {
+        let mut held = false;
+        for key in descriptor.spendable_keys() {
+            let DescriptorPublicKey::XPub(key) = key else {
+                continue;
+            };
+            let Some((fingerprint, path)) = &key.origin else {
+                continue;
+            };
+            if *fingerprint != self.fingerprint {
+                continue;
+            }
+            match self.keys.iter().find(|(returned, _)| returned == path) {
+                Some((_, xpub)) if *xpub == key.xkey => held = true,
+                _ => return false,
+            }
+        }
+        held
     }
 }
 

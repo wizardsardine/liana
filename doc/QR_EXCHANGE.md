@@ -15,6 +15,10 @@ The device must support [BIP-377](https://github.com/bitcoin/bips/pull/2353) mes
   afterwards without scanning again.
 - **Registering the wallet** on the device, at the end of wallet creation and later from the wallet
   settings (for example after the descriptor changed).
+- **Adding a device to an existing wallet**, for a wallet imported, created before, or whose key was
+  added another way: in the wallet settings, "Register on device", then "Add a signing device by
+  QR code". The device sends the keys at the wallet's derivation paths, and Liana adds it to the
+  wallet's signing devices if it holds one of the wallet's keys.
 - **Verifying a receive address**, from the receive screen: the device shows the address on its own
   screen, and Liana checks it is the one it expects.
 - **Signing a transaction**, from the PSBT screen: pick the device in the list of signers. A PSBT

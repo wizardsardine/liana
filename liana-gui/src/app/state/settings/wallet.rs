@@ -16,7 +16,7 @@ use liana_ui::{
 
 use crate::{
     airgap::{
-        device::{Answer, Registration},
+        device::{get_descriptor_keys, save_device, AirgappedDevice, Answer, Registration, Signer},
         error::Error as AirgapError,
     },
     app::{
@@ -392,6 +392,42 @@ impl RegisterWalletModal {
         }
     }
 
+    fn on_add_airgapped_signer(&mut self, cache: &Cache) -> Task<Message> {
+        match AirgapModal::new(
+            None,
+            crate::t!("airgap-add-signer-title"),
+            get_descriptor_keys(&self.wallet.main_descriptor),
+            &cache.datadir_path,
+        ) {
+            Ok((modal, task)) => {
+                self.warning = None;
+                self.modal = Some(modal);
+                task.map(view::Message::Airgap).map(Message::View)
+            }
+            Err(e) => {
+                self.warning = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_scanned_signer(&mut self, signer: Signer, cache: &Cache) -> Task<Message> {
+        if !signer.holds_keys_of(&self.wallet.main_descriptor) {
+            self.warning = Some(AirgapError::NoWalletKey.into());
+            return Task::none();
+        }
+        self.processing = true;
+        Task::perform(
+            record_airgapped_signer(
+                self.data_dir.clone(),
+                cache.network,
+                signer,
+                self.wallet.clone(),
+            ),
+            Message::WalletUpdated,
+        )
+    }
+
     fn on_airgap(&mut self, action: AirgapMessage, cache: &Cache) -> Task<Message> {
         let Some(modal) = self.modal.as_mut() else {
             return Task::none();
@@ -404,24 +440,28 @@ impl RegisterWalletModal {
             Some(AirgapOutcome::Answer(answer)) => {
                 let fingerprint = modal.fingerprint;
                 self.modal = None;
-                let (Some(fingerprint), Answer::Registered(registration)) = (fingerprint, *answer)
-                else {
-                    return task;
-                };
-                self.processing = true;
-                Task::batch([
-                    task,
-                    Task::perform(
-                        record_airgapped_registration(
-                            self.data_dir.clone(),
-                            cache.network,
-                            fingerprint,
-                            registration,
-                            self.wallet.clone(),
-                        ),
-                        Message::WalletUpdated,
-                    ),
-                ])
+                match (fingerprint, *answer) {
+                    (None, Answer::Xpubs(signer)) => {
+                        Task::batch([task, self.on_scanned_signer(signer, cache)])
+                    }
+                    (Some(fingerprint), Answer::Registered(registration)) => {
+                        self.processing = true;
+                        Task::batch([
+                            task,
+                            Task::perform(
+                                record_airgapped_registration(
+                                    self.data_dir.clone(),
+                                    cache.network,
+                                    fingerprint,
+                                    registration,
+                                    self.wallet.clone(),
+                                ),
+                                Message::WalletUpdated,
+                            ),
+                        ])
+                    }
+                    _ => task,
+                }
             }
             Some(AirgapOutcome::Cancelled) => {
                 self.modal = None;
@@ -501,6 +541,9 @@ impl RegisterWalletModal {
             Message::View(view::Message::Settings(
                 view::SettingsMessage::RegisterAirgappedSigner(fingerprint),
             )) => self.on_register_airgapped_signer(fingerprint, cache),
+            Message::View(view::Message::Settings(view::SettingsMessage::AddAirgappedSigner)) => {
+                self.on_add_airgapped_signer(cache)
+            }
             Message::View(view::Message::Airgap(action)) => self.on_airgap(action, cache),
             Message::View(view::Message::SelectHardwareWallet(i)) => {
                 if let Some(HardwareWallet::Supported {
@@ -698,20 +741,15 @@ pub async fn record_airgapped_registration(
         ..registration
     };
     let mut saved = false;
-    update_settings_file(
-        &data_dir.network_directory(network),
-        |mut settings: LianaSettings| {
-            if let Some(device) = settings
-                .airgapped_signers
-                .iter_mut()
-                .find(|device| device.fingerprint == fingerprint)
-            {
-                device.record(registration.clone());
-                saved = true;
-            }
-            settings
-        },
-    )
+    write_airgapped_signers(data_dir, network, |devices| {
+        if let Some(device) = devices
+            .iter_mut()
+            .find(|device| device.fingerprint == fingerprint)
+        {
+            device.record(registration.clone());
+            saved = true;
+        }
+    })
     .await?;
     if !saved {
         return Err(AirgapError::NotSaved(fingerprint).into());
@@ -724,4 +762,36 @@ pub async fn record_airgapped_registration(
         device.record(registration);
     }
     Ok(Arc::new(wallet))
+}
+
+pub async fn record_airgapped_signer(
+    data_dir: LianaDirectory,
+    network: Network,
+    signer: Signer,
+    wallet: Arc<Wallet>,
+) -> Result<Arc<Wallet>, Error> {
+    let mut wallet = wallet.as_ref().clone();
+    let device = AirgappedDevice::new(
+        &signer,
+        wallet.keys_aliases.get(&signer.fingerprint).cloned(),
+    );
+    save_device(&mut wallet.airgapped_signers, device.clone());
+    write_airgapped_signers(data_dir, network, |devices| save_device(devices, device)).await?;
+    Ok(Arc::new(wallet))
+}
+
+async fn write_airgapped_signers(
+    data_dir: LianaDirectory,
+    network: Network,
+    update: impl FnOnce(&mut Vec<AirgappedDevice>),
+) -> Result<(), Error> {
+    update_settings_file(
+        &data_dir.network_directory(network),
+        |mut settings: LianaSettings| {
+            update(&mut settings.airgapped_signers);
+            settings
+        },
+    )
+    .await?;
+    Ok(())
 }

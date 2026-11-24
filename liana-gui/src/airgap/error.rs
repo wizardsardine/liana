@@ -58,6 +58,8 @@ pub enum Error {
     NoNewSignature,
     #[error("The signing device {0} is not saved")]
     NotSaved(Fingerprint),
+    #[error("This device holds none of this wallet's keys")]
+    NoWalletKey,
 }
 
 fn refusal<'a>(error: &response::Error, message: &'a str) -> &'a str {

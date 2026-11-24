@@ -345,8 +345,11 @@ pub fn register_wallet_modal<'a>(
         ))
     });
 
+    let add = modal::add_qr_signer_entry(Some(|| {
+        Message::Settings(SettingsMessage::AddAirgappedSigner)
+    }));
     let title = new::h3_semi(t!("settings-select-device")).width(Length::Fill);
-    let devices = column![title, signers]
+    let devices = column![title, signers, add]
         .spacing(VSpacing::S)
         .width(Length::Fill);
     let warning = warning.map(|w| warn(Some(w)));
