@@ -34,7 +34,7 @@ use liana_ui::widget::*;
 
 use crate::{
     app::settings::{ProviderKey, WalletSettings},
-    backup::LegacyBackup,
+    backup::bip139::Bip139Backup,
     hw::HardwareWallets,
     installer::{context::Context, message::Message, view},
     node::bitcoind::Bitcoind,
@@ -76,7 +76,7 @@ pub struct Final {
     warning: Option<String>,
     wallet_settings: Option<WalletSettings>,
     key_redemptions: HashMap<ProviderKey, Option<Result<(), liana_connect::keys::Error>>>,
-    backup: Option<LegacyBackup>,
+    backup: Option<Bip139Backup>,
     network: Network,
 }
 
@@ -106,9 +106,9 @@ impl Step for Final {
         self.backup.clone_from(&ctx.backup);
         self.network = ctx.bitcoin_config.network;
         self.key_redemptions = ctx
-            .keys
+            .provider_keys
             .values()
-            .filter_map(|ks| ks.provider_key.as_ref().map(|pk| (pk.clone(), None)))
+            .map(|pk| (pk.clone(), None))
             .collect();
     }
     fn load(&self) -> Task<Message> {

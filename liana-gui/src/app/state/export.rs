@@ -109,7 +109,7 @@ impl ExportModal {
             ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
             ImportExportType::ExportProcessBackup(..) => {
-                format!("liana-backup-{date}.json")
+                format!("liana-backup-{date}.bip139")
             }
             ImportExportType::FromBackup(_) | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()

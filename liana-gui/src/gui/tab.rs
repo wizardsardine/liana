@@ -1,4 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+    sync::Arc,
+    time::Instant,
+};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
@@ -6,7 +11,7 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::miniscript::bitcoin;
-use liana_ui::{component::panels::home::WalletOrigin, widget::Element};
+use liana_ui::widget::Element;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
@@ -298,6 +303,7 @@ where
                             network,
                             internal_bitcoind,
                             backup,
+                            wallet_origin,
                             wallet_settings,
                         } => {
                             let cfg = app::Config::from_file(
@@ -314,6 +320,7 @@ where
                                 network,
                                 internal_bitcoind,
                                 backup,
+                                wallet_origin,
                                 wallet_settings,
                             );
                             self.state = State::Loader(Box::new(loader));
@@ -379,11 +386,7 @@ where
                     if let Some(backup) = backup {
                         let config = loader.gui_config.clone();
                         let datadir = loader.datadir_path.clone();
-                        let origin = if backup.descriptor_only {
-                            WalletOrigin::Descriptor
-                        } else {
-                            WalletOrigin::Backup
-                        };
+                        let origin = loader.wallet_origin;
                         Task::perform(
                             async move {
                                 import_backup_at_launch(
@@ -393,7 +396,7 @@ where
                             },
                             move |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(Box::new(loader::Message::App(r, Some(origin))))
+                                Message::Load(Box::new(loader::Message::App(r, origin)))
                             },
                         )
                     } else {
@@ -404,7 +407,7 @@ where
                             daemon,
                             loader.datadir_path.clone(),
                             bitcoind,
-                            None,
+                            loader.wallet_origin,
                         );
                         self.state = State::App(app);
                         command.map(|msg| Message::Run(Box::new(msg)))
@@ -580,7 +583,8 @@ where
             self.state = State::Login(Box::new(login));
             command.map(|msg| Message::Login(Box::new(msg)))
         } else {
-            let (loader, command) = Loader::new(datadir, config, network, None, None, settings);
+            let (loader, command) =
+                Loader::new(datadir, config, network, None, None, None, settings);
             self.state = State::Loader(Box::new(loader));
             command.map(|msg| Message::Load(Box::new(msg)))
         }
@@ -682,11 +686,11 @@ pub fn create_app_with_remote_backend(
         })
         .collect();
 
-    let provider_keys: HashMap<_, _> = wallet
+    let provider_keys: HashSet<_> = wallet
         .metadata
         .provider_keys
         .into_iter()
-        .map(|pk| (pk.fingerprint, pk.into()))
+        .map(|pk| pk.fingerprint)
         .collect();
 
     Ok(app::App::new(

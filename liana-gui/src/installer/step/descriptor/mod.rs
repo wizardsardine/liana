@@ -13,7 +13,7 @@ use liana::{
 };
 
 use liana_ui::{
-    component::form,
+    component::{form, panels::home::WalletOrigin},
     widget::{modal::Modal, Element},
 };
 
@@ -29,7 +29,7 @@ use crate::{
         },
         wallet::wallet_name,
     },
-    backup::LegacyBackup,
+    backup::bip139::{Bip139Backup, Bip139Network},
     dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
@@ -48,7 +48,7 @@ pub struct ImportDescriptor {
     error: Option<String>,
     modal: ImportDescriptorModal,
     imported_descriptor: form::Value<String>,
-    imported_backup: Option<LegacyBackup>,
+    imported_backup: Option<Bip139Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
     paste_descriptor_expanded: bool,
 }
@@ -139,7 +139,7 @@ impl Step for ImportDescriptor {
                 let (descriptor, network, aliases, backup) = r;
                 if let Some(n) = network {
                     if self.network == n {
-                        self.imported_backup = Some(backup);
+                        self.imported_backup = backup;
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
@@ -149,7 +149,7 @@ impl Step for ImportDescriptor {
                     // The backup have been inferred from a bare descriptor, we check whether
                     // the descriptor match any test network
                     if self.network != Network::Bitcoin {
-                        self.imported_backup = Some(backup);
+                        self.imported_backup = backup;
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
@@ -181,17 +181,21 @@ impl Step for ImportDescriptor {
             Message::Decrypt(Decrypt::Backup(mut backup))
                 if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
             {
-                let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
+                let descriptor = backup
+                    .accounts
+                    .first()
+                    .and_then(|acc| acc.descriptor_str())
+                    .map(str::to_owned);
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
-                        backup.network == Network::Bitcoin
+                        backup.network == Bip139Network::Bitcoin
                     } else {
-                        backup.network != Network::Bitcoin
+                        backup.network != Bip139Network::Bitcoin
                     };
                     if network_matches {
                         // NOTE: we need to overwrite w/ correct network for testnets
                         // as non Mainnet keys / descriptor are parsed as Signet
-                        backup.network = self.network;
+                        backup.network = self.network.into();
 
                         self.imported_descriptor.value = desc;
                         self.imported_backup = Some(backup);
@@ -204,6 +208,21 @@ impl Step for ImportDescriptor {
                 } else {
                     self.modal = ImportDescriptorModal::None;
                     self.error = Some(crate::t!("installer-backup-descriptor-missing"));
+                }
+                None
+            }
+            Message::Decrypt(Decrypt::Descriptor(descriptor))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
+                self.modal = ImportDescriptorModal::None;
+                if descriptor.all_xpubs_net_is(Network::Bitcoin)
+                    == (self.network == Network::Bitcoin)
+                {
+                    self.imported_descriptor.value = descriptor.to_string();
+                    self.imported_backup = None;
+                    self.imported_aliases = None;
+                } else {
+                    self.error = Some(crate::t!("installer-backup-network-mismatch"));
                 }
                 None
             }
@@ -220,9 +239,11 @@ impl Step for ImportDescriptor {
         // descriptor forms for import or creation cannot be both empty or filled.
         if let Some(desc) = self.check_descriptor(self.network) {
             ctx.descriptor = Some(desc.clone());
-            ctx.backup = Some(match &self.imported_backup {
-                Some(backup) => backup.clone(),
-                None => LegacyBackup::from_descriptor(desc, self.network),
+            ctx.backup = self.imported_backup.clone();
+            ctx.wallet_origin = Some(if self.imported_backup.is_some() {
+                WalletOrigin::Backup
+            } else {
+                WalletOrigin::Descriptor
             });
         } else {
             return false;
@@ -230,17 +251,26 @@ impl Step for ImportDescriptor {
 
         if let Some(aliases) = &self.imported_aliases {
             ctx.keys = aliases.clone();
+            ctx.provider_keys = HashMap::new();
         }
 
-        if let Some(wallet_alias) = self.imported_backup.as_ref().and_then(|b| b.alias.clone()) {
-            ctx.wallet_alias = wallet_alias;
+        if let (Some(backup), Some(descriptor)) = (&self.imported_backup, &ctx.descriptor) {
+            if let Some(name) = backup
+                .name
+                .clone()
+                .filter(|name| *name != wallet_name(descriptor))
+            {
+                ctx.wallet_alias = name;
+            }
         }
         true
     }
 
     fn revert(&self, ctx: &mut Context) {
         ctx.keys = HashMap::new();
+        ctx.provider_keys = HashMap::new();
         ctx.backup = None;
+        ctx.wallet_origin = None;
         ctx.descriptor = None;
         ctx.wallet_alias = String::new();
     }

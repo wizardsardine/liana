@@ -27,7 +27,7 @@ use lianad::{
 use crate::app;
 use crate::app::cache::DaemonCache;
 use crate::app::settings::{LianaSettings, WalletSettings};
-use crate::backup::LegacyBackup;
+use crate::backup::bip139::Bip139Backup;
 use crate::dir::LianaDirectory;
 use crate::export::RestoreBackupError;
 use crate::{
@@ -65,7 +65,8 @@ pub struct Loader {
     pub daemon_started: bool,
     pub internal_bitcoind: Option<Bitcoind>,
     pub waiting_daemon_bitcoind: bool,
-    pub backup: Option<LegacyBackup>,
+    pub backup: Option<Bip139Backup>,
+    pub wallet_origin: Option<WalletOrigin>,
     pub wallet_settings: WalletSettings,
     step: Step,
 }
@@ -94,7 +95,7 @@ pub enum Message {
                 Cache,
                 Arc<dyn Daemon + Sync + Send>,
                 Option<Bitcoind>,
-                Option<LegacyBackup>,
+                Option<Bip139Backup>,
             ),
             Error,
         >,
@@ -126,7 +127,8 @@ impl Loader {
         gui_config: GUIConfig,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-        backup: Option<LegacyBackup>,
+        backup: Option<Bip139Backup>,
+        wallet_origin: Option<WalletOrigin>,
         wallet_settings: WalletSettings,
     ) -> (Self, Task<Message>) {
         let socket_path = datadir_path
@@ -144,6 +146,7 @@ impl Loader {
                 waiting_daemon_bitcoind: false,
                 wallet_settings,
                 backup,
+                wallet_origin,
             },
             Task::perform(connect(socket_path), Message::Loaded),
         )
@@ -321,6 +324,7 @@ impl Loader {
                     self.network,
                     self.internal_bitcoind.clone(),
                     self.backup.clone(),
+                    self.wallet_origin,
                     self.wallet_settings.clone(),
                 );
                 *self = loader;
@@ -425,14 +429,14 @@ pub async fn load_application(
     datadir_path: LianaDirectory,
     network: bitcoin::Network,
     internal_bitcoind: Option<Bitcoind>,
-    backup: Option<LegacyBackup>,
+    backup: Option<Bip139Backup>,
 ) -> Result<
     (
         Arc<Wallet>,
         Cache,
         Arc<dyn Daemon + Sync + Send>,
         Option<Bitcoind>,
-        Option<LegacyBackup>,
+        Option<Bip139Backup>,
     ),
     Error,
 > {

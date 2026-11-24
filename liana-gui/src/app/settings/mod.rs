@@ -5,7 +5,7 @@ pub mod ui;
 
 pub use ui::SettingsUI;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_fd_lock::LockWrite;
 use liana::descriptors::LianaDescriptor;
@@ -26,7 +26,6 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     airgap::device::AirgappedDevice,
     app::{self, state::State},
-    backup::{Key, KeyRole, KeyType},
     dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
     services::connect::client::backend::{api, BackendWalletClient},
@@ -116,7 +115,7 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
     /// Get a map of key fingerprints to their user-defined aliases.
     fn keys_aliases(&self) -> HashMap<Fingerprint, String>;
     /// Get a map of key fingerprints to their third-party provider information.
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey>;
+    fn provider_keys(&self) -> HashSet<Fingerprint>;
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -329,16 +328,12 @@ impl LianaWalletSettings {
         map
     }
 
-    pub fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
-        let mut map = HashMap::new();
-        for (fingerprint, provider_key) in self
-            .keys
+    pub fn provider_keys(&self) -> HashSet<Fingerprint> {
+        self.keys
             .iter()
-            .filter_map(|k| k.provider_key.as_ref().map(|pk| (k.master_fingerprint, pk)))
-        {
-            map.insert(fingerprint, provider_key.clone());
-        }
-        map
+            .filter(|key| key.provider_key)
+            .map(|key| key.master_fingerprint)
+            .collect()
     }
 
     pub fn update_alias(&mut self, key: &Fingerprint, alias: &str) {
@@ -409,7 +404,7 @@ impl WalletSettingsTrait for LianaWalletSettings {
         LianaWalletSettings::keys_aliases(self)
     }
 
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+    fn provider_keys(&self) -> HashSet<Fingerprint> {
         LianaWalletSettings::provider_keys(self)
     }
 }
@@ -451,19 +446,10 @@ impl std::fmt::Display for WalletId {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct Provider {
     pub uuid: String,
     pub name: String,
-}
-
-impl From<liana_connect::wallets::api::Provider> for Provider {
-    fn from(provider: liana_connect::wallets::api::Provider) -> Self {
-        Self {
-            uuid: provider.uuid,
-            name: provider.name,
-        }
-    }
 }
 
 impl From<liana_connect::keys::api::Provider> for Provider {
@@ -475,75 +461,42 @@ impl From<liana_connect::keys::api::Provider> for Provider {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ProviderKey {
     pub uuid: String,
     pub token: String,
     pub provider: Provider,
 }
 
-impl From<liana_connect::wallets::api::ProviderKey> for ProviderKey {
-    fn from(pk: liana_connect::wallets::api::ProviderKey) -> Self {
-        Self {
-            uuid: pk.uuid.clone(),
-            token: pk.token.clone(),
-            provider: pk.provider.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KeySetting {
     pub name: String,
     pub master_fingerprint: Fingerprint,
-    pub provider_key: Option<ProviderKey>,
+    #[serde(
+        default,
+        serialize_with = "serialize_provider_key",
+        deserialize_with = "deserialize_provider_key"
+    )]
+    pub provider_key: bool,
+}
+
+fn serialize_provider_key<S: serde::Serializer>(
+    provider_key: &bool,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    provider_key
+        .then(ProviderKey::default)
+        .serialize(serializer)
+}
+
+fn deserialize_provider_key<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    Option::<serde::de::IgnoredAny>::deserialize(deserializer)
+        .map(|provider_key| provider_key.is_some())
 }
 
 impl KeySetting {
-    pub fn to_backup(&self) -> Key {
-        if let Some(provider_key) = &self.provider_key {
-            if let Ok(metadata) = serde_json::to_value(provider_key) {
-                return Key {
-                    key: self.master_fingerprint,
-                    alias: Some(self.name.clone()),
-                    role: None,
-                    key_type: Some(KeyType::ThirdParty),
-                    proprietary: metadata,
-                };
-            }
-        }
-        Key {
-            key: self.master_fingerprint,
-            alias: Some(self.name.clone()),
-            role: None,
-            key_type: None,
-            proprietary: serde_json::Value::Null,
-        }
-    }
-
-    pub fn from_backup(
-        name: String,
-        fg: Fingerprint,
-        _role: Option<KeyRole>,
-        key_type: Option<KeyType>,
-        metadata: serde_json::Value,
-    ) -> Option<Self> {
-        if let Some(KeyType::ThirdParty) = key_type {
-            let provider_key = serde_json::from_value(metadata).ok();
-            Some(Self {
-                name,
-                master_fingerprint: fg,
-                provider_key,
-            })
-        } else {
-            Some(Self {
-                name,
-                master_fingerprint: fg,
-                provider_key: None,
-            })
-        }
-    }
-
     pub fn to_form(&self) -> form::Value<String> {
         form::Value {
             value: self.name.clone(),
@@ -821,7 +774,10 @@ mod test {
     use bwk_qr::config::QrDensity;
     use liana_ui::component::qr::Brightness;
 
-    use crate::{airgap::display::QrSettings, app::settings::LianaWalletSettings};
+    use crate::{
+        airgap::display::QrSettings,
+        app::settings::{KeySetting, LianaWalletSettings},
+    };
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -1035,5 +991,40 @@ mod test {
         let raw = serde_json::to_string(&settings).unwrap();
         let settings: LianaWalletSettings = serde_json::from_str(&raw).unwrap();
         assert!(settings.encrypted_backup_privacy_mode);
+    }
+
+    #[test]
+    fn provider_key_is_written_without_its_token() {
+        let released: KeySetting = serde_json::from_str(
+            r#"{"name":"cosigner","master_fingerprint":"141cfdf4","provider_key":{"uuid":"u","token":"secret","provider":{"uuid":"p","name":"provider"}}}"#,
+        )
+        .unwrap();
+        assert!(released.provider_key);
+
+        let raw = serde_json::to_value(&released).unwrap();
+        assert_eq!(
+            raw["provider_key"],
+            serde_json::json!({"uuid":"","token":"","provider":{"uuid":"","name":""}})
+        );
+        assert!(
+            serde_json::from_value::<KeySetting>(raw)
+                .unwrap()
+                .provider_key
+        );
+
+        let own: KeySetting = serde_json::from_str(
+            r#"{"name":"me","master_fingerprint":"9f141cf0","provider_key":null}"#,
+        )
+        .unwrap();
+        assert!(!own.provider_key);
+        assert_eq!(
+            serde_json::to_value(&own).unwrap()["provider_key"],
+            serde_json::Value::Null
+        );
+        assert!(
+            !serde_json::from_str::<KeySetting>(r#"{"name":"me","master_fingerprint":"9f141cf0"}"#)
+                .unwrap()
+                .provider_key
+        );
     }
 }

@@ -871,7 +871,7 @@ fn display_policy(
             if *sequence == u16::MAX
                 && recovery_keys
                     .iter()
-                    .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key.is_some()))
+                    .all(|fg| keys.get(fg).is_some_and(|k| k.provider_key))
             {
                 t!("policy-safety-net-path")
             } else {

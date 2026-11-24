@@ -1,0 +1,45 @@
+{
+  "version": "BIP139-1",
+  "network": "testnet3",
+  "name": "Family vault",
+  "exporter": "Another Wallet 4.2",
+  "note": "exported before moving to Liana",
+  "accounts": [
+    {
+      "type": "bip380",
+      "descriptor": "wsh(or_i(and_v(v:thresh(2,pkh([73c5da0a/48'/1'/0'/2']tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ/<2;3>/*),a:pkh([b8688df1/48'/1'/0'/2']tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ/<2;3>/*),a:pkh([28645006/48'/1'/0'/2']tpubDEwqCvJxKwKWX9xvRe48uofWJn1Y89Jn8UeH1Efrjb1UEVjUDy3URYTiqWaVCW7WdvHrL8XrSihHEhTwv5H3VDJoakjuCHiAnr6xcF2Xm4s/<0;1>/*)),older(52596)),and_v(v:pk([73c5da0a/48'/1'/0'/2']tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ/<0;1>/*),pk([b8688df1/48'/1'/0'/2']tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ/<0;1>/*))))#uacwhmkg",
+      "description": "the family savings",
+      "status": "active",
+      "gap_limit": 20,
+      "keys": {
+        "73c5da0a": { "key": "73c5da0a", "alias": "Mum's key", "role": "main", "key_type": "internal" },
+        "b8688df1": { "key": "b8688df1", "alias": "Dad's key", "role": "superuser" },
+        "28645006": { "key": "28645006", "alias": "Bank", "key_type": "third_party" }
+      },
+      "transactions": ["a7d85601fabf9b9bdf410b0f3747192b546a3253977dac91b8592f6f6a0c9506"]
+    },
+    {
+      "type": "bip392",
+      "descriptor": "sp(tsprv1example)",
+      "name": "Donations"
+    }
+  ],
+  "transactions": {
+    "a7d85601fabf9b9bdf410b0f3747192b546a3253977dac91b8592f6f6a0c9506": { "hex": "020000000001014487ba5891b6e097d52e89c51b8346a0c22a459f2a658be6c57dba467fc33bdf0000000000fdffffff028038010000000000220020e1c7df3f33d4d00217b26f9dc9ec9ae409245017f57b79f40881916c3c94941d50c3000000000000220020a9baa634900248a483fe2bb7879e20b9f41b4a1c9af2551f78d4c8d1b0bd0cb2024730440220372b429b067815f0de9d517c9d4a354c0655c88c68c979875fde01c357fbfdf002200b46d044b1c59af77e17ba64384606b6da974a5df0bfe6c33a29917081461cdf0121034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aaff9e2400", "fee": 450, "abandoned": false }
+  },
+  "signers": [
+    {
+      "fingerprints": ["b8688df1"],
+      "key_storage": "cold",
+      "devices": [
+        {
+          "vendor": "test vendor",
+          "model": "test signer",
+          "firmware_version": "1.3.0",
+          "transports": ["carrier-pigeon", "qr"],
+          "last_health_check": 1700000000
+        }
+      ]
+    }
+  ]
+}

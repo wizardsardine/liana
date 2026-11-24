@@ -512,6 +512,7 @@ impl Step for DefineDescriptor {
 
         ctx.bitcoin_config.network = self.network;
         ctx.keys = HashMap::new();
+        ctx.provider_keys = HashMap::new();
         ctx.airgapped_signers = HashMap::new();
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
@@ -806,9 +807,12 @@ fn record_installer_key(ctx: &mut Context, key: &Key, xpub: &DescriptorXKey<Xpub
         KeySetting {
             master_fingerprint,
             name: key.name.clone(),
-            provider_key: key.source.provider_key(),
+            provider_key: key.source.provider_key().is_some(),
         },
     );
+    if let Some(provider_key) = key.source.provider_key() {
+        ctx.provider_keys.insert(master_fingerprint, provider_key);
+    }
     if let Some(signer) = key.source.airgapped_signer() {
         ctx.airgapped_signers.insert(
             master_fingerprint,

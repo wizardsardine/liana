@@ -746,7 +746,7 @@ pub async fn update_aliases(
                     .map(|(master_fingerprint, name)| settings::KeySetting {
                         master_fingerprint: *master_fingerprint,
                         name: name.clone(),
-                        provider_key: wallet.provider_keys.get(master_fingerprint).cloned(),
+                        provider_key: wallet.provider_keys.contains(master_fingerprint),
                     })
                     .collect();
             }

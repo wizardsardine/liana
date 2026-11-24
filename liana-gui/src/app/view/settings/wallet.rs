@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use iced::{
     widget::{column, row, tooltip::Position, Column, Space},
@@ -31,7 +31,6 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        settings::ProviderKey,
         view::{
             dashboard,
             message::{Message, SettingsMessage},
@@ -52,7 +51,7 @@ pub fn wallet_settings<'a>(
     descriptor: &'a LianaDescriptor,
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
-    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+    provider_keys: &'a HashSet<Fingerprint>,
     encrypted_backup_privacy_mode: bool,
     processing: bool,
     updated: bool,
@@ -145,7 +144,7 @@ pub fn wallet_settings<'a>(
 fn display_policy<'a>(
     policy: LianaPolicy,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
-    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+    provider_keys: &'a HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
     let recovery_paths = policy.recovery_paths();
@@ -191,11 +190,7 @@ fn display_policy<'a>(
         ));
         let path_name = new::caption(
             // If max timelock and all keys are from provider, then it's a safety net path.
-            if *sequence == u16::MAX
-                && recovery_keys
-                    .iter()
-                    .all(|fg| provider_keys.contains_key(fg))
-            {
+            if *sequence == u16::MAX && recovery_keys.iter().all(|fg| provider_keys.contains(fg)) {
                 t!("policy-safety-net-path")
             } else {
                 t!("policy-recovery-path", number = i + 1)

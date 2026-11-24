@@ -44,7 +44,7 @@ pub struct Wallet {
     pub pinned_at: Option<i64>,
     // TODO: We could replace these two fields with `keys: HashMap<Fingerprint, settings::KeySetting>`.
     pub keys_aliases: HashMap<Fingerprint, String>,
-    pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
+    pub provider_keys: HashSet<Fingerprint>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
     pub airgapped_signers: Vec<AirgappedDevice>,
     pub signer: Option<Arc<Signer>>,
@@ -62,7 +62,7 @@ impl Wallet {
             pinned_at: None,
             main_descriptor,
             keys_aliases: HashMap::new(),
-            provider_keys: HashMap::new(),
+            provider_keys: HashSet::new(),
             hardware_wallets: Vec::new(),
             airgapped_signers: Vec::new(),
             signer: None,
@@ -97,10 +97,7 @@ impl Wallet {
         self
     }
 
-    pub fn with_provider_keys(
-        mut self,
-        provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
-    ) -> Self {
+    pub fn with_provider_keys(mut self, provider_keys: HashSet<Fingerprint>) -> Self {
         self.provider_keys = provider_keys;
         self
     }
@@ -252,15 +249,9 @@ impl Wallet {
                 settings::KeySetting {
                     name: alias.clone(),
                     master_fingerprint: *fg,
-                    provider_key: None,
+                    provider_key: self.provider_keys.contains(fg),
                 },
             );
-        });
-
-        self.provider_keys.iter().for_each(|(fg, key)| {
-            if let Some(entry) = map.get_mut(fg) {
-                entry.provider_key = Some(key.clone())
-            }
         });
 
         map

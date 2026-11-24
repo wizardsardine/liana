@@ -22,7 +22,7 @@ use liana_gui::{
         self,
         cache::{Cache, DaemonCache},
         settings::{
-            fiat, AuthConfig, KeySetting, ProviderKey, SettingsError, SettingsTrait, WalletId,
+            fiat, AuthConfig, KeySetting, SettingsError, SettingsTrait, WalletId,
             WalletSettingsTrait, SETTINGS_FILE_NAME,
         },
         wallet::Wallet as AppWallet,
@@ -35,7 +35,10 @@ use liana_gui::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{cell::Cell, collections::HashMap};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+};
 
 /// Currencies supported by the business backend.
 ///
@@ -164,11 +167,11 @@ impl SettingsTrait for BusinessSettings {
                 })
                 .collect();
 
-            let provider_keys: HashMap<_, _> = wallet
+            let provider_keys: HashSet<_> = wallet
                 .metadata
                 .provider_keys
                 .into_iter()
-                .map(|pk| (pk.fingerprint, pk.into()))
+                .map(|pk| pk.fingerprint)
                 .collect();
 
             let auth_cfg = AuthConfig {
@@ -275,16 +278,12 @@ impl BusinessWalletSettings {
         map
     }
 
-    pub fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
-        let mut map = HashMap::new();
-        for (fingerprint, provider_key) in self
-            .keys
+    pub fn provider_keys(&self) -> HashSet<Fingerprint> {
+        self.keys
             .iter()
-            .filter_map(|k| k.provider_key.as_ref().map(|pk| (k.master_fingerprint, pk)))
-        {
-            map.insert(fingerprint, provider_key.clone());
-        }
-        map
+            .filter(|key| key.provider_key)
+            .map(|key| key.master_fingerprint)
+            .collect()
     }
 
     pub fn wallet_id(&self) -> WalletId {
@@ -333,7 +332,7 @@ impl WalletSettingsTrait for BusinessWalletSettings {
         BusinessWalletSettings::keys_aliases(self)
     }
 
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+    fn provider_keys(&self) -> HashSet<Fingerprint> {
         BusinessWalletSettings::provider_keys(self)
     }
 }

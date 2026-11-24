@@ -13,7 +13,7 @@ use liana::{
     descriptors::{LianaDescriptor, LianaPolicy},
     miniscript::bitcoin::{self, Network},
 };
-use liana_ui::widget::Element;
+use liana_ui::{component::panels::home::WalletOrigin, widget::Element};
 use lianad::config::{BitcoinBackend, BitcoindConfig, BitcoindRpcAuth, Config};
 use std::{collections::HashMap, fmt::Debug, ops::Deref};
 use tokio::runtime::Handle;
@@ -33,7 +33,7 @@ use crate::{
         },
         wallet::wallet_name,
     },
-    backup::LegacyBackup,
+    backup::bip139::Bip139Backup,
     daemon::{Daemon, DaemonError},
     delete,
     dir::LianaDirectory,
@@ -94,7 +94,8 @@ pub enum NextState {
         datadir: LianaDirectory,
         network: bitcoin::Network,
         internal_bitcoind: Option<Bitcoind>,
-        backup: Option<LegacyBackup>,
+        backup: Option<Bip139Backup>,
+        wallet_origin: Option<WalletOrigin>,
         wallet_settings: WalletSettings,
     },
     Launcher {
@@ -538,6 +539,7 @@ impl Installer<'_, Message> for LianaInstaller {
                     network: self.network,
                     internal_bitcoind: internal_bitcoind.clone(),
                     backup: self.context.backup.take(),
+                    wallet_origin: self.context.wallet_origin.take(),
                     wallet_settings: (**settings).clone(),
                 })
             }
@@ -589,7 +591,7 @@ pub async fn install_local_wallet(
         .as_ref()
         .expect("Context must have a descriptor at this point");
 
-    let hardware_wallets = ctx
+    let mut hardware_wallets: Vec<HardwareWalletConfig> = ctx
         .hws
         .iter()
         .filter_map(|(kind, fingerprint, token)| {
@@ -598,18 +600,40 @@ pub async fn install_local_wallet(
                 .map(|token| HardwareWalletConfig::new(kind, *fingerprint, token))
         })
         .collect();
+    let mut airgapped_signers = ctx.airgapped_devices();
+    if let Some(backup) = &ctx.backup {
+        for account in &backup.accounts {
+            for restored in backup.airgapped_devices(account) {
+                save_device(&mut airgapped_signers, restored);
+            }
+            for restored in backup.hardware_wallets(account) {
+                if !hardware_wallets.iter().any(|known| {
+                    known.kind == restored.kind && known.fingerprint == restored.fingerprint
+                }) {
+                    hardware_wallets.push(restored);
+                }
+            }
+        }
+    }
 
+    let preferences = ctx
+        .backup
+        .as_ref()
+        .map(|backup| backup.preferences())
+        .unwrap_or_default();
     let wallet_settings = WalletSettings {
         name: wallet_name(descriptor),
         alias: Some(ctx.wallet_alias.clone()),
-        pinned_at: wallet_id.timestamp,
+        pinned_at: preferences.pinned_at.or(wallet_id.timestamp),
         descriptor_checksum: wallet_id.descriptor_checksum.clone(),
         keys: ctx.keys.values().cloned().collect(),
         hardware_wallets,
         remote_backend_auth: None,
         start_internal_bitcoind: Some(ctx.internal_bitcoind.is_some()),
-        fiat_price: None,
-        encrypted_backup_privacy_mode: ctx.encrypted_backup_privacy_mode,
+        fiat_price: preferences.fiat_price,
+        encrypted_backup_privacy_mode: preferences
+            .encrypted_backup_privacy_mode
+            .unwrap_or(ctx.encrypted_backup_privacy_mode),
     };
 
     let cfg: lianad::config::Config = extract_daemon_config(&ctx, &wallet_settings)?;
@@ -691,7 +715,7 @@ pub async fn install_local_wallet(
     // create liana GUI settings file
     update_settings_file(&network_datadir, |mut settings: LianaSettings| {
         settings.wallets.push(wallet_settings.clone());
-        for device in ctx.airgapped_devices() {
+        for device in airgapped_signers {
             save_device(&mut settings.airgapped_signers, device);
         }
         settings
@@ -773,18 +797,16 @@ pub async fn create_remote_wallet(
     }
 
     let pks: Vec<_> = ctx
-        .keys
-        .values()
-        .filter_map(|key| {
-            key.provider_key.as_ref().map(|pk| ProviderKey {
-                fingerprint: key.master_fingerprint.to_string(),
-                uuid: pk.uuid.clone(),
-                token: pk.token.clone(),
-                provider: Provider {
-                    uuid: pk.provider.uuid.clone(),
-                    name: pk.provider.name.clone(),
-                },
-            })
+        .provider_keys
+        .iter()
+        .map(|(fingerprint, pk)| ProviderKey {
+            fingerprint: fingerprint.to_string(),
+            uuid: pk.uuid.clone(),
+            token: pk.token.clone(),
+            provider: Provider {
+                uuid: pk.provider.uuid.clone(),
+                name: pk.provider.name.clone(),
+            },
         })
         .collect();
     let wallet = remote_backend

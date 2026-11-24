@@ -133,9 +133,7 @@ impl SettingsUI<Message> for LianaSettingsUI {
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::ImportExportSection)) => {
-                self.setting = Some(
-                    ImportExportSettingsState::new(self.wallet.clone(), self.config.clone()).into(),
-                );
+                self.setting = Some(ImportExportSettingsState::new(self.wallet.clone()).into());
                 Task::none()
             }
             Message::View(view::Message::Settings(view::SettingsMessage::AboutSection)) => {
@@ -247,16 +245,14 @@ pub struct ImportExportSettingsState {
     warning: Option<Error>,
     modal: Option<ExportModal>,
     wallet: Arc<Wallet>,
-    config: Arc<Config>,
 }
 
 impl ImportExportSettingsState {
-    pub fn new(wallet: Arc<Wallet>, config: Arc<Config>) -> Self {
+    pub fn new(wallet: Arc<Wallet>) -> Self {
         Self {
             warning: None,
             modal: None,
             wallet,
-            config,
         }
     }
 }
@@ -396,12 +392,11 @@ impl State for ImportExportSettingsState {
                 if self.modal.is_none() {
                     let datadir = cache.datadir_path.clone();
                     let network = cache.network;
-                    let config = self.config.clone();
                     let wallet = self.wallet.clone();
                     let daemon = daemon.clone();
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportProcessBackup(datadir, network, config, wallet),
+                        ImportExportType::ExportProcessBackup(datadir, network, wallet),
                     );
                     launch!(self, modal, true);
                 }

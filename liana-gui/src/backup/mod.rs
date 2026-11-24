@@ -1,44 +1,17 @@
-use chrono::{Duration, Utc};
-use liana::{
-    descriptors::LianaDescriptor,
-    miniscript::{
-        self,
-        bitcoin::{bip32::Fingerprint, Network, Txid},
-    },
-};
-use lianad::{
-    bip329,
-    commands::{CoinStatus, ListCoinsEntry},
-};
+use liana::miniscript::bitcoin::{bip32::Fingerprint, Network};
+use lianad::bip329;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::BTreeMap,
     fmt::{Debug, Display},
-    sync::Arc,
-};
-use tokio::sync::mpsc::UnboundedSender;
-
-use crate::{
-    app::{
-        settings::{Settings, WalletSettings},
-        wallet::Wallet,
-        Config,
-    },
-    daemon::{
-        model::{HistoryCursor, HistoryTransaction},
-        Daemon, DaemonBackend, DaemonError,
-    },
-    dir::LianaDirectory,
-    export::Progress,
-    services::connect::client::backend::DEFAULT_LIMIT,
-    utils::now,
-    VERSION,
 };
 
-const CONFIG_KEY: &str = "config";
-const SETTINGS_KEY: &str = "settings";
-const LIANA_VERSION_KEY: &str = "liana_version";
+use crate::{backup::bip139::Bip139Backup, daemon::DaemonError, VERSION};
+
+pub mod bip139;
+
+pub const SETTINGS_KEY: &str = "settings";
 
 pub fn liana_version() -> String {
     strip_version_suffix(VERSION).to_string()
@@ -63,9 +36,6 @@ pub struct LegacyBackup {
     pub proprietary: serde_json::Map<String, serde_json::Value>,
     #[serde(default = "default_version")]
     pub version: u32,
-    /// True when synthesized from a bare descriptor rather than read from a backup file.
-    #[serde(skip)]
-    pub descriptor_only: bool,
 }
 
 fn default_version() -> u32 {
@@ -79,6 +49,7 @@ pub enum Error {
     Json,
     SettingsFromFile,
     Daemon(String),
+    Bip139(String),
 }
 
 impl Display for Error {
@@ -89,6 +60,7 @@ impl Display for Error {
             Error::Json => write!(f, "Backup: json error"),
             Error::SettingsFromFile => write!(f, "Backup: fail to parse setting from file"),
             Error::Daemon(e) => write!(f, "Backup daemon error: {e}"),
+            Error::Bip139(e) => write!(f, "Backup: {e}"),
         }
     }
 }
@@ -113,205 +85,23 @@ impl Debug for LegacyBackup {
     }
 }
 
-impl LegacyBackup {
-    /// Create a Backup from a descriptor
-    ///
-    /// # Arguments
-    /// * `descriptor` - the descriptor
-    /// * `network` - the network
-    pub fn from_descriptor(descriptor: LianaDescriptor, network: Network) -> Self {
-        let account = LegacyAccount::new(descriptor.to_string());
-        LegacyBackup {
-            name: None,
-            alias: None,
-            accounts: vec![account],
-            network,
-            date: None,
-            proprietary: Default::default(),
-            version: default_version(),
-            descriptor_only: true,
-        }
-    }
-
-    /// Create a Backup from the Liana App context
-    pub async fn from_app(
-        datadir: LianaDirectory,
-        network: Network,
-        config: Arc<Config>,
-        wallet: Arc<Wallet>,
-        daemon: Arc<dyn Daemon + Sync + Send>,
-        sender: &UnboundedSender<Progress>,
-    ) -> Result<Self, Error> {
-        let mut proprietary = serde_json::Map::new();
-        proprietary.insert(LIANA_VERSION_KEY.to_string(), liana_version().into());
-
-        let name = wallet.name.clone();
-        let descriptor = wallet.main_descriptor.to_string();
-        let keys = wallet.keys();
-
-        let network_dir = datadir.network_directory(network);
-        let mut wallet_alias = wallet.alias.clone();
-        if let Some(settings) =
-            WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
-                .map_err(|_| Error::SettingsFromFile)?
-        {
-            if let Ok(settings) = serde_json::to_value(&settings) {
-                proprietary.insert(SETTINGS_KEY.to_string(), settings);
-            }
-            wallet_alias = settings.alias;
-        };
-
-        if let Ok(config) = serde_json::to_value((*config).clone()) {
-            proprietary.insert(CONFIG_KEY.to_string(), config);
-        }
-
-        let info = daemon.get_info().await?;
-
-        let _ = sender.send(Progress::Progress(20.0));
-
-        let mut account = LegacyAccount::new(descriptor);
-
-        account.chain_tip = Some(LegacyChainTip {
-            block_height: info.block_height,
-            block_hash: None,
-        });
-        account.proprietary = proprietary;
-        account.name = Some(name.clone());
-        account.timestamp = Some(info.timestamp as u64);
-        account.change_index = Some(info.change_index);
-        account.receive_index = Some(info.receive_index);
-        for (fg, setting) in keys {
-            account.keys.insert(fg, setting.to_backup());
-        }
-
-        const MAX_LABEL_BIP329: u32 = 100;
-
-        let labels = {
-            let mut buff = Vec::new();
-            let mut start = 0;
-            loop {
-                let mut fetched = daemon.get_labels_bip329(start, 100).await?.into_vec();
-
-                if fetched.len() < MAX_LABEL_BIP329 as usize {
-                    buff.append(&mut fetched);
-                    break;
-                } else {
-                    buff.append(&mut fetched);
-                    start += MAX_LABEL_BIP329;
-                }
-            }
-            bip329::Labels::new(buff)
-        };
-
-        let _ = sender.send(Progress::Progress(30.0));
-
-        account.labels = Some(labels);
-        account.transactions = get_transactions(&daemon)
-            .await?
-            .into_iter()
-            .map(|tx| miniscript::bitcoin::consensus::encode::serialize_hex(&tx.tx))
-            .collect();
-
-        let _ = sender.send(Progress::Progress(40.0));
-
-        account.psbts = daemon
-            .list_spend_transactions(None)
-            .await?
-            .into_iter()
-            .map(|tx| tx.psbt.to_string())
-            .collect();
-
-        let _ = sender.send(Progress::Progress(50.0));
-
-        let statuses = [
-            CoinStatus::Unconfirmed,
-            CoinStatus::Confirmed,
-            CoinStatus::Spending,
-        ];
-        account.coins = daemon
-            .list_coins(&statuses, &[])
-            .await?
-            .coins
-            .into_iter()
-            .map(|c| (c.outpoint.clone().to_string(), LegacyCoin::from(c)))
-            .collect();
-
-        let _ = sender.send(Progress::Progress(60.0));
-
-        Ok(LegacyBackup {
-            name: Some(name),
-            alias: wallet_alias,
-            accounts: vec![account],
-            network,
-            proprietary: serde_json::Map::new(),
-            date: Some(now().as_secs()),
-            version: 0,
-            descriptor_only: false,
-        })
-    }
-
-    fn account(&self) -> Result<&LegacyAccount, Error> {
-        if self.accounts.len() != 1 {
-            Err(Error::NotSingleWallet)
-        } else {
-            Ok(self.accounts.first().expect("single account"))
-        }
-    }
-
-    pub fn config(&self) -> Result<Option<Config>, Error> {
-        let account = self.account()?;
-        if let Some(config) = account.proprietary.get(CONFIG_KEY) {
-            let config: Config = serde_json::from_value(config.clone()).map_err(|_| Error::Json)?;
-            Ok(Some(config))
-        } else {
-            Ok(None)
-        }
-    }
-
-    pub fn settings(&self) -> Result<Option<Settings>, Error> {
-        let account = self.account()?;
-        if let Some(settings) = account.proprietary.get(SETTINGS_KEY) {
-            let settings: Settings =
-                serde_json::from_value(settings.clone()).map_err(|_| Error::Json)?;
-            Ok(Some(settings))
-        } else {
-            Ok(None)
-        }
-    }
-}
-
-async fn get_transactions(
-    daemon: &Arc<dyn Daemon + Sync + Send>,
-) -> Result<Vec<HistoryTransaction>, Error> {
-    let limit = match daemon.backend() {
-        DaemonBackend::RemoteBackend => DEFAULT_LIMIT as u64,
-        _ => u32::MAX as u64,
+pub fn read(text: &str) -> Result<(Bip139Backup, Vec<String>), Error> {
+    let value: Value = serde_json::from_str(text).map_err(|_| Error::Json)?;
+    let bip139 = value
+        .get("version")
+        .and_then(Value::as_str)
+        .is_some_and(|version| version.starts_with(bip139::VERSION_PREFIX));
+    let mut backup = if bip139 {
+        let backup: Bip139Backup =
+            serde_json::from_value(value).map_err(|e| Error::Bip139(e.to_string()))?;
+        backup.validate()?;
+        backup
+    } else {
+        let backup: LegacyBackup = serde_json::from_value(value).map_err(|_| Error::Json)?;
+        Bip139Backup::from_legacy(backup)
     };
-
-    // look 2 hour forward
-    // https://github.com/bitcoin/bitcoin/blob/62bd61de110b057cbfd6e31e4d0b727d93119c72/src/chain.h#L29
-    let end = ((Utc::now() + Duration::hours(2)).timestamp()) as u32;
-
-    // store txs in a map to avoid duplicates
-    let mut map = HashMap::<Txid, HistoryTransaction>::new();
-    let mut cursor: Option<HistoryCursor> = None;
-
-    loop {
-        let (before, before_txid) = match cursor {
-            Some(cursor) => (cursor.time, Some(cursor.txid)),
-            None => (end, None),
-        };
-        let page = daemon.list_history_page(before, before_txid, limit).await?;
-        for tx in page.txs {
-            map.insert(tx.txid, tx);
-        }
-        match page.next_cursor {
-            Some(next) => cursor = Some(next),
-            None => break,
-        }
-    }
-    let vec: Vec<_> = map.into_values().collect();
-    Ok(vec)
+    let warnings = backup.retain_usable_accounts()?;
+    Ok((backup, warnings))
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -357,21 +147,6 @@ pub struct LegacyCoin {
     derivation_index: u32,
     is_coinbase: Option<bool>,
     is_from_self: Option<bool>,
-}
-
-impl From<ListCoinsEntry> for LegacyCoin {
-    fn from(value: ListCoinsEntry) -> Self {
-        Self {
-            amount: value.amount.to_sat(),
-            outpoint: value.outpoint.to_string(),
-            address: value.address.to_string(),
-            block_height: value.block_height,
-            account: if value.is_change { 1 } else { 0 },
-            derivation_index: value.derivation_index.into(),
-            is_coinbase: if value.is_immature { Some(true) } else { None },
-            is_from_self: Some(value.is_from_self),
-        }
-    }
 }
 
 impl LegacyAccount {
@@ -456,7 +231,6 @@ mod test {
             date: Some(0),
             proprietary: serde_json::Map::new(),
             version: 0,
-            descriptor_only: false,
         };
         let serialized = serde_json::to_string(&backup).unwrap();
         let expected = r#"{"accounts":[],"network":"signet","date":0,"version":0}"#;

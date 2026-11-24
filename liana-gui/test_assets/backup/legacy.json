@@ -1,0 +1,60 @@
+{
+  "name": "Liana-uacwhmkg",
+  "alias": "Savings",
+  "accounts": [
+    {
+      "name": "Liana-uacwhmkg",
+      "descriptor": "wsh(or_i(and_v(v:thresh(2,pkh([73c5da0a/48'/1'/0'/2']tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ/<2;3>/*),a:pkh([b8688df1/48'/1'/0'/2']tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ/<2;3>/*),a:pkh([28645006/48'/1'/0'/2']tpubDEwqCvJxKwKWX9xvRe48uofWJn1Y89Jn8UeH1Efrjb1UEVjUDy3URYTiqWaVCW7WdvHrL8XrSihHEhTwv5H3VDJoakjuCHiAnr6xcF2Xm4s/<0;1>/*)),older(52596)),and_v(v:pk([73c5da0a/48'/1'/0'/2']tpubDFH9dgzveyD8zTbPUFuLrGmCydNvxehyNdUXKJAQN8x4aZ4j6UZqGfnqFrD4NqyaTVGKbvEW54tsvPTK2UoSbCC1PJY8iCNiwTL3RWZEheQ/<0;1>/*),pk([b8688df1/48'/1'/0'/2']tpubDEfobrrtptRTbKf4gysDhoabneABDTAcdj3Vbn4XwPsLE2pmqpizSPRG6zHsbAMuiSgWmWPsYCLHTKTPpyrGJ5rAoTpKoQNZcxodiPf2tSJ/<0;1>/*))))#uacwhmkg",
+      "receive_index": 3,
+      "change_index": 1,
+      "timestamp": 1700000000,
+      "keys": {
+        "73c5da0a": {
+          "key": "73c5da0a",
+          "alias": "Alice"
+        },
+        "b8688df1": {
+          "key": "b8688df1",
+          "alias": "Bob",
+          "role": "Recovery",
+          "key_type": "External"
+        }
+      },
+      "labels": [
+        {
+          "type": "tx",
+          "ref": "a7d85601fabf9b9bdf410b0f3747192b546a3253977dac91b8592f6f6a0c9506",
+          "label": "rent"
+        }
+      ],
+      "transactions": [
+        "020000000001014487ba5891b6e097d52e89c51b8346a0c22a459f2a658be6c57dba467fc33bdf0000000000fdffffff028038010000000000220020e1c7df3f33d4d00217b26f9dc9ec9ae409245017f57b79f40881916c3c94941d50c3000000000000220020a9baa634900248a483fe2bb7879e20b9f41b4a1c9af2551f78d4c8d1b0bd0cb2024730440220372b429b067815f0de9d517c9d4a354c0655c88c68c979875fde01c357fbfdf002200b46d044b1c59af77e17ba64384606b6da974a5df0bfe6c33a29917081461cdf0121034f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aaff9e2400"
+      ],
+      "psbts": [
+        "cHNidP8BAH0CAAAAAQaVDGpvL1m4kax9l1MyalQrGUc3DwtB35ubv/oBVtinAQAAAAD9////AiBOAAAAAAAAFgAU/HJQohHe3ccO5aJzjeXweBc1HO+acwAAAAAAACIAICHpQvcGrxrX4zJltakCyDXYx2DmPhz3r0szWfCeaU92oCUmAAABAPYCAAAAAAEBRIe6WJG24JfVLonFG4NGoMIqRZ8qZYvmxX26Rn/DO98AAAAAAP3///8CgDgBAAAAAAAiACDhx98/M9TQAheyb53J7JrkCSRQF/V7efQIgZFsPJSUHVDDAAAAAAAAIgAgqbqmNJACSKSD/iu3h54gufQbShya8lUfeNTI0bC9DLICRzBEAiA3K0KbBngV8N6dUXydSjVMBlXIjGjJeYdf3gHDV/v98AIgC0bQRLHFmvd+F7pkOEYGttqXSl3wv+bDOimRcIFGHN8BIQNPNVvct8wK9yjvPM65YV2QaEu1sspfhZqw8LcEB1hxqv+eJAABAStQwwAAAAAAACIAIKm6pjSQAkikg/4rt4eeILn0G0ocmvJVH3jUyNGwvQyyAQWhY3apFP6BaHUz8M44XNULE5XtL4RHWu6GiKxrdqkUl9u/RIs+e5imywp87jiSUtXEEOKIrGyTa3apFHahvc1oFG3xyINaifN4n4s5d23wiKxsk1KIA3TNALJnIQPz7sorQblFgI0tJbmuZgi5p+kGhf4DnjBtfyflQgZq2a0hAgObM6sIvuh14wg9vugJq7ca9zvBNQRNwXaxZrOYeKt2rGgiBgIDmzOrCL7odeMIPb7oCau3Gvc7wTUETcF2sWazmHirdhy4aI3xMAAAgAEAAIAAAACAAgAAgAAAAAACAAAAIgYCy/lWwpCtpI/YMir2mQ55Og19SYM8ECbsXtg8ineN2S4cuGiN8TAAAIABAACAAAAAgAIAAIACAAAAAgAAACIGA8w/TOaqRhsjNF9JRe4w787DCtz+abmmdLZnPF3p0+hpHChkUAYwAACAAQAAgAAAAIACAACAAAAAAAIAAAAiBgPXrrwXWJEWRODKLCK5C0+2lYLc6seodb37CaikozlH5RxzxdoKMAAAgAEAAIAAAACAAgAAgAIAAAACAAAAIgYD8+7KK0G5RYCNLSW5rmYIuafpBoX+A54wbX8n5UIGatkcc8XaCjAAAIABAACAAAAAgAIAAIAAAAAAAgAAAAAAIgIC26ZzplE01GZCPV2QJqeG0gDW3F8qF5d/qIsJ7gYtOMUcKGRQBjAAAIABAACAAAAAgAIAAIABAAAAAQAAACICAvZsMKB9vP1h58W2+s9ObCf5R7r6y7P8DqKB4BZ+bpSNHHPF2gowAACAAQAAgAAAAIACAACAAQAAAAEAAAAiAgMWvOjy09rlFdbgkmQ6rMl70yFJt64E9W3IrtOLmYeEAxy4aI3xMAAAgAEAAIAAAACAAgAAgAMAAAABAAAAIgIDegGbmd98q31CazSDvTJiEXowfUZEQyoEnsF63TlwrNkcuGiN8TAAAIABAACAAAAAgAIAAIABAAAAAQAAACICA+ZyhedciuV0QpDv3y1DFIqK03vaWyHzifFYO6bmKJbuHHPF2gowAACAAQAAgAAAAIACAACAAwAAAAEAAAAA"
+      ],
+      "coins": {
+        "a7d85601fabf9b9bdf410b0f3747192b546a3253977dac91b8592f6f6a0c9506:1": {
+          "amount": 50000,
+          "outpoint": "a7d85601fabf9b9bdf410b0f3747192b546a3253977dac91b8592f6f6a0c9506:1",
+          "address": "tb1q4xa2vdysqfy2fql79wmc083qh86pkjsunte928mc6nydrv9apjeqsen9dt",
+          "block_height": 200,
+          "account": 0,
+          "derivation_index": 2,
+          "is_coinbase": null,
+          "is_from_self": false
+        }
+      },
+      "chain_tip": {
+        "block_height": 250,
+        "block_hash": null
+      },
+      "proprietary": {
+        "liana_version": "13.0"
+      }
+    }
+  ],
+  "network": "signet",
+  "date": 1700000100,
+  "version": 0
+}
