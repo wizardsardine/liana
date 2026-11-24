@@ -1747,6 +1747,8 @@ settings-export-wallet => "Export wallet"
 settings-export-wallet-description
 => "File (not encrypted) with wallet info useful to sync labels and data on other devices.";;
 
+settings-export-wallet-encrypt => "Encrypt with the wallet's keys (BIP-138)"
+
 settings-fiat-price => "Fiat price:"
 
 settings-fiat-price-tooltip

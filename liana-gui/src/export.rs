@@ -9,7 +9,11 @@ use std::{
     time,
 };
 
-use bip138::{descriptor::dpk_to_root_pk, Decrypted, EncryptedBackup};
+use bip138::{
+    backend::{DerivationPath, PublicKey},
+    descriptor::dpk_to_root_pk,
+    Content, Decrypted, EncryptedBackup, ToPayload, Warning,
+};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -184,7 +188,12 @@ pub enum ImportExportType {
         descriptor: Box<LianaDescriptor>,
         store_common_paths: bool,
     },
-    ExportProcessBackup(LianaDirectory, Network, Arc<Wallet>),
+    ExportProcessBackup {
+        datadir: LianaDirectory,
+        network: Network,
+        wallet: Arc<Wallet>,
+        encrypt: bool,
+    },
     ImportBackup {
         network_dir: NetworkDirectory,
         wallet: Arc<Wallet>,
@@ -206,7 +215,7 @@ impl ImportExportType {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
             | ImportExportType::Descriptor(_)
-            | ImportExportType::ExportProcessBackup(..)
+            | ImportExportType::ExportProcessBackup { .. }
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportEncryptedDescriptor { .. }
             | ImportExportType::ExportLabels => crate::t!("export-success"),
@@ -336,11 +345,17 @@ impl Export {
                 store_common_paths,
             } => export_encrypted_descriptor(&sender, path, *descriptor, store_common_paths).await,
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
-            ImportExportType::ExportProcessBackup(datadir, network, wallet) => {
+            ImportExportType::ExportProcessBackup {
+                datadir,
+                network,
+                wallet,
+                encrypt,
+            } => {
                 app_backup_export(
                     datadir,
                     network,
                     wallet,
+                    encrypt,
                     daemon.clone().expect("cannot fail"),
                     path,
                     &sender,
@@ -911,10 +926,16 @@ pub async fn import_backup(
 
     // Load backup from file
     let mut file = File::open(&path)?;
-
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let backup_str = if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        decrypt_wallet_backup(&bytes, &wallet.main_descriptor)?
+    } else {
+        String::from_utf8(bytes)
+            .map_err(|_| Error::UnknownFormat)?
+            .trim()
+            .to_string()
+    };
 
     let backup = match backup::read(&backup_str) {
         Ok((backup, warnings)) => {
@@ -1513,14 +1534,103 @@ pub async fn app_backup_export(
     datadir: LianaDirectory,
     network: Network,
     wallet: Arc<Wallet>,
+    encrypt: bool,
     daemon: Arc<dyn Daemon + Sync + Send>,
     path: PathBuf,
     sender: &UnboundedSender<Progress>,
 ) -> Result<(), Error> {
-    let backup = app_backup(datadir.clone(), network, wallet, daemon, sender)
+    let backup = app_backup(datadir.clone(), network, wallet.clone(), daemon, sender)
         .await
         .map_err(Error::Backup)?;
-    export_string(sender, path, backup).await
+    if !encrypt {
+        return export_string(sender, path, backup).await;
+    }
+    let bytes = encrypt_wallet_backup(
+        &backup,
+        &wallet.main_descriptor,
+        !wallet.encrypted_backup_privacy_mode,
+    )?;
+    let mut file = open_file_write(&path).await?;
+    file.write_all(&bytes)?;
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub struct WalletBackupPayload<'a> {
+    json: &'a str,
+    descriptor: &'a LianaDescriptor,
+}
+
+impl ToPayload for WalletBackupPayload<'_> {
+    fn to_payload(&self) -> Result<Vec<u8>, bip138::Error> {
+        Ok(self.json.as_bytes().to_vec())
+    }
+
+    fn content_type(&self) -> Content {
+        Content::Bip139
+    }
+
+    fn key_derivation_paths(&self) -> Result<Vec<(PublicKey, DerivationPath)>, bip138::Error> {
+        self.descriptor.descriptor().key_derivation_paths()
+    }
+
+    fn keys(&self) -> Result<Vec<PublicKey>, bip138::Error> {
+        self.descriptor.descriptor().keys()
+    }
+
+    fn warnings(&self) -> Result<Vec<Warning>, bip138::Error> {
+        self.descriptor.descriptor().warnings()
+    }
+
+    fn exposed_keys(&self) -> Vec<[u8; 32]> {
+        self.descriptor.descriptor().exposed_keys()
+    }
+}
+
+pub fn encrypt_wallet_backup(
+    json: &str,
+    descriptor: &LianaDescriptor,
+    store_common_paths: bool,
+) -> Result<Vec<u8>, Error> {
+    let bytes = EncryptedBackup::new()
+        .set_payload(&WalletBackupPayload { json, descriptor })?
+        .set_store_common_paths(store_common_paths)
+        .encrypt()?
+        .bytes;
+    for key in descriptor.spendable_keys() {
+        let key = dpk_to_root_pk(&key).map_err(|_| Error::EncryptionFailed)?;
+        if decrypt_wallet_backup_with(&bytes, key).as_deref() != Some(json) {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+    Ok(bytes)
+}
+
+fn decrypt_wallet_backup_with(bytes: &[u8], key: PublicKey) -> Option<String> {
+    let decrypted = EncryptedBackup::new()
+        .set_encrypted_payload(bytes)
+        .ok()?
+        .set_keys(vec![key])
+        .decrypt()
+        .ok()?;
+    decrypted.into_iter().find_map(|item| match item {
+        Decrypted::WalletBackup(bytes) => String::from_utf8(bytes).ok(),
+        _ => None,
+    })
+}
+
+pub fn decrypt_wallet_backup(bytes: &[u8], descriptor: &LianaDescriptor) -> Result<String, Error> {
+    descriptor
+        .spendable_keys()
+        .iter()
+        .filter_map(|key| dpk_to_root_pk(key).ok())
+        .find_map(|key| decrypt_wallet_backup_with(bytes, key))
+        .ok_or_else(|| {
+            Error::BackupImport(
+                "This encrypted file holds no wallet backup this wallet's keys can open".into(),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -1931,5 +2041,41 @@ pub mod tests {
                 .set_encrypted_payload(&test_asset(name))
                 .is_err());
         }
+    }
+
+    fn wallet_backup() -> String {
+        String::from_utf8(test_asset("backup/liana.bip139")).unwrap()
+    }
+
+    fn wallet_descriptor() -> LianaDescriptor {
+        let descriptor = test_asset("backup/wallet.descriptor");
+        LianaDescriptor::from_str(String::from_utf8(descriptor).unwrap().trim()).unwrap()
+    }
+
+    #[test]
+    fn an_encrypted_wallet_backup_opens_with_each_key_of_the_descriptor() {
+        let json = wallet_backup();
+        let descriptor = wallet_descriptor();
+        let bytes = encrypt_wallet_backup(&json, &descriptor, true).unwrap();
+        for key in descriptor.spendable_keys() {
+            let key = dpk_to_root_pk(&key).unwrap();
+            assert_eq!(
+                decrypt_wallet_backup_with(&bytes, key).as_deref(),
+                Some(json.as_str())
+            );
+        }
+        let decrypted = decrypt_wallet_backup(&bytes, &descriptor).unwrap();
+        let (backup, _) = backup::read(&decrypted).unwrap();
+        assert_eq!(
+            backup.accounts[0].descriptor_str(),
+            Some(descriptor.to_string().as_str())
+        );
+    }
+
+    #[test]
+    fn a_wallet_backup_encrypted_to_other_keys_is_refused() {
+        let bytes = encrypt_wallet_backup(&wallet_backup(), &wallet_descriptor(), true).unwrap();
+        let other = LianaDescriptor::from_str(ENCRYPTED_ASSETS_DESCRIPTOR).unwrap();
+        assert!(decrypt_wallet_backup(&bytes, &other).is_err());
     }
 }

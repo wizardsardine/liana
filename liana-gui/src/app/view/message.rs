@@ -126,6 +126,7 @@ pub enum SettingsMessage {
     ExportTransactions,
     ExportLabels,
     ExportWallet,
+    EncryptWalletBackup(bool),
     ImportWallet,
     AboutSection,
     RegisterWallet,

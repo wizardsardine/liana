@@ -78,7 +78,7 @@ impl ExportModal {
             ImportExportType::ImportXpub(_) | ImportExportType::ImportXpubs(_) => {
                 crate::t!("export-title-import-xpub")
             }
-            ImportExportType::ExportProcessBackup(..) => crate::t!("export-title-export-backup"),
+            ImportExportType::ExportProcessBackup { .. } => crate::t!("export-title-export-backup"),
             ImportExportType::ExportEncryptedDescriptor { .. } => {
                 crate::t!("export-title-export-encrypted-descriptor")
             }
@@ -108,7 +108,10 @@ impl ExportModal {
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportProcessBackup(..) => {
+            ImportExportType::ExportProcessBackup { encrypt: true, .. } => {
+                format!("liana-backup-{date}.bip138")
+            }
+            ImportExportType::ExportProcessBackup { encrypt: false, .. } => {
                 format!("liana-backup-{date}.bip139")
             }
             ImportExportType::FromBackup(_) | ImportExportType::ImportBackup { .. } => {

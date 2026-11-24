@@ -98,7 +98,7 @@ rust-ini = "0.19.0"
 rfd = "0.15.1"
 fs2 = "0.4.3"
 open = "5.3"
-bip138 = { version = "=0.2.0", default-features = false, features = ["miniscript_12", "rand", "base64", "v0", "descriptor_backup"] }
+bip138 = { version = "=0.2.2", default-features = false, features = ["miniscript_12", "rand", "base64", "v0", "descriptor_backup"] }
 zip = { version = "0.6", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }

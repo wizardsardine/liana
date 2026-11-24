@@ -2347,6 +2347,8 @@ settings-export-wallet-description
 => "File (not encrypted) with wallet info useful to sync labels and data on other devices."
 => "Ficheiro (não encriptado) com informação da carteira, útil para sincronizar etiquetas e dados noutros dispositivos.";;
 
+settings-export-wallet-encrypt => "Encrypt with the wallet's keys (BIP-138)" => NONE
+
 settings-fiat-price => "Fiat price:" => "Preço em moeda fiduciária:"
 
 settings-fiat-price-tooltip

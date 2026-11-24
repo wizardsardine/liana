@@ -582,9 +582,9 @@ dependencies = [
 
 [[package]]
 name = "bip138"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8ace5a3287c98bcddc0aa56b118bd5d463549779604f00fc820031c2d10ebdc8"
+checksum = "6bbfb0e1a73edf6569f26352475c72bb39a9b508955a95d140d4260895822d21"
 dependencies = [
  "base64 0.22.1",
  "bip138-ll",

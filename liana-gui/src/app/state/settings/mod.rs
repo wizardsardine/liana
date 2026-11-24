@@ -245,6 +245,7 @@ pub struct ImportExportSettingsState {
     warning: Option<Error>,
     modal: Option<ExportModal>,
     wallet: Arc<Wallet>,
+    encrypt_wallet_backup: bool,
 }
 
 impl ImportExportSettingsState {
@@ -253,6 +254,7 @@ impl ImportExportSettingsState {
             warning: None,
             modal: None,
             wallet,
+            encrypt_wallet_backup: true,
         }
     }
 }
@@ -285,6 +287,7 @@ impl State for ImportExportSettingsState {
             cache,
             self.warning.as_ref(),
             self.wallet.encrypted_backup_privacy_mode,
+            self.encrypt_wallet_backup,
         );
         if let Some(modal) = &self.modal {
             modal.view(content)
@@ -311,6 +314,11 @@ impl State for ImportExportSettingsState {
                 Ok(wallet) => self.wallet = wallet,
                 Err(e) => self.warning = Some(e),
             },
+            Message::View(view::Message::Settings(view::SettingsMessage::EncryptWalletBackup(
+                encrypt,
+            ))) => {
+                self.encrypt_wallet_backup = encrypt;
+            }
             Message::View(view::Message::Settings(
                 view::SettingsMessage::EncryptedBackupPrivacyMode(privacy_mode),
             )) => {
@@ -396,7 +404,12 @@ impl State for ImportExportSettingsState {
                     let daemon = daemon.clone();
                     let modal = ExportModal::new(
                         Some(daemon),
-                        ImportExportType::ExportProcessBackup(datadir, network, wallet),
+                        ImportExportType::ExportProcessBackup {
+                            datadir,
+                            network,
+                            wallet,
+                            encrypt: self.encrypt_wallet_backup,
+                        },
                     );
                     launch!(self, modal, true);
                 }
