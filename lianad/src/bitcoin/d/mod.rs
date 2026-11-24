@@ -1213,11 +1213,11 @@ impl BitcoinD {
         }
     }
 
-    /// Get the list of txids spending those outpoints in mempool.
+    /// Get the set of txids spending those outpoints in mempool.
     pub fn mempool_txs_spending_prevouts(
         &self,
         outpoints: &[bitcoin::OutPoint],
-    ) -> Vec<bitcoin::Txid> {
+    ) -> HashSet<bitcoin::Txid> {
         let prevouts: Json = outpoints
             .iter()
             .map(|op| serde_json::json!({"txid": op.txid.to_string(), "vout": op.vout}))
