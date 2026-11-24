@@ -2258,8 +2258,8 @@ settings-alias-too-long
 => "Veuillez saisir un alias plus court";;
 
 settings-backup-encrypted-descriptor-tooltip
-=> "An encrypted descriptor file (.bip138) you can store anywhere. To decrypt it, you need one of your signing devices or extended public keys."
-=> "Un fichier descriptor chiffré (.bip138) que vous pouvez stocker n'importe où. Pour le déchiffrer, vous avez besoin d'un de vos appareils de signature ou d'une de vos clés publiques étendues.";;
+=> "An encrypted descriptor file (.bip138). Keep copies in as many private places as you can. To decrypt it, you need one of your signing devices or extended public keys."
+=> NONE;; # "Un fichier descriptor chiffré (.bip138) que vous pouvez stocker n'importe où. Pour le déchiffrer, vous avez besoin d'un de vos appareils de signature ou d'une de vos clés publiques étendues."
 
 settings-block-height => "Block height:" => "Hauteur de bloc :"
 
