@@ -2405,6 +2405,10 @@ settings-not-running => "Not running" => "Non in esecuzione"
 
 settings-other-formats => "Other formats" => "Altri formati"
 
+settings-remove-qr-signer
+=> "Remove the signing device #{$fingerprint} from this wallet? It will no longer be offered for QR code exchanges, and its key stays in the wallet."
+=> NONE;;
+
 settings-rescan-success
 => "Successfully rescanned the blockchain"
 => "Scansione della blockchain completata";;

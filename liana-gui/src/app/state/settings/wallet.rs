@@ -337,6 +337,7 @@ pub struct RegisterWalletModal {
     registered: HashSet<Fingerprint>,
     processing: bool,
     modal: Option<AirgapModal>,
+    removing: Option<Fingerprint>,
 }
 
 impl RegisterWalletModal {
@@ -354,6 +355,7 @@ impl RegisterWalletModal {
             processing: false,
             registered,
             modal: None,
+            removing: None,
         }
     }
 }
@@ -474,14 +476,20 @@ impl RegisterWalletModal {
     pub fn view(&self) -> Element<'_, view::Message> {
         match &self.modal {
             Some(modal) => crate::view::airgap::modal(modal, view::Message::Airgap),
-            None => view::settings::wallet::register_wallet_modal(
-                self.warning.as_ref(),
-                &self.hws.list,
-                &self.wallet,
-                self.processing,
-                self.chosen_hw,
-                &self.registered,
-            ),
+            None => match self.removing {
+                Some(fingerprint) => view::settings::wallet::remove_qr_signer_modal(
+                    self.warning.as_ref(),
+                    fingerprint,
+                ),
+                None => view::settings::wallet::register_wallet_modal(
+                    self.warning.as_ref(),
+                    &self.hws.list,
+                    &self.wallet,
+                    self.processing,
+                    self.chosen_hw,
+                    &self.registered,
+                ),
+            },
         }
     }
 
@@ -543,6 +551,35 @@ impl RegisterWalletModal {
             )) => self.on_register_airgapped_signer(fingerprint, cache),
             Message::View(view::Message::Settings(view::SettingsMessage::AddAirgappedSigner)) => {
                 self.on_add_airgapped_signer(cache)
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::RemoveAirgappedSigner(fingerprint),
+            )) => {
+                self.removing = Some(fingerprint);
+                Task::none()
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::CancelRemoveAirgappedSigner,
+            )) => {
+                self.removing = None;
+                Task::none()
+            }
+            Message::View(view::Message::Settings(
+                view::SettingsMessage::ConfirmRemoveAirgappedSigner,
+            )) => {
+                let Some(fingerprint) = self.removing.take() else {
+                    return Task::none();
+                };
+                self.processing = true;
+                Task::perform(
+                    remove_airgapped_signer(
+                        self.data_dir.clone(),
+                        cache.network,
+                        fingerprint,
+                        self.wallet.clone(),
+                    ),
+                    Message::WalletUpdated,
+                )
             }
             Message::View(view::Message::Airgap(action)) => self.on_airgap(action, cache),
             Message::View(view::Message::SelectHardwareWallet(i)) => {
@@ -777,6 +814,23 @@ pub async fn record_airgapped_signer(
     );
     save_device(&mut wallet.airgapped_signers, device.clone());
     write_airgapped_signers(data_dir, network, |devices| save_device(devices, device)).await?;
+    Ok(Arc::new(wallet))
+}
+
+pub async fn remove_airgapped_signer(
+    data_dir: LianaDirectory,
+    network: Network,
+    fingerprint: Fingerprint,
+    wallet: Arc<Wallet>,
+) -> Result<Arc<Wallet>, Error> {
+    let mut wallet = wallet.as_ref().clone();
+    wallet
+        .airgapped_signers
+        .retain(|signer| signer.fingerprint != fingerprint);
+    write_airgapped_signers(data_dir, network, |devices| {
+        devices.retain(|device| device.fingerprint != fingerprint)
+    })
+    .await?;
     Ok(Arc::new(wallet))
 }
 

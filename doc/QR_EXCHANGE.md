@@ -19,6 +19,8 @@ The device must support [BIP-377](https://github.com/bitcoin/bips/pull/2353) mes
   added another way: in the wallet settings, "Register on device", then "Add a signing device by
   QR code". The device sends the keys at the wallet's derivation paths, and Liana adds it to the
   wallet's signing devices if it holds one of the wallet's keys.
+  The cross next to a device in that list removes it, after a confirmation: Liana no longer offers
+  it for QR code exchanges, and its key stays in the wallet.
 - **Verifying a receive address**, from the receive screen: the device shows the address on its own
   screen, and Liana checks it is the one it expects.
 - **Signing a transaction**, from the PSBT screen: pick the device in the list of signers. A PSBT

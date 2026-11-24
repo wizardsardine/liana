@@ -11,7 +11,7 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button::btn_update,
+        button::{self, btn_update},
         card, form,
         list::{DeviceStatus, STANDARD_ENTRY_WIDTH},
         modal,
@@ -298,6 +298,7 @@ pub fn register_wallet_modal<'a>(
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
+    let warning = warning.map(|w| warn(Some(w)));
     let signers =
         hws.iter()
             .enumerate()
@@ -331,7 +332,7 @@ pub fn register_wallet_modal<'a>(
         } else {
             DeviceStatus::None
         };
-        col.push(modal::airgapped_signer_entry(
+        let entry = modal::airgapped_signer_entry(
             Some(format!("#{fingerprint}")),
             Some(&signer.model),
             wallet
@@ -342,7 +343,15 @@ pub fn register_wallet_modal<'a>(
             Some(Message::Settings(SettingsMessage::RegisterAirgappedSigner(
                 fingerprint,
             ))),
-        ))
+        );
+        let remove = button::btn_remove(Some(Message::Settings(
+            SettingsMessage::RemoveAirgappedSigner(fingerprint),
+        )));
+        col.push(
+            row![entry, remove]
+                .spacing(HSpacing::M)
+                .align_y(Alignment::Center),
+        )
     });
 
     let add = modal::add_qr_signer_entry(Some(|| {
@@ -352,9 +361,32 @@ pub fn register_wallet_modal<'a>(
     let devices = column![title, signers, add]
         .spacing(VSpacing::S)
         .width(Length::Fill);
-    let warning = warning.map(|w| warn(Some(w)));
-
     column![warning, card::simple(devices)]
+        .width(REGISTER_DEVICE_CARD_WIDTH)
+        .into()
+}
+
+pub fn remove_qr_signer_modal<'a>(
+    warning: Option<&Error>,
+    fingerprint: Fingerprint,
+) -> Element<'a, Message> {
+    let warning = warning.map(|w| warn(Some(w)));
+    let question = new::b4(t!(
+        "settings-remove-qr-signer",
+        fingerprint = fingerprint.to_string()
+    ));
+    let buttons = row![
+        Space::fill_width(),
+        button::btn_no(Some(Message::Settings(
+            SettingsMessage::CancelRemoveAirgappedSigner
+        ))),
+        button::btn_yes(Some(Message::Settings(
+            SettingsMessage::ConfirmRemoveAirgappedSigner
+        ))),
+    ]
+    .spacing(HSpacing::M);
+    let confirm = column![question, buttons].spacing(VSpacing::M);
+    column![warning, card::simple(confirm)]
         .width(REGISTER_DEVICE_CARD_WIDTH)
         .into()
 }
