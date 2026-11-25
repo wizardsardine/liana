@@ -728,7 +728,7 @@ pub async fn import_descriptor(
     } else {
         backup::read(descr_str).ok().and_then(|(b, _)| {
             if b.accounts.len() == 1 {
-                LianaDescriptor::from_str(b.accounts[0].descriptor_str()?).ok()
+                b.accounts[0].liana_descriptor()
             } else {
                 None
             }
@@ -979,9 +979,9 @@ pub async fn import_backup(
         }
     };
 
-    let backup_descriptor = match account.descriptor_str().map(LianaDescriptor::from_str) {
-        Some(Ok(d)) => d,
-        _ => {
+    let backup_descriptor = match account.liana_descriptor() {
+        Some(d) => d,
+        None => {
             return Err(Error::BackupImport(
                 "The backup descriptor is not a valid Liana descriptor!".into(),
             ));
@@ -1332,9 +1332,9 @@ pub async fn from_backup(
         }
     };
 
-    let descriptor = match account.descriptor_str().map(LianaDescriptor::from_str) {
-        Some(Ok(d)) => d,
-        _ => {
+    let descriptor = match account.liana_descriptor() {
+        Some(d) => d,
+        None => {
             return Err(Error::BackupImport(
                 "The backup descriptor is not a valid Liana descriptor!".into(),
             ));
@@ -1403,8 +1403,7 @@ pub async fn import_backup_at_launch(
     };
 
     let backup_descriptor = account
-        .descriptor_str()
-        .and_then(|descriptor| LianaDescriptor::from_str(descriptor).ok())
+        .liana_descriptor()
         .ok_or(RestoreBackupError::InvalidDescriptor)?;
 
     if backup_descriptor != descriptor {
@@ -2066,10 +2065,7 @@ pub mod tests {
         }
         let decrypted = decrypt_wallet_backup(&bytes, &descriptor).unwrap();
         let (backup, _) = backup::read(&decrypted).unwrap();
-        assert_eq!(
-            backup.accounts[0].descriptor_str(),
-            Some(descriptor.to_string().as_str())
-        );
+        assert_eq!(backup.accounts[0].liana_descriptor(), Some(descriptor));
     }
 
     #[test]

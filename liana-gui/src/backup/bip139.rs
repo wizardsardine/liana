@@ -46,6 +46,7 @@ use crate::{
 pub const VERSION_PREFIX: &str = "BIP139-";
 const VERSION: &str = "BIP139-1";
 const BIP380: &str = "bip380";
+const BIP388: &str = "bip388";
 const PROPRIETARY_KEY: &str = "liana";
 const LABELS_PAGE: u32 = 100;
 
@@ -639,9 +640,7 @@ impl Bip139Backup {
     pub fn retain_usable_accounts(&mut self) -> Result<Vec<String>, Error> {
         let mut warnings = Vec::new();
         self.accounts.retain(|account| {
-            let usable = account
-                .descriptor_str()
-                .is_some_and(|descriptor| LianaDescriptor::from_str(descriptor).is_ok());
+            let usable = account.liana_descriptor().is_some();
             if !usable {
                 warnings.push(format!(
                     "An account of type {} was skipped, Liana cannot use it.",
@@ -651,9 +650,9 @@ impl Bip139Backup {
             usable
         });
         if self.accounts.is_empty() {
-            return Err(Error::Bip139(format!(
-                "the backup holds no {BIP380} account"
-            )));
+            return Err(Error::Bip139(
+                "the backup holds no account Liana can use".to_owned(),
+            ));
         }
         Ok(warnings)
     }
@@ -686,12 +685,10 @@ impl Bip139Backup {
     }
 
     fn restored_devices(&self, account: &Account) -> Vec<RestoredDevice> {
-        let Some(descriptor) = account.descriptor_str() else {
+        let Some(descriptor) = account.liana_descriptor() else {
             return Vec::new();
         };
-        let checksum = LianaDescriptor::from_str(descriptor)
-            .map(|descriptor| descriptor.checksum())
-            .unwrap_or_default();
+        let checksum = descriptor.checksum();
         let mut restored = Vec::new();
         for signer in &self.signers {
             for fingerprint in &signer.fingerprints {
@@ -700,7 +697,10 @@ impl Bip139Backup {
                     .get(fingerprint)
                     .into_iter()
                     .flat_map(|key| &key.proof_of_registration)
-                    .filter(|(registered, _)| registered == descriptor)
+                    .filter(|(registered, _)| {
+                        LianaDescriptor::from_str(registered)
+                            .is_ok_and(|registered| registered == descriptor)
+                    })
                     .map(|(_, proof)| proof.clone());
                 let registered: Vec<bool> = signer
                     .devices
@@ -798,10 +798,13 @@ impl Account {
         }
     }
 
-    pub fn descriptor_str(&self) -> Option<&str> {
-        (self.kind == BIP380)
-            .then(|| self.descriptor.as_str())
-            .flatten()
+    pub fn liana_descriptor(&self) -> Option<LianaDescriptor> {
+        let descriptor = match self.kind.as_str() {
+            BIP380 => self.descriptor.as_str()?.to_owned(),
+            BIP388 => wallet_policy_descriptor(&self.descriptor)?,
+            _ => return None,
+        };
+        LianaDescriptor::from_str(&descriptor).ok()
     }
 
     pub fn key_settings(&self) -> HashMap<Fingerprint, KeySetting> {
@@ -852,6 +855,32 @@ impl Coin {
             is_from_self: coin.is_from_self,
         }
     }
+}
+
+fn wallet_policy_descriptor(value: &Value) -> Option<String> {
+    let [keys, policy] = value.as_array()?.as_slice() else {
+        return None;
+    };
+    let keys = keys
+        .as_array()?
+        .iter()
+        .map(Value::as_str)
+        .collect::<Option<Vec<_>>>()?;
+    let policy = policy.as_str()?.replace("/**", "/<0;1>/*");
+    let mut descriptor = String::new();
+    let mut rest = policy.as_str();
+    while let Some(at) = rest.find('@') {
+        descriptor.push_str(&rest[..at]);
+        rest = &rest[at + 1..];
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        let index: usize = rest[..digits].parse().ok()?;
+        descriptor.push_str(keys.get(index)?);
+        rest = &rest[digits..];
+    }
+    descriptor.push_str(rest);
+    Some(descriptor)
 }
 
 /// Estimates the birth height from the creation time, as BIP-139 allows for `birth_block`.
@@ -1007,6 +1036,7 @@ mod tests {
 
     const LIANA: &str = include_str!("../../test_assets/backup/liana.bip139");
     const FOREIGN: &str = include_str!("../../test_assets/backup/foreign.bip139");
+    const WALLET_POLICY: &str = include_str!("../../test_assets/backup/wallet-policy.bip139");
     const LEGACY: &str = include_str!("../../test_assets/backup/legacy.json");
     const DESCRIPTOR: &str = include_str!("../../test_assets/backup/wallet.descriptor");
     const TRANSACTIONS: &str = include_str!("../../test_assets/backup/wallet.transactions");
@@ -1211,7 +1241,7 @@ mod tests {
         );
 
         let account = &backup.accounts[0];
-        assert_eq!(account.descriptor_str(), Some(DESCRIPTOR.trim()));
+        assert_eq!(account.liana_descriptor(), Some(descriptor()));
         assert_eq!(account.name.as_deref(), Some(wallet.name.as_str()));
         assert_eq!(account.receive_index, Some(4));
         assert_eq!(account.change_index, Some(2));
@@ -1443,11 +1473,58 @@ mod tests {
 
         let (backup, warnings) = read(&backup.to_string()).unwrap();
         assert_eq!(backup.accounts.len(), 1);
-        assert_eq!(
-            backup.accounts[0].descriptor_str(),
-            Some(descriptor().to_string().as_str())
-        );
+        assert_eq!(backup.accounts[0].liana_descriptor(), Some(descriptor()));
         assert_eq!(warnings.len(), 1);
+    }
+
+    #[test]
+    fn a_wallet_policy_account_imports_the_same_wallet() {
+        let (liana, _) = read(LIANA).unwrap();
+        let (mut policy, warnings) = read(WALLET_POLICY).unwrap();
+        assert!(warnings.is_empty());
+        assert_eq!(policy.accounts[0].kind, "bip388");
+        assert_eq!(policy.accounts[0].liana_descriptor(), Some(descriptor()));
+        let devices = |backup: &Bip139Backup| {
+            backup
+                .hardware_wallets(&backup.accounts[0])
+                .into_iter()
+                .map(|hw| (hw.kind, hw.fingerprint, hw.token))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(devices(&policy), devices(&liana));
+        assert!(devices(&policy)
+            .iter()
+            .any(|(_, _, token)| !token.is_empty()));
+        assert_eq!(
+            policy.airgapped_devices(&policy.accounts[0]),
+            liana.airgapped_devices(&liana.accounts[0])
+        );
+
+        policy.accounts[0].kind = liana.accounts[0].kind.clone();
+        policy.accounts[0].descriptor = liana.accounts[0].descriptor.clone();
+        assert_eq!(policy, liana);
+    }
+
+    #[test]
+    fn a_malformed_wallet_policy_account_is_skipped() {
+        let malformed = [
+            json!("wsh(sortedmulti(2,@0/**,@1/**))"),
+            json!([["[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC"]]),
+            json!([[1, 2], "wsh(sortedmulti(2,@0/**,@1/**))"]),
+            json!([["[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC"], "wsh(sortedmulti(1,@0/**,@1/**))"]),
+        ];
+        for descriptor in malformed {
+            let mut backup = fixture();
+            let mut policy = backup["accounts"][0].clone();
+            policy["type"] = json!("bip388");
+            policy["descriptor"] = descriptor;
+            backup["accounts"].as_array_mut().unwrap().push(policy);
+
+            let (backup, warnings) = read(&backup.to_string()).unwrap();
+            assert_eq!(backup.accounts.len(), 1);
+            assert_eq!(backup.accounts[0].kind, "bip380");
+            assert_eq!(warnings.len(), 1);
+        }
     }
 
     #[test]

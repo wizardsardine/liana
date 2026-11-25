@@ -206,15 +206,11 @@ fn decrypted_to_decrypt(decrypted: Decrypted) -> Option<Decrypt> {
             if backup.accounts.len() != 1 {
                 return None;
             }
-            let descriptor_str = backup.accounts.first().expect("checked").descriptor_str()?;
-            let _ = match LianaDescriptor::from_str(descriptor_str) {
-                Ok(descr) => descr,
-                Err(_) => {
-                    return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
-                        backup_bytes,
-                    )))
-                }
-            };
+            if backup.accounts[0].liana_descriptor().is_none() {
+                return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
+                    backup_bytes,
+                )));
+            }
             Some(Decrypt::Backup(backup))
         }
         decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),

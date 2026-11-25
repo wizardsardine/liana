@@ -693,8 +693,8 @@ impl Step for ImportRemoteWallet {
                 let descriptor = backup
                     .accounts
                     .first()
-                    .and_then(|acc| acc.descriptor_str())
-                    .map(str::to_owned);
+                    .and_then(|acc| acc.liana_descriptor())
+                    .map(|descriptor| descriptor.to_string());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
                         backup.network == Bip139Network::Bitcoin
