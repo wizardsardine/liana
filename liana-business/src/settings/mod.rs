@@ -209,6 +209,8 @@ impl SettingsTrait for BusinessSettings {
                     sync_progress: 1.0,
                     blockheight: wallet.tip_height.unwrap_or(0),
                     last_poll_timestamp: None,
+                    // The remote backend is trusted, its client never reports a failure.
+                    backend_failure: None,
                     last_tick: Instant::now(),
                 },
                 fiat_price: None,

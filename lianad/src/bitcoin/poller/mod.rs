@@ -63,6 +63,9 @@ impl Poller {
     ) {
         let mut last_poll = None;
         let mut synced = false;
+        // Whether we still poll the backend. Cleared if it becomes unrecoverably out of sync,
+        // for instance if an Electrum server lied to us about the state of our coins.
+        let mut polling = true;
 
         loop {
             // How long to wait before the next poll.
@@ -107,11 +110,23 @@ impl Poller {
                     // Update `last_poll` even if we don't poll now so that we don't attempt another
                     // poll too soon.
                     last_poll = Some(time::Instant::now());
-                    if synced {
-                        looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
-                    } else {
-                        log::warn!("Skipped poll as block chain is still synchronizing.");
+                    if polling {
+                        if synced {
+                            if let Err(e) =
+                                looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs)
+                            {
+                                log::error!(
+                                    "Error syncing wallet: '{}'. No longer polling the Bitcoin backend.",
+                                    e
+                                );
+                                polling = false;
+                            }
+                        } else {
+                            log::warn!("Skipped poll as block chain is still synchronizing.");
+                        }
                     }
+                    // Signal completion even if we don't poll anymore, so that the caller is not
+                    // left waiting for a poll which will never happen.
                     if let Err(e) = sender.send(()) {
                         log::error!("Error sending immediate poll completion signal: {}.", e);
                     }
@@ -126,6 +141,10 @@ impl Poller {
                 }
             }
             last_poll = Some(time::Instant::now());
+
+            if !polling {
+                continue;
+            }
 
             // Don't poll until the Bitcoin backend is fully synced.
             if !synced {
@@ -142,7 +161,13 @@ impl Poller {
                 }
             }
 
-            looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs);
+            if let Err(e) = looper::poll(&mut self.bit, &self.db, &self.secp, &self.descs) {
+                log::error!(
+                    "Error syncing wallet: '{}'. No longer polling the Bitcoin backend.",
+                    e
+                );
+                polling = false;
+            }
         }
     }
 }
