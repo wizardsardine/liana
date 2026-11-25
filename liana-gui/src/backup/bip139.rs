@@ -25,7 +25,9 @@ use tokio::sync::mpsc::UnboundedSender;
 use crate::{
     airgap::device::{AirgappedDevice, Registration},
     app::{
-        settings::{fiat::PriceSetting, KeySetting, LianaWalletSettings, WalletSettings},
+        settings::{
+            fiat::PriceSetting, KeySetting, LianaWalletSettings, SettingsError, WalletSettings,
+        },
         wallet::Wallet,
     },
     backup::{
@@ -351,9 +353,13 @@ impl Bip139Backup {
         sender: &UnboundedSender<Progress>,
     ) -> Result<Self, Error> {
         let network_dir = datadir.network_directory(network);
-        let settings =
-            WalletSettings::from_file(&network_dir, |settings| wallet.id() == settings.wallet_id())
-                .map_err(|_| Error::SettingsFromFile)?;
+        let settings = match WalletSettings::from_file(&network_dir, |settings| {
+            wallet.id() == settings.wallet_id()
+        }) {
+            Ok(Some(settings)) => settings,
+            Ok(None) | Err(SettingsError::NotFound) => wallet_settings(&wallet),
+            Err(_) => return Err(Error::SettingsFromFile),
+        };
         let info = daemon.get_info().await?;
         let _ = sender.send(Progress::Progress(20.0));
         let labels = labels(&daemon).await?;
@@ -388,7 +394,7 @@ impl Bip139Backup {
         Ok(Self::from_parts(
             network,
             &wallet,
-            settings.as_ref(),
+            Some(&settings),
             data,
             now().as_secs(),
         ))
@@ -883,6 +889,22 @@ fn wallet_policy_descriptor(value: &Value) -> Option<String> {
     Some(descriptor)
 }
 
+/// Settings of a wallet missing from the local settings file, as a liana-business one.
+fn wallet_settings(wallet: &Wallet) -> LianaWalletSettings {
+    LianaWalletSettings {
+        name: wallet.name.clone(),
+        alias: wallet.alias.clone(),
+        descriptor_checksum: wallet.descriptor_checksum.clone(),
+        pinned_at: wallet.pinned_at,
+        keys: Vec::new(),
+        hardware_wallets: wallet.hardware_wallets.clone(),
+        remote_backend_auth: None,
+        start_internal_bitcoind: None,
+        fiat_price: wallet.fiat_price_setting.clone(),
+        encrypted_backup_privacy_mode: wallet.encrypted_backup_privacy_mode,
+    }
+}
+
 /// Estimates the birth height from the creation time, as BIP-139 allows for `birth_block`.
 fn birth_block(network: Network, timestamp: u64) -> Option<u32> {
     let genesis_time: u64 = match network {
@@ -1025,8 +1047,8 @@ mod tests {
         },
         backup::{
             bip139::{
-                birth_block, firmware_version, parse_firmware_version, Bip139Backup, OwnerType,
-                Role, Transport, WalletData,
+                birth_block, firmware_version, parse_firmware_version, wallet_settings,
+                Bip139Backup, OwnerType, Role, Transport, WalletData,
             },
             liana_version, read, LegacyBackup,
         },
@@ -1226,6 +1248,32 @@ mod tests {
         );
         export["exporter"] = fixture()["exporter"].clone();
         assert_eq!(export, fixture());
+    }
+
+    #[test]
+    fn a_wallet_without_settings_file_keeps_its_devices() {
+        let (wallet, settings, data) = wallet();
+        let ledger = settings.hardware_wallets[0].clone();
+        let wallet = wallet.with_hardware_wallets(vec![ledger.clone()]);
+        let backup = Bip139Backup::from_parts(
+            Network::Testnet,
+            &wallet,
+            Some(&wallet_settings(&wallet)),
+            data,
+            1700000100,
+        );
+        let signer = backup
+            .signers
+            .iter()
+            .find(|signer| signer.fingerprints == [ledger.fingerprint])
+            .unwrap();
+        assert_eq!(signer.devices[0].vendor.as_deref(), Some("ledger"));
+        assert_eq!(signer.devices[0].registered, Some(true));
+        let key = &backup.accounts[0].keys[&ledger.fingerprint];
+        assert_eq!(
+            key.proof_of_registration,
+            vec![(wallet.main_descriptor.to_string(), ledger.token)]
+        );
     }
 
     #[test]

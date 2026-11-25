@@ -606,4 +606,9 @@ The settings UI is implemented in `src/settings/ui.rs`, with three sections:
 - **Wallet** - the descriptor, register it on a signing device, export the
   encrypted descriptor backup (BIP138 `.bip138` file). There is no privacy mode
   in liana-business: the backup always stores the common derivation paths.
+  Export the wallet backup in the BIP-139 format (`Msg::ExportWallet`), through
+  the liana-gui export modal, with the data of the remote backend. It is
+  encrypted with BIP-138 unless the box under it is unchecked
+  (`Msg::EncryptWalletBackup`). The device registrations come from the backend
+  wallet metadata. There is no backup import: liana-backend has no API for it.
 - **About** - version

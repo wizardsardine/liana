@@ -5,9 +5,10 @@ use liana_i18n::{self as i18n, t, SupportedLocale};
 use liana_ui::{
     component::{
         self, card,
-        checkbox::{toggler_button, TogglerSize},
+        checkbox::{labelled_checkbox, toggler_button, TogglerSize},
         panels::setting::{
-            descriptor_card, header, setting_row, settings_section, version_card, SectionKind,
+            descriptor_card, export_section_with_footer, header, setting_row, settings_section,
+            version_card, ImportExportKind, SectionKind,
         },
         pick_list,
         text::new,
@@ -48,7 +49,15 @@ pub fn wallet_view(state: &BusinessSettingsUI) -> Element<'_, Msg> {
         Msg::RegisterWallet,
     );
 
-    column![header, descriptor_card]
+    let encrypt = labelled_checkbox(
+        new::caption(t!("settings-export-wallet-encrypt")),
+        state.encrypt_wallet_backup,
+        Msg::EncryptWalletBackup,
+    );
+    let export_wallet =
+        export_section_with_footer(ImportExportKind::ExportWallet, Msg::ExportWallet, encrypt);
+
+    column![header, descriptor_card, export_wallet]
         .spacing(VSpacing::L)
         .width(Length::Fill)
         .into()
