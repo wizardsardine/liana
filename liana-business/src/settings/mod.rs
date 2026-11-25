@@ -138,6 +138,7 @@ impl SettingsTrait for BusinessSettings {
         wallet: api::Wallet,
         coins: ListCoinsResult,
         user_settings: api::UserSettings,
+        remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -153,6 +154,16 @@ impl SettingsTrait for BusinessSettings {
                     token: lh.hmac,
                 })
                 .collect();
+
+            let airgapped_signers: Vec<AirgappedDevice> = remote_settings
+                .map(serde_json::from_value::<BusinessSettings>)
+                .transpose()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Ignoring the stored settings: {e}");
+                    None
+                })
+                .map(|settings| settings.airgapped_signers)
+                .unwrap_or_default();
 
             let aliases: HashMap<Fingerprint, String> = wallet
                 .metadata
@@ -203,6 +214,7 @@ impl SettingsTrait for BusinessSettings {
                     .with_key_aliases(aliases)
                     .with_provider_keys(provider_keys)
                     .with_hardware_wallets(hws)
+                    .with_airgapped_signers(&airgapped_signers)
                     .with_remote_backend_auth(auth_cfg)
                     .with_fiat_price_setting(fiat_price_setting)
                     .load_hotsigners(&liana_dir, network)

@@ -25,8 +25,10 @@ use liana_gui::{
 use liana_i18n as i18n;
 use liana_ui::widget::{modal, Element};
 
-use super::message::{Msg, Section};
-use super::views;
+use super::{
+    message::{Msg, Section},
+    views, BusinessSettings,
+};
 
 /// Business-specific settings UI.
 pub struct BusinessSettingsUI {
@@ -36,7 +38,7 @@ pub struct BusinessSettingsUI {
     fiat_setting: PriceSetting,
     #[allow(dead_code)]
     processing: bool,
-    register_modal: Option<RegisterWalletModal>,
+    register_modal: Option<RegisterWalletModal<BusinessSettings>>,
     export_modal: Option<ExportModal>,
     pub(crate) encrypt_wallet_backup: bool,
 }
@@ -224,11 +226,14 @@ impl State for BusinessSettingsUI {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
-                self.register_modal = Some(RegisterWalletModal::new(
-                    self.data_dir.clone(),
-                    self.wallet.clone(),
-                    cache.network,
-                ));
+                self.register_modal = Some(
+                    RegisterWalletModal::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        cache.network,
+                    )
+                    .with_backend_signers(),
+                );
                 Task::none()
             }
             Message::View(view::Message::Close) => {
@@ -301,7 +306,11 @@ impl State for BusinessSettingsUI {
             }
             Message::HardwareWallets(_)
             | Message::View(view::Message::SelectHardwareWallet(_))
-            | Message::View(view::Message::Reload) => {
+            | Message::View(view::Message::Reload)
+            | Message::View(view::Message::Airgap(_))
+            | Message::View(view::Message::Settings(
+                view::SettingsMessage::RegisterAirgappedSigner(_),
+            )) => {
                 if let Some(modal) = &mut self.register_modal {
                     modal.update(daemon, cache, message)
                 } else {

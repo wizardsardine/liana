@@ -611,4 +611,12 @@ The settings UI is implemented in `src/settings/ui.rs`, with three sections:
   encrypted with BIP-138 unless the box under it is unchecked
   (`Msg::EncryptWalletBackup`). The device registrations come from the backend
   wallet metadata. There is no backup import: liana-backend has no API for it.
+  The QR signing devices of the user come from the settings blob the backend
+  keeps for the user, fetched with `fetch_settings()` and parsed by the client:
+  once in the top-level `airgapped_signers`, with a registration per
+  descriptor. Signing, verifying an address and registering list them, and
+  registering one writes the whole settings
+  back (`store_settings()`, through `RegisterWalletModal<BusinessSettings>`
+  opened `with_backend_signers()`). Until liana-backend serves the settings, the
+  client fetches none and stores nothing.
 - **About** - version

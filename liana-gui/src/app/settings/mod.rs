@@ -26,6 +26,7 @@ use lianad::commands::ListCoinsResult;
 use crate::{
     airgap::device::AirgappedDevice,
     app::{self, state::State},
+    daemon::Daemon,
     dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
     services::connect::client::backend::{api, BackendWalletClient},
@@ -80,6 +81,7 @@ pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send +
         wallet: api::Wallet,
         coins: ListCoinsResult,
         user_settings: api::UserSettings,
+        remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -173,6 +175,7 @@ impl SettingsTrait for LianaSettings {
         wallet: api::Wallet,
         coins: ListCoinsResult,
         _user_settings: api::UserSettings,
+        _remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -191,6 +194,31 @@ impl SettingsTrait for LianaSettings {
 
 /// Backward compatibility type alias.
 pub type Settings = LianaSettings;
+
+pub async fn update_remote_settings<S, F>(
+    daemon: &(dyn Daemon + Sync + Send),
+    updater: F,
+) -> Result<(), SettingsError>
+where
+    S: SettingsTrait,
+    F: FnOnce(S) -> S,
+{
+    let settings: S = match daemon
+        .fetch_settings()
+        .await
+        .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
+    {
+        Some(settings) => serde_json::from_value(settings)
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?,
+        None => S::default(),
+    };
+    let settings = serde_json::to_value(updater(settings))
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {e}")))?;
+    daemon
+        .store_settings(&settings)
+        .await
+        .map_err(|e| SettingsError::WritingFile(e.to_string()))
+}
 
 pub async fn update_settings_file<S, F>(
     network_dir: &NetworkDirectory,

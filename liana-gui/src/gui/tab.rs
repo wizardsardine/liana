@@ -119,6 +119,7 @@ pub struct BusinessConnectResult {
             liana_connect::wallets::api::Wallet,
             lianad::commands::ListCoinsResult,
             liana_connect::wallets::api::UserSettings,
+            Option<serde_json::Value>,
         ),
         login::Error,
     >,
@@ -256,6 +257,7 @@ where
                         wallet,
                         coins,
                         user_settings,
+                        None,
                         l.datadir.clone(),
                         l.network,
                         config,
@@ -465,7 +467,7 @@ where
                 } = conn_result;
 
                 match result {
-                    Ok((backend_client, wallet, coins, user_settings)) => {
+                    Ok((backend_client, wallet, coins, user_settings, remote_settings)) => {
                         // Success! Create App directly
                         let config_path = datadir
                             .network_directory(network)
@@ -498,6 +500,7 @@ where
                             wallet,
                             coins,
                             user_settings,
+                            remote_settings,
                             datadir.clone(),
                             network,
                             config,
@@ -759,6 +762,7 @@ async fn connect_for_business(
         api::Wallet,
         lianad::commands::ListCoinsResult,
         api::UserSettings,
+        Option<serde_json::Value>,
     ),
     login::Error,
 > {
@@ -843,6 +847,8 @@ async fn connect_for_business(
         tracing::warn!("Failed to stamp Liana-Connect cache: {}", e);
     }
 
+    let remote_settings = client.fetch_settings().await?;
+
     // Create wallet client
     let (wallet_client, wallet) = client.connect_wallet(wallet);
 
@@ -857,5 +863,5 @@ async fn connect_for_business(
         .await
         .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
-    Ok((wallet_client, wallet, coins, settings))
+    Ok((wallet_client, wallet, coins, settings, remote_settings))
 }
