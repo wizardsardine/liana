@@ -110,6 +110,8 @@ pub enum Msg {
     XpubClear,                                                  // Clear xpub (send null to backend)
     XpubCancelModal,                                            // Close modal
     XpubToggleOptions,                                          // Toggle "Other options" section
+    XpubSelectScanAirgapped,                                    // Scan the keys of a QR signing device
+    XpubAirgap(liana_gui::app::state::airgap::Message),         // QR exchange modal message
 
     // Registration (device descriptor registration)
     RegistrationSelectDevice(miniscript::bitcoin::bip32::Fingerprint), // Click on connected device to register

@@ -85,6 +85,7 @@ impl TryFrom<liana_gui::services::fiat::Currency> for BackendCurrency {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BusinessSettings {
+    #[serde(default)]
     pub wallets: Vec<BusinessWalletSettings>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub airgapped_signers: Vec<AirgappedDevice>,

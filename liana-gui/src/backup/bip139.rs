@@ -916,7 +916,7 @@ fn birth_block(network: Network, timestamp: u64) -> Option<u32> {
     u32::try_from(timestamp.checked_sub(genesis_time)? / 600).ok()
 }
 
-fn firmware_version(version: &FirmwareVersion) -> String {
+pub fn firmware_version(version: &FirmwareVersion) -> String {
     let base = format!("{}.{}.{}", version.major, version.minor, version.patch);
     match version.flag {
         ReleaseFlag::Stable => base,

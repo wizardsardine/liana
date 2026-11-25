@@ -60,6 +60,7 @@ liana-business/
 │       ├── installer.rs     # Implements Installer trait
 │       ├── backend.rs       # Backend trait & Notification enum
 │       ├── client.rs        # WebSocket client
+│       ├── settings.rs      # Adds a QR signing device to the settings blob (REST)
 │       ├── hw.rs            # Hardware wallet detection
 │       ├── state/           # State management
 │       │   ├── mod.rs       # State struct, View enum

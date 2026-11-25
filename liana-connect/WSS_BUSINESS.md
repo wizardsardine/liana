@@ -473,6 +473,8 @@ Used in `edit_xpub` request payloads:
 **Note:** When `source` is `"device"`:
 - `device_kind` should contain the hardware wallet type
 - `device_version` optionally contains the firmware version
+- for a key scanned from a QR signing device, `device_kind` is
+  `{"other": "<vendor> <model>"}`
 
 **Note:** When `source` is `"file"`:
 - `file_name` optionally contains the original filename

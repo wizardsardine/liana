@@ -1,6 +1,7 @@
 mod backend;
 mod client;
 mod installer;
+mod settings;
 mod state;
 mod views;
 

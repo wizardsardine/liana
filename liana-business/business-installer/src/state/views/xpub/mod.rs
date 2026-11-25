@@ -1,9 +1,14 @@
+use liana_gui::{
+    airgap::device::{AirgappedDevice, Signer},
+    utils::derivation_path,
+};
 use liana_i18n::t;
 use miniscript::{
     bitcoin::{
         bip32::{ChildNumber, DerivationPath, Fingerprint},
         Network,
     },
+    descriptor::{DescriptorXKey, Wildcard},
     DescriptorPublicKey,
 };
 use std::str::FromStr;
@@ -25,6 +30,8 @@ pub enum XpubInputSource {
         fingerprint: String,
         version: Option<String>,
     },
+    /// Scanned from a QR signing device
+    Airgapped(AirgappedDevice),
     /// Loaded from a file
     File { name: String },
     /// Pasted manually
@@ -66,6 +73,10 @@ pub struct XpubEntryModalState {
 
     /// Actual source of the current xpub input (for audit)
     pub input_source: Option<XpubInputSource>,
+    /// QR signing device whose keys were scanned
+    pub airgapped_signer: Option<Signer>,
+    /// Error of the QR signing device scan (shown on its entry)
+    pub airgap_error: Option<String>,
     active_request_id: Option<u64>,
     next_request_id: u64,
 }
@@ -98,6 +109,8 @@ impl XpubEntryModalState {
             fetch_error: None,
             network,
             input_source: None,
+            airgapped_signer: None,
+            airgap_error: None,
             active_request_id: None,
             next_request_id: 0,
         }
@@ -111,6 +124,7 @@ impl XpubEntryModalState {
     /// Select a hardware wallet device and transition to Details step
     pub fn select_device(&mut self, fingerprint: Fingerprint) {
         self.selected_device = Some(fingerprint);
+        self.airgapped_signer = None;
         self.fetch_error = None;
         self.input_source = None;
         self.step = ModalStep::Details;
@@ -121,6 +135,7 @@ impl XpubEntryModalState {
     pub fn go_back(&mut self) {
         self.step = ModalStep::Select;
         self.selected_device = None;
+        self.airgapped_signer = None;
         self.fetch_error = None;
         self.processing = false;
         self.active_request_id = None;
@@ -131,6 +146,41 @@ impl XpubEntryModalState {
         self.selected_account = account;
         self.input_source = None;
         self.active_request_id = None;
+    }
+
+    /// Use the keys scanned from a QR signing device and transition to Details step
+    pub fn select_airgapped_signer(&mut self, signer: Signer) {
+        self.selected_device = Some(signer.fingerprint);
+        self.airgapped_signer = Some(signer);
+        self.airgap_error = None;
+        self.fetch_error = None;
+        self.processing = false;
+        self.active_request_id = None;
+        self.step = ModalStep::Details;
+        self.select_airgapped_account(self.selected_account);
+    }
+
+    /// Take the scanned key of an account, no device round trip needed
+    pub fn select_airgapped_account(&mut self, account: ChildNumber) {
+        let Some(signer) = self.airgapped_signer.as_ref() else {
+            return;
+        };
+        let path = derivation_path(self.network, account);
+        let Some((_, xpub)) = signer.keys.iter().find(|(candidate, _)| *candidate == path) else {
+            tracing::warn!("account {account} is not among the scanned signing device's keys");
+            return;
+        };
+        let key = DescriptorPublicKey::XPub(DescriptorXKey {
+            origin: Some((signer.fingerprint, path)),
+            derivation_path: DerivationPath::master(),
+            wildcard: Wildcard::None,
+            xkey: *xpub,
+        });
+        self.selected_account = account;
+        self.xpub_input = key.to_string();
+        self.input_source = Some(XpubInputSource::Airgapped(AirgappedDevice::new(
+            signer, None,
+        )));
     }
 
     pub fn start_fetch(&mut self) -> u64 {
@@ -298,6 +348,86 @@ pub fn validate_xpub(xpub_str: &str, network: Network) -> Result<DescriptorPubli
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bip377::ll::response::{Capabilities, FirmwareVersion, ReleaseFlag};
+
+    const ACCOUNT_KEYS: [&str; 3] = [
+        "[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC",
+        "[9f141cf0/48'/1'/1'/2']tpubDDwKEc4i4k8rBgVLGxytHrP13VVYucUGmL2cadux7AfMwMnRHKcw1YZKt9SMB4fWut7ZAiZqPefzm3BBCNXLZMxDrWJ4Q6VA1AFB6b8GzbT",
+        "[9f141cf0/48'/1'/2'/2']tpubDEnYysximqdZkZnW5W9gYc7N3sxizKyqfdJfZ2qRfwNvSv6E11yDgyLTAnWQqDmVJ7oQ3h3ui59RQm1qmGxMm4jinq5wvSzyueKgrLJj5Cy",
+    ];
+
+    fn scanned_signer() -> Signer {
+        Signer {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            vendor: "test vendor".to_owned(),
+            model: "test signer".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                flag: ReleaseFlag::Stable,
+            },
+            capabilities: Capabilities(1),
+            keys: ACCOUNT_KEYS
+                .iter()
+                .map(|key| match DescriptorPublicKey::from_str(key).unwrap() {
+                    DescriptorPublicKey::XPub(key) => (key.origin.unwrap().1, key.xkey),
+                    _ => unreachable!("the fixtures are xpubs"),
+                })
+                .collect(),
+        }
+    }
+
+    fn account_key(index: usize) -> String {
+        DescriptorPublicKey::from_str(ACCOUNT_KEYS[index])
+            .unwrap()
+            .to_string()
+    }
+
+    #[test]
+    fn a_qr_scan_takes_the_first_account_and_records_the_device() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Testnet);
+        state.select_airgapped_signer(scanned_signer());
+
+        assert_eq!(state.step, ModalStep::Details);
+        assert_eq!(
+            state.selected_device,
+            Some(Fingerprint::from_str("9f141cf0").unwrap())
+        );
+        assert!(!state.processing);
+        assert_eq!(state.xpub_input, account_key(0));
+        assert!(state.validate().is_ok());
+        match &state.input_source {
+            Some(XpubInputSource::Airgapped(device)) => {
+                assert_eq!(device.fingerprint.to_string(), "9f141cf0");
+                assert_eq!(device.vendor, "test vendor");
+                assert_eq!(device.model, "test signer");
+            }
+            other => panic!("unexpected source {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_qr_account_change_takes_the_scanned_key() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Testnet);
+        state.select_airgapped_signer(scanned_signer());
+        let account = ChildNumber::from_hardened_idx(2).unwrap();
+        state.select_airgapped_account(account);
+
+        assert_eq!(state.selected_account, account);
+        assert_eq!(state.xpub_input, account_key(2));
+        assert!(!state.processing);
+    }
+
+    #[test]
+    fn going_back_drops_the_scanned_device() {
+        let mut state = XpubEntryModalState::new(1, "Test".to_string(), None, Network::Testnet);
+        state.select_airgapped_signer(scanned_signer());
+        state.go_back();
+
+        assert!(state.airgapped_signer.is_none());
+        assert_eq!(state.step, ModalStep::Select);
+    }
 
     #[test]
     fn test_validate_xpub_empty() {

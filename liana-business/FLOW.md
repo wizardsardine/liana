@@ -237,7 +237,8 @@ State::update() (state/update.rs)
 |                     | XpubSelectDevice, XpubDeviceBack, XpubFetchFromDevice,   |
 |                     | XpubRetry, XpubLoadFromFile, XpubFileLoaded, XpubPaste,  |
 |                     | XpubPasted, XpubUpdateAccount, XpubSave, XpubClear,      |
-|                     | XpubCancelModal, XpubToggleOptions                       |
+|                     | XpubCancelModal, XpubToggleOptions,                      |
+|                     | XpubSelectScanAirgapped, XpubAirgap                      |
 +---------------------+----------------------------------------------------------+
 | Template Management | TemplateAddKeyTo*, TemplateDelKeyFrom*,                  |
 |                     | TemplateAddSecondaryPath, TemplateDeleteSecondaryPath,   |
@@ -358,6 +359,7 @@ Xpub View:
                 │       - Click device card to open Details step
                 │
                 └──▶ "Other options" collapsible section
+                        - Import extended public key from a QR signing device
                         - Import extended public key file
                         - Paste extended public key
                 │
@@ -368,6 +370,23 @@ Xpub View:
                         - Account picker (changing triggers re-fetch)
                         - Error display with Retry button
                         - Save button (enabled when valid xpub)
+
+QR signing device:
+    [XpubSelectScanAirgapped] → liana-gui AirgapModal (State.modal), in place of
+    the xpub modal: show the key request (every Liana account), scan the answer
+    (XpubAirgap). The answer opens the Details step with the first account:
+        - the account picker takes the scanned key, no device round trip
+        - a device of another network, or one already used by another key,
+          shows its error on the QR entry instead
+    Saved as XpubInputSource::Airgapped: source "device", device_kind
+    `other` "<vendor> <model>" and the firmware version.
+    On save, the device is also added to the top-level `airgapped_signers` of
+    the user's settings blob (`settings::store_airgapped_device()`: a REST
+    BackendClient opened with the cached tokens, fetch, save_device(), store),
+    with the key's alias. A device already stored keeps its data. A wallet then
+    lists it as soon as its descriptor holds the key, so nothing moves it into
+    a wallet. A failed store is logged and shown in the warning modal; the key
+    stays saved. Until liana-backend serves the settings, nothing is stored.
 
 ### Dynamic Status Transitions in Xpub View
 
