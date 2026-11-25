@@ -614,9 +614,13 @@ The settings UI is implemented in `src/settings/ui.rs`, with three sections:
   The QR signing devices of the user come from the settings blob the backend
   keeps for the user, fetched with `fetch_settings()` and parsed by the client:
   once in the top-level `airgapped_signers`, with a registration per
-  descriptor. Signing, verifying an address and registering list them, and
-  registering one writes the whole settings
-  back (`store_settings()`, through `RegisterWalletModal<BusinessSettings>`
-  opened `with_backend_signers()`). Until liana-backend serves the settings, the
-  client fetches none and stores nothing.
+  descriptor. Signing, verifying an address
+  and registering list them. The register modal also adds a QR signing device
+  (scan its key response, the request holding every derivation path of the
+  descriptor) and removes one, after a confirmation. Registering, adding and
+  removing write the whole settings back (`store_settings()`, through
+  `RegisterWalletModal<BusinessSettings>` opened `with_backend_signers()`).
+  These are the liana-gui `RegisterWalletModal` flows: the settings UI forwards
+  their messages to it. Until liana-backend serves the settings, the client
+  fetches none and stores nothing, so an added device lasts for the session.
 - **About** - version

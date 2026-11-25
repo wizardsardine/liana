@@ -309,7 +309,11 @@ impl State for BusinessSettingsUI {
             | Message::View(view::Message::Reload)
             | Message::View(view::Message::Airgap(_))
             | Message::View(view::Message::Settings(
-                view::SettingsMessage::RegisterAirgappedSigner(_),
+                view::SettingsMessage::RegisterAirgappedSigner(_)
+                | view::SettingsMessage::AddAirgappedSigner
+                | view::SettingsMessage::RemoveAirgappedSigner(_)
+                | view::SettingsMessage::CancelRemoveAirgappedSigner
+                | view::SettingsMessage::ConfirmRemoveAirgappedSigner,
             )) => {
                 if let Some(modal) = &mut self.register_modal {
                     modal.update(daemon, cache, message)
