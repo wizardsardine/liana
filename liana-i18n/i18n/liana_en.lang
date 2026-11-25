@@ -1627,6 +1627,8 @@ psbt-save-transaction => "Save this transaction"
 
 psbt-select-signing-device => "Select signing device to sign with:"
 
+psbt-sign-qr => "Sign by QR code with any signing device"
+
 psbt-sign-save-before-export => "Sign or save the transaction first to enable export"
 
 psbt-signatures => "Signatures"

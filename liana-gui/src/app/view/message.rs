@@ -106,6 +106,8 @@ pub enum SpendTxMessage {
     Cancel,
     SelectHotSigner,
     SelectAirgappedSigner(Fingerprint),
+    SelectAnyAirgappedSigner,
+    ShowSignOptions(bool),
 }
 
 #[allow(clippy::large_enum_variant)]

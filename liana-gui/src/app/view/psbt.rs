@@ -375,6 +375,7 @@ pub fn sign_action<'a>(
     signed: &HashSet<Fingerprint>,
     signing: &HashSet<Fingerprint>,
     recovery_timelock: Option<u16>,
+    options_open: bool,
 ) -> Element<'a, Message> {
     let title = t!("psbt-select-signing-device");
 
@@ -441,6 +442,18 @@ pub fn sign_action<'a>(
             modal::device_entry(fp, None::<&str>, alias, DeviceStatus::None, select_msg)
         }
     }));
+
+    signers.push(modal::optional_section(
+        options_open,
+        t!("common-other-options"),
+        || Message::Spend(SpendTxMessage::ShowSignOptions(true)),
+        || Message::Spend(SpendTxMessage::ShowSignOptions(false)),
+    ));
+    if options_open {
+        signers.push(modal::sign_qr_entry(Some(|| {
+            Message::Spend(SpendTxMessage::SelectAnyAirgappedSigner)
+        })));
+    }
 
     let signers = Column::from_vec(signers)
         .align_x(Alignment::Center)

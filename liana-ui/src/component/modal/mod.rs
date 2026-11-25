@@ -486,6 +486,21 @@ where
     )
 }
 
+pub fn sign_qr_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("psbt-sign-qr"),
+        None::<String>,
+        None,
+        None,
+        on_press,
+    )
+}
+
 fn signer_entry<'a, M, F, K, A>(
     tile: Tile,
     fingerprint: Option<F>,

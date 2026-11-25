@@ -474,6 +474,7 @@ pub struct SignModal {
     recovery_timelock: Option<u16>,
     datadir_path: LianaDirectory,
     modal: Option<AirgapModal>,
+    options_open: bool,
 }
 
 impl SignModal {
@@ -496,6 +497,7 @@ impl SignModal {
             recovery_timelock,
             datadir_path,
             modal: None,
+            options_open: false,
         }
     }
 
@@ -519,6 +521,30 @@ impl SignModal {
             .and_then(|request| {
                 AirgapModal::new(
                     Some(fingerprint),
+                    crate::t!("airgap-sign-title"),
+                    request,
+                    &self.datadir_path,
+                )
+            }) {
+            Ok((modal, task)) => {
+                self.modal = Some(modal);
+                task.map(view::Message::Airgap).map(Message::View)
+            }
+            Err(e) => {
+                self.error = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_select_any_airgapped_signer(&mut self, tx: &SpendTx) -> Task<Message> {
+        match self
+            .wallet
+            .for_any_airgapped_signer()
+            .sign(&tx.psbt)
+            .and_then(|request| {
+                AirgapModal::new(
+                    None,
                     crate::t!("airgap-sign-title"),
                     request,
                     &self.datadir_path,
@@ -566,34 +592,45 @@ impl SignModal {
         original: &Psbt,
         answer: Answer,
     ) -> Task<Message> {
-        let (Some(fingerprint), Answer::Signed(psbt)) = (fingerprint, answer) else {
+        let Answer::Signed(psbt) = answer else {
             self.error = Some(AirgapError::NotSigned.into());
             return Task::none();
         };
-        if !has_new_signature(original, &psbt) {
+        let signers = new_signers(original, &psbt);
+        let Some(&signer) = signers.iter().next() else {
             self.error = Some(AirgapError::NoNewSignature.into());
             return Task::none();
+        };
+        if fingerprint.is_none() {
+            self.signed.extend(&signers);
         }
-        Task::done(Message::Signed(fingerprint, Ok(psbt)))
+        Task::done(Message::Signed(fingerprint.unwrap_or(signer), Ok(psbt)))
     }
 }
 
-fn has_new_signature(before: &Psbt, after: &Psbt) -> bool {
-    before
-        .inputs
-        .iter()
-        .zip(&after.inputs)
-        .any(|(before, after)| {
-            after
-                .partial_sigs
-                .keys()
-                .any(|key| !before.partial_sigs.contains_key(key))
-                || after
-                    .tap_script_sigs
-                    .keys()
-                    .any(|key| !before.tap_script_sigs.contains_key(key))
-                || (after.tap_key_sig.is_some() && before.tap_key_sig.is_none())
-        })
+fn new_signers(before: &Psbt, after: &Psbt) -> HashSet<Fingerprint> {
+    let mut signers = HashSet::new();
+    for (before, after) in before.inputs.iter().zip(&after.inputs) {
+        for key in after.partial_sigs.keys() {
+            if !before.partial_sigs.contains_key(key) {
+                signers.extend(before.bip32_derivation.get(&key.inner).map(|(fg, _)| *fg));
+            }
+        }
+        for (key, leaf) in after.tap_script_sigs.keys() {
+            if !before.tap_script_sigs.contains_key(&(*key, *leaf)) {
+                signers.extend(before.tap_key_origins.get(key).map(|(_, (fg, _))| *fg));
+            }
+        }
+        if after.tap_key_sig.is_some() && before.tap_key_sig.is_none() {
+            signers.extend(
+                before
+                    .tap_internal_key
+                    .and_then(|key| before.tap_key_origins.get(&key))
+                    .map(|(_, (fg, _))| *fg),
+            );
+        }
+    }
+    signers
 }
 
 impl Modal for SignModal {
@@ -638,6 +675,12 @@ impl Modal for SignModal {
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectAirgappedSigner(
                 fingerprint,
             ))) => return self.on_select_airgapped_signer(fingerprint, tx),
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectAnyAirgappedSigner)) => {
+                return self.on_select_any_airgapped_signer(tx)
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::ShowSignOptions(open))) => {
+                self.options_open = open;
+            }
             Message::View(view::Message::Airgap(action)) => return self.on_airgap(action, tx),
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
                 return Task::perform(
@@ -735,6 +778,7 @@ impl Modal for SignModal {
                     &self.signed,
                     &self.signing,
                     self.recovery_timelock,
+                    self.options_open,
                 ),
             )
             .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
@@ -834,7 +878,7 @@ mod new_signature_tests {
         psbt::Psbt,
     };
 
-    use crate::app::state::psbt::has_new_signature;
+    use crate::app::state::psbt::new_signers;
 
     fn unsigned() -> Psbt {
         let base64 = include_str!("../../../test_assets/airgap/taproot-unsigned.psbt.base64");
@@ -854,14 +898,22 @@ mod new_signature_tests {
     }
 
     #[test]
-    fn a_new_signature_is_accepted() {
-        assert!(has_new_signature(&unsigned(), &signed()));
+    fn a_new_signature_names_its_signer() {
+        let unsigned = unsigned();
+        let internal_key = unsigned.inputs[0].tap_internal_key.unwrap();
+        let (_, (fingerprint, _)) = &unsigned.inputs[0].tap_key_origins[&internal_key];
+        assert_eq!(
+            new_signers(&unsigned, &signed())
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![*fingerprint]
+        );
     }
 
     #[test]
-    fn an_unchanged_transaction_is_refused() {
-        assert!(!has_new_signature(&unsigned(), &unsigned()));
-        assert!(!has_new_signature(&signed(), &signed()));
+    fn an_unchanged_transaction_has_no_signer() {
+        assert!(new_signers(&unsigned(), &unsigned()).is_empty());
+        assert!(new_signers(&signed(), &signed()).is_empty());
     }
 }
 

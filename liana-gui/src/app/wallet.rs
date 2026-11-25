@@ -1,8 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use bip377::ll::response::Capabilities;
+
 use crate::{
-    airgap::{self, device::AirgappedDevice},
+    airgap::{
+        self,
+        device::{AirgappedDevice, Registration},
+    },
     app::{cache::FiatPrice, settings},
     daemon::DaemonBackend,
     dir::LianaDirectory,
@@ -149,6 +154,15 @@ impl Wallet {
                 .cloned()
                 .unwrap_or_default(),
             capabilities: device.capabilities,
+        }
+    }
+
+    pub fn for_any_airgapped_signer(&self) -> airgap::device::RequestBuilder {
+        airgap::device::RequestBuilder {
+            alias: self.descriptor_alias().to_owned(),
+            descriptor: self.main_descriptor.clone(),
+            registration: Registration::default(),
+            capabilities: Capabilities(0),
         }
     }
 
@@ -432,6 +446,15 @@ mod tests {
             .registration
             .is_for_descriptor(&wallet.descriptor_checksum));
         assert_eq!(request.registration.proof, Some(vec![7; 32]));
+    }
+
+    #[test]
+    fn a_device_not_saved_gets_the_descriptor_and_no_proof() {
+        let wallet = wallet();
+        let request = wallet.for_any_airgapped_signer();
+        assert_eq!(request.alias, wallet.descriptor_alias());
+        assert_eq!(request.registration, Registration::default());
+        assert_eq!(request.capabilities, Capabilities(0));
     }
 
     #[test]

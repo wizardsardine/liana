@@ -2209,6 +2209,8 @@ psbt-select-signing-device
 => "Select signing device to sign with:"
 => "Sélectionnez l'appareil avec lequel signer :";;
 
+psbt-sign-qr => "Sign by QR code with any signing device" => NONE
+
 psbt-sign-save-before-export
 => "Sign or save the transaction first to enable export"
 => "Signez ou enregistrez d'abord la transaction pour activer l'exportation";;
