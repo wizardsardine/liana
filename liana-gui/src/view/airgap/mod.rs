@@ -29,6 +29,7 @@ use crate::{
 };
 
 const MODAL_WIDTH: ModalWidth = ModalWidth::XL;
+const CAMERA_REFUSED_WIDTH: ModalWidth = ModalWidth::M;
 const SETTINGS_ICON_SIZE: u32 = 12;
 
 pub fn modal<M: Clone + 'static>(
@@ -46,6 +47,37 @@ pub fn modal<M: Clone + 'static>(
         .into();
     }
 
+    if modal.phase == Phase::CameraRefused {
+        let allow = if cfg!(target_os = "windows") {
+            t!("airgap-camera-allow-windows")
+        } else if cfg!(target_os = "macos") {
+            t!("airgap-camera-allow-macos")
+        } else {
+            t!("airgap-camera-allow-linux")
+        };
+        let actions = row![
+            button::btn_back_to_request(Some(to_message(Message::Back))),
+            Space::fill_width(),
+            button::btn_retry(Some(to_message(Message::RetryCamera))),
+        ]
+        .spacing(HSpacing::M)
+        .align_y(Alignment::Center);
+        let content = column![
+            caption(t!("airgap-camera-refused")),
+            caption(allow),
+            actions
+        ]
+        .spacing(VSpacing::L)
+        .width(Length::Fill);
+        return modal_view(
+            Some(t!("airgap-camera-refused-title")),
+            None,
+            Some(to_message(Message::Cancel)),
+            CAMERA_REFUSED_WIDTH,
+            content,
+        );
+    }
+
     let warning = modal.error.as_ref().map(|error| {
         notification::warning(
             format!("{}: {error}", t!("airgap-error-title")),
@@ -56,7 +88,7 @@ pub fn modal<M: Clone + 'static>(
     let body = match modal.phase {
         Phase::ShowRequest => request_view(modal, to_message.clone()),
         Phase::Scanning => scanning_view(modal, to_message.clone()),
-        Phase::Done => Space::fill_width().into(),
+        Phase::CameraRefused | Phase::Done => Space::fill_width().into(),
     };
     let content = column![warning, body]
         .spacing(VSpacing::L)

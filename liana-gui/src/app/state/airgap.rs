@@ -33,6 +33,8 @@ pub enum Message {
     Next,
     Scan,
     Cameras(Result<Vec<CameraInfo>, CameraFailure>),
+    RetryCamera,
+    RetriedCameras(Result<Vec<CameraInfo>, CameraFailure>),
     SelectCamera(String),
     Camera(CameraEvent),
     Back,
@@ -49,6 +51,7 @@ pub enum AirgapOutcome {
 pub enum Phase {
     ShowRequest,
     Scanning,
+    CameraRefused,
     Done,
 }
 
@@ -120,6 +123,13 @@ impl AirgapModal {
             Message::SaveSettings => self.save_settings(),
             Message::Scan => self.start_scan(),
             Message::Cameras(cameras) => self.cameras = cameras,
+            Message::RetryCamera => {
+                return Task::perform(request_camera_access(), Message::RetriedCameras)
+            }
+            Message::RetriedCameras(cameras) => {
+                self.cameras = cameras;
+                self.start_scan();
+            }
             Message::SelectCamera(name) => self.select_camera(name),
             Message::Camera(event) => self.on_camera_event(event),
             Message::Back => self.back_to_request(),
@@ -178,8 +188,12 @@ impl AirgapModal {
 
     fn give_up_on_camera_event(&mut self, failure: CameraFailure) {
         self.stop_camera();
-        self.error = Some(Error::Camera(failure));
-        self.phase = Phase::ShowRequest;
+        if failure == CameraFailure::PermissionDenied {
+            self.phase = Phase::CameraRefused;
+        } else {
+            self.error = Some(Error::Camera(failure));
+            self.phase = Phase::ShowRequest;
+        }
     }
 
     pub fn camera(&self) -> Result<&CameraInfo, CameraFailure> {
@@ -218,5 +232,51 @@ fn request_id() -> RequestId {
         if id != RequestId::UNREADABLE_REQUEST {
             return id;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use liana::miniscript::bitcoin::Network;
+
+    use crate::{
+        airgap::{camera::CameraFailure, device::get_keys, error::Error},
+        app::state::airgap::{AirgapModal, Message, Phase},
+        dir::LianaDirectory,
+    };
+
+    fn scanned_with(failure: CameraFailure) -> AirgapModal {
+        let datadir = LianaDirectory::new(PathBuf::new());
+        let (mut modal, _) =
+            AirgapModal::new(None, String::new(), get_keys(Network::Bitcoin), &datadir).unwrap();
+        let _ = modal.update(Message::Cameras(Err(failure)));
+        let _ = modal.update(Message::Scan);
+        modal
+    }
+
+    #[test]
+    fn a_refused_camera_shows_the_permission_modal() {
+        let modal = scanned_with(CameraFailure::PermissionDenied);
+        assert_eq!(modal.phase, Phase::CameraRefused);
+        assert!(modal.error.is_none());
+    }
+
+    #[test]
+    fn another_camera_failure_keeps_the_warning() {
+        let modal = scanned_with(CameraFailure::Busy);
+        assert_eq!(modal.phase, Phase::ShowRequest);
+        assert!(matches!(
+            modal.error,
+            Some(Error::Camera(CameraFailure::Busy))
+        ));
+    }
+
+    #[test]
+    fn going_back_from_the_permission_modal_shows_the_request() {
+        let mut modal = scanned_with(CameraFailure::PermissionDenied);
+        let _ = modal.update(Message::Back);
+        assert_eq!(modal.phase, Phase::ShowRequest);
     }
 }

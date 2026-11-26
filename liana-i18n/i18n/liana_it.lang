@@ -5,6 +5,24 @@
 
 airgap-add-signer-title => "Add a signing device" => NONE
 
+airgap-camera-allow-linux
+=> "Your user needs access to the camera's video device, usually by being in the video group. Allow it, then try again."
+=> NONE;;
+
+airgap-camera-allow-macos
+=> "Allow it in System Settings, Privacy & Security, Camera, by turning Liana on. Then try again."
+=> NONE;;
+
+airgap-camera-allow-windows
+=> "Allow it in Settings, Privacy & security, Camera, by turning on \"Let desktop apps access your camera\". Then try again."
+=> NONE;;
+
+airgap-camera-refused
+=> "Liana is not allowed to use the camera, so it cannot scan the answer of your signing device."
+=> NONE;;
+
+airgap-camera-refused-title => "Camera access refused" => NONE
+
 airgap-error-title => "Signing device" => NONE
 
 airgap-looking-for-qr => "Looking for the signer's QR code..." => NONE
