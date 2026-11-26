@@ -5,8 +5,9 @@ use std::{
 };
 
 use crate::{
-    app::settings::KeySetting,
-    backup::Backup,
+    airgap::device::AirgappedDevice,
+    app::settings::{KeySetting, ProviderKey},
+    backup::bip139::Bip139Backup,
     dir::LianaDirectory,
     node::bitcoind::{Bitcoind, InternalBitcoindConfig},
     services::connect::client::backend::{BackendClient, BackendWalletClient},
@@ -17,6 +18,7 @@ use liana::{
     descriptors::{LianaDescriptor, PathInfo},
     miniscript::bitcoin,
 };
+use liana_ui::component::panels::home::WalletOrigin;
 use lianad::config::{BitcoinBackend, BitcoinConfig};
 
 #[derive(Debug, Clone)]
@@ -72,7 +74,9 @@ pub struct Context {
     pub descriptor_template: DescriptorTemplate,
     pub descriptor: Option<LianaDescriptor>,
     pub keys: HashMap<bitcoin::bip32::Fingerprint, KeySetting>,
+    pub provider_keys: HashMap<bitcoin::bip32::Fingerprint, ProviderKey>,
     pub hws: Vec<(DeviceKind, bitcoin::bip32::Fingerprint, Option<[u8; 32]>)>,
+    pub airgapped_signers: HashMap<bitcoin::bip32::Fingerprint, AirgappedDevice>,
     pub liana_directory: LianaDirectory,
     pub network: bitcoin::Network,
     pub hw_is_used: bool,
@@ -83,7 +87,8 @@ pub struct Context {
     pub internal_bitcoind_config: Option<InternalBitcoindConfig>,
     pub internal_bitcoind: Option<Bitcoind>,
     pub remote_backend: RemoteBackend,
-    pub backup: Option<Backup>,
+    pub backup: Option<Bip139Backup>,
+    pub wallet_origin: Option<WalletOrigin>,
     pub wallet_alias: String,
     pub pending_compile: Option<CompileInputs>,
     pub encrypted_backup_privacy_mode: bool,
@@ -102,7 +107,9 @@ impl Context {
                 poll_interval_secs: Duration::from_secs(30),
             },
             hws: Vec::new(),
+            airgapped_signers: HashMap::new(),
             keys: HashMap::new(),
+            provider_keys: HashMap::new(),
             bitcoin_backend: None,
             descriptor: None,
             liana_directory,
@@ -115,8 +122,13 @@ impl Context {
             remote_backend,
             wallet_alias: String::new(),
             backup: None,
+            wallet_origin: None,
             pending_compile: None,
             encrypted_backup_privacy_mode: false,
         }
+    }
+
+    pub fn airgapped_devices(&self) -> Vec<AirgappedDevice> {
+        self.airgapped_signers.values().cloned().collect()
     }
 }

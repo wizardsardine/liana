@@ -5,7 +5,7 @@ pub mod ui;
 
 pub use ui::SettingsUI;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use async_fd_lock::LockWrite;
 use liana::descriptors::LianaDescriptor;
@@ -24,8 +24,9 @@ use liana::miniscript::bitcoin;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
+    airgap::device::AirgappedDevice,
     app::{self, state::State},
-    backup::{Key, KeyRole, KeyType},
+    daemon::Daemon,
     dir::{LianaDirectory, NetworkDirectory},
     hw::HardwareWalletConfig,
     services::connect::client::backend::{api, BackendWalletClient},
@@ -59,6 +60,12 @@ pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send +
     /// Get mutable access to wallet settings.
     fn wallets_mut(&mut self) -> &mut Vec<Self::Wallet>;
 
+    /// Get the QR signing devices of the network.
+    fn airgapped_signers(&self) -> &[AirgappedDevice];
+
+    /// Get mutable access to the QR signing devices of the network.
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice>;
+
     /// Create an App from Liana Connect remote backend data.
     ///
     /// Returns `None` if this settings type doesn't support Liana Connect login.
@@ -74,6 +81,7 @@ pub trait SettingsTrait: Clone + Default + Serialize + DeserializeOwned + Send +
         wallet: api::Wallet,
         coins: ListCoinsResult,
         user_settings: api::UserSettings,
+        remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -109,12 +117,14 @@ pub trait WalletSettingsTrait: Clone + Serialize + DeserializeOwned + Send + 'st
     /// Get a map of key fingerprints to their user-defined aliases.
     fn keys_aliases(&self) -> HashMap<Fingerprint, String>;
     /// Get a map of key fingerprints to their third-party provider information.
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey>;
+    fn provider_keys(&self) -> HashSet<Fingerprint>;
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct LianaSettings {
     pub wallets: Vec<LianaWalletSettings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub airgapped_signers: Vec<AirgappedDevice>,
 }
 
 impl LianaSettings {
@@ -151,12 +161,21 @@ impl SettingsTrait for LianaSettings {
         &mut self.wallets
     }
 
+    fn airgapped_signers(&self) -> &[AirgappedDevice] {
+        &self.airgapped_signers
+    }
+
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice> {
+        &mut self.airgapped_signers
+    }
+
     fn create_app_for_remote_backend(
         wallet_id: WalletId,
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
         _user_settings: api::UserSettings,
+        _remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -175,6 +194,31 @@ impl SettingsTrait for LianaSettings {
 
 /// Backward compatibility type alias.
 pub type Settings = LianaSettings;
+
+pub async fn update_remote_settings<S, F>(
+    daemon: &(dyn Daemon + Sync + Send),
+    updater: F,
+) -> Result<(), SettingsError>
+where
+    S: SettingsTrait,
+    F: FnOnce(S) -> S,
+{
+    let settings: S = match daemon
+        .fetch_settings()
+        .await
+        .map_err(|e| SettingsError::ReadingFile(e.to_string()))?
+    {
+        Some(settings) => serde_json::from_value(settings)
+            .map_err(|e| SettingsError::ReadingFile(e.to_string()))?,
+        None => S::default(),
+    };
+    let settings = serde_json::to_value(updater(settings))
+        .map_err(|e| SettingsError::WritingFile(format!("Failed to serialize settings: {e}")))?;
+    daemon
+        .store_settings(&settings)
+        .await
+        .map_err(|e| SettingsError::WritingFile(e.to_string()))
+}
 
 pub async fn update_settings_file<S, F>(
     network_dir: &NetworkDirectory,
@@ -213,7 +257,7 @@ where
 
     let settings = updater(settings);
 
-    if settings.wallets().is_empty() {
+    if settings.wallets().is_empty() && settings.airgapped_signers().is_empty() {
         tokio::fs::remove_file(&path)
             .await
             .map_err(|e| SettingsError::ReadingFile(e.to_string()))?;
@@ -312,16 +356,12 @@ impl LianaWalletSettings {
         map
     }
 
-    pub fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
-        let mut map = HashMap::new();
-        for (fingerprint, provider_key) in self
-            .keys
+    pub fn provider_keys(&self) -> HashSet<Fingerprint> {
+        self.keys
             .iter()
-            .filter_map(|k| k.provider_key.as_ref().map(|pk| (k.master_fingerprint, pk)))
-        {
-            map.insert(fingerprint, provider_key.clone());
-        }
-        map
+            .filter(|key| key.provider_key)
+            .map(|key| key.master_fingerprint)
+            .collect()
     }
 
     pub fn update_alias(&mut self, key: &Fingerprint, alias: &str) {
@@ -392,7 +432,7 @@ impl WalletSettingsTrait for LianaWalletSettings {
         LianaWalletSettings::keys_aliases(self)
     }
 
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+    fn provider_keys(&self) -> HashSet<Fingerprint> {
         LianaWalletSettings::provider_keys(self)
     }
 }
@@ -416,12 +456,7 @@ impl WalletId {
     pub fn generate(descriptor: &LianaDescriptor) -> Self {
         WalletId {
             timestamp: Some(chrono::Utc::now().timestamp()),
-            descriptor_checksum: descriptor
-                .to_string()
-                .split_once('#')
-                .map(|(_, checksum)| checksum)
-                .expect("LianaDescriptor.to_string() always include the checksum")
-                .to_string(),
+            descriptor_checksum: descriptor.checksum(),
         }
     }
     pub fn is_legacy(&self) -> bool {
@@ -439,19 +474,10 @@ impl std::fmt::Display for WalletId {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct Provider {
     pub uuid: String,
     pub name: String,
-}
-
-impl From<liana_connect::wallets::api::Provider> for Provider {
-    fn from(provider: liana_connect::wallets::api::Provider) -> Self {
-        Self {
-            uuid: provider.uuid,
-            name: provider.name,
-        }
-    }
 }
 
 impl From<liana_connect::keys::api::Provider> for Provider {
@@ -463,75 +489,42 @@ impl From<liana_connect::keys::api::Provider> for Provider {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ProviderKey {
     pub uuid: String,
     pub token: String,
     pub provider: Provider,
 }
 
-impl From<liana_connect::wallets::api::ProviderKey> for ProviderKey {
-    fn from(pk: liana_connect::wallets::api::ProviderKey) -> Self {
-        Self {
-            uuid: pk.uuid.clone(),
-            token: pk.token.clone(),
-            provider: pk.provider.into(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct KeySetting {
     pub name: String,
     pub master_fingerprint: Fingerprint,
-    pub provider_key: Option<ProviderKey>,
+    #[serde(
+        default,
+        serialize_with = "serialize_provider_key",
+        deserialize_with = "deserialize_provider_key"
+    )]
+    pub provider_key: bool,
+}
+
+fn serialize_provider_key<S: serde::Serializer>(
+    provider_key: &bool,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    provider_key
+        .then(ProviderKey::default)
+        .serialize(serializer)
+}
+
+fn deserialize_provider_key<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<bool, D::Error> {
+    Option::<serde::de::IgnoredAny>::deserialize(deserializer)
+        .map(|provider_key| provider_key.is_some())
 }
 
 impl KeySetting {
-    pub fn to_backup(&self) -> Key {
-        if let Some(provider_key) = &self.provider_key {
-            if let Ok(metadata) = serde_json::to_value(provider_key) {
-                return Key {
-                    key: self.master_fingerprint,
-                    alias: Some(self.name.clone()),
-                    role: None,
-                    key_type: Some(KeyType::ThirdParty),
-                    proprietary: metadata,
-                };
-            }
-        }
-        Key {
-            key: self.master_fingerprint,
-            alias: Some(self.name.clone()),
-            role: None,
-            key_type: None,
-            proprietary: serde_json::Value::Null,
-        }
-    }
-
-    pub fn from_backup(
-        name: String,
-        fg: Fingerprint,
-        _role: Option<KeyRole>,
-        key_type: Option<KeyType>,
-        metadata: serde_json::Value,
-    ) -> Option<Self> {
-        if let Some(KeyType::ThirdParty) = key_type {
-            let provider_key = serde_json::from_value(metadata).ok();
-            Some(Self {
-                name,
-                master_fingerprint: fg,
-                provider_key,
-            })
-        } else {
-            Some(Self {
-                name,
-                master_fingerprint: fg,
-                provider_key: None,
-            })
-        }
-    }
-
     pub fn to_form(&self) -> form::Value<String> {
         form::Value {
             value: self.name.clone(),
@@ -571,7 +564,7 @@ impl std::fmt::Display for SettingsError {
 
 /// global settings.
 pub mod global {
-    use crate::dir::LianaDirectory;
+    use crate::{airgap::display::QrSettings, dir::LianaDirectory};
     use async_hwi::bitbox::{ConfigError, NoiseConfig, NoiseConfigData};
     use fs2::FileExt;
     use liana_i18n::SupportedLocale;
@@ -594,6 +587,10 @@ pub mod global {
         pub window_config: Option<WindowConfig>,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub locale: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub airgap_display: Option<QrSettings>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub airgap_camera: Option<String>,
     }
 
     impl GlobalSettings {
@@ -632,6 +629,30 @@ pub mod global {
 
         pub fn update_locale(path: &PathBuf, locale: SupportedLocale) -> Result<(), String> {
             Self::update(path, |s| s.locale = Some(locale.code().to_string()), true)
+        }
+
+        pub fn load_airgap_display(path: &PathBuf) -> QrSettings {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.airgap_display.clone(), false) {
+                tracing::error!("Failed to load the air-gap display settings: {e}");
+            }
+            ret.unwrap_or_default()
+        }
+
+        pub fn update_airgap_display(path: &PathBuf, display: &QrSettings) -> Result<(), String> {
+            Self::update(path, |s| s.airgap_display = Some(display.clone()), true)
+        }
+
+        pub fn load_airgap_camera(path: &PathBuf) -> Option<String> {
+            let mut ret = None;
+            if let Err(e) = Self::update(path, |s| ret = s.airgap_camera.clone(), false) {
+                tracing::error!("Failed to load the air-gap camera: {e}");
+            }
+            ret
+        }
+
+        pub fn update_airgap_camera(path: &PathBuf, camera: &str) -> Result<(), String> {
+            Self::update(path, |s| s.airgap_camera = Some(camera.to_owned()), true)
         }
 
         pub fn load_bitbox_settings(path: &PathBuf) -> Result<Option<BitboxSettings>, String> {
@@ -687,6 +708,8 @@ pub mod global {
                 && global_settings.bitbox.is_none()
                 && global_settings.window_config.is_none()
                 && global_settings.locale.is_none()
+                && global_settings.airgap_display.is_none()
+                && global_settings.airgap_camera.is_none()
             {
                 write = false;
             }
@@ -776,7 +799,13 @@ pub mod global {
 #[cfg(test)]
 mod test {
     use super::global::{GlobalSettings, WindowConfig};
-    use crate::app::settings::LianaWalletSettings;
+    use bwk_qr::config::QrDensity;
+    use liana_ui::component::qr::Brightness;
+
+    use crate::{
+        airgap::display::QrSettings,
+        app::settings::{KeySetting, LianaWalletSettings},
+    };
     use std::env;
 
     const RAW_GLOBAL_SETTINGS: &str = r#"{
@@ -948,6 +977,30 @@ mod test {
     }
 
     #[test]
+    fn the_airgap_display_settings_are_kept_across_runs() {
+        let path =
+            env::temp_dir().join(format!("liana-airgap-display-{}.json", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(
+            GlobalSettings::load_airgap_display(&path),
+            QrSettings::default()
+        );
+        let display = QrSettings {
+            density: QrDensity::High,
+            frame_rate: 1.5,
+            brightness: Brightness::new(60),
+        };
+        GlobalSettings::update_airgap_display(&path, &display).unwrap();
+        GlobalSettings::update_airgap_camera(&path, "Integrated Camera").unwrap();
+        assert_eq!(GlobalSettings::load_airgap_display(&path), display);
+        assert_eq!(
+            GlobalSettings::load_airgap_camera(&path).as_deref(),
+            Some("Integrated Camera")
+        );
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
     fn test_encrypted_backup_privacy_mode_default() {
         let raw = r#"{
             "name": "w1",
@@ -966,5 +1019,40 @@ mod test {
         let raw = serde_json::to_string(&settings).unwrap();
         let settings: LianaWalletSettings = serde_json::from_str(&raw).unwrap();
         assert!(settings.encrypted_backup_privacy_mode);
+    }
+
+    #[test]
+    fn provider_key_is_written_without_its_token() {
+        let released: KeySetting = serde_json::from_str(
+            r#"{"name":"cosigner","master_fingerprint":"141cfdf4","provider_key":{"uuid":"u","token":"secret","provider":{"uuid":"p","name":"provider"}}}"#,
+        )
+        .unwrap();
+        assert!(released.provider_key);
+
+        let raw = serde_json::to_value(&released).unwrap();
+        assert_eq!(
+            raw["provider_key"],
+            serde_json::json!({"uuid":"","token":"","provider":{"uuid":"","name":""}})
+        );
+        assert!(
+            serde_json::from_value::<KeySetting>(raw)
+                .unwrap()
+                .provider_key
+        );
+
+        let own: KeySetting = serde_json::from_str(
+            r#"{"name":"me","master_fingerprint":"9f141cf0","provider_key":null}"#,
+        )
+        .unwrap();
+        assert!(!own.provider_key);
+        assert_eq!(
+            serde_json::to_value(&own).unwrap()["provider_key"],
+            serde_json::Value::Null
+        );
+        assert!(
+            !serde_json::from_str::<KeySetting>(r#"{"name":"me","master_fingerprint":"9f141cf0"}"#)
+                .unwrap()
+                .provider_key
+        );
     }
 }

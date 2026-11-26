@@ -78,7 +78,7 @@ impl ExportModal {
             ImportExportType::ImportXpub(_) | ImportExportType::ImportXpubs(_) => {
                 crate::t!("export-title-import-xpub")
             }
-            ImportExportType::ExportProcessBackup(..) => crate::t!("export-title-export-backup"),
+            ImportExportType::ExportProcessBackup { .. } => crate::t!("export-title-export-backup"),
             ImportExportType::ExportEncryptedDescriptor { .. } => {
                 crate::t!("export-title-export-encrypted-descriptor")
             }
@@ -102,20 +102,17 @@ impl ExportModal {
             | ImportExportType::ImportXpub(_)
             | ImportExportType::ImportXpubs(_) => "liana.pub".into(),
             ImportExportType::Descriptor(descriptor) => {
-                let checksum = descriptor
-                    .to_string()
-                    .split_once('#')
-                    .map(|(_, checksum)| checksum)
-                    .expect("cannot fail")
-                    .to_string();
-                format!("Liana-{checksum}.txt")
+                format!("Liana-{}.txt", descriptor.checksum())
             }
             ImportExportType::ExportEncryptedDescriptor { .. } => "liana.bip138".into(),
             ImportExportType::ImportPsbt(_) => "psbt.psbt".into(),
             ImportExportType::ImportDescriptor(_) => "descriptor.txt".into(),
             ImportExportType::ExportLabels => format!("liana-labels-{date}.jsonl"),
-            ImportExportType::ExportProcessBackup(..) => {
-                format!("liana-backup-{date}.json")
+            ImportExportType::ExportProcessBackup { encrypt: true, .. } => {
+                format!("liana-backup-{date}.bip138")
+            }
+            ImportExportType::ExportProcessBackup { encrypt: false, .. } => {
+                format!("liana-backup-{date}.bip139")
             }
             ImportExportType::FromBackup(_) | ImportExportType::ImportBackup { .. } => {
                 "liana-backup.json".to_string()

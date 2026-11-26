@@ -3,6 +3,40 @@
 # Format: id => "English" => "Translation"
 # Use \n for line breaks
 
+airgap-add-signer-title => "Add a signing device" => NONE
+
+airgap-camera-allow-linux
+=> "Your user needs access to the camera's video device, usually by being in the video group. Allow it, then try again."
+=> NONE;;
+
+airgap-camera-allow-macos
+=> "Allow it in System Settings, Privacy & Security, Camera, by turning Liana on. Then try again."
+=> NONE;;
+
+airgap-camera-allow-windows
+=> "Allow it in Settings, Privacy & security, Camera, by turning on \"Let desktop apps access your camera\". Then try again."
+=> NONE;;
+
+airgap-camera-refused
+=> "Liana is not allowed to use the camera, so it cannot scan the answer of your signing device."
+=> NONE;;
+
+airgap-camera-refused-title => "Camera access refused" => NONE
+
+airgap-error-title => "Signing device" => NONE
+
+airgap-looking-for-qr => "Looking for the signer's QR code..." => NONE
+
+airgap-point-camera => "Point the camera at your signer's screen." => NONE
+
+airgap-register-title => "Register the wallet" => NONE
+
+airgap-show-request => "Show this to your signer, then scan its answer back." => NONE
+
+airgap-sign-title => "Sign with a signing device" => NONE
+
+airgap-verify-address-title => "Verify the address" => NONE
+
 bitcoind-upgrade-hint
 => "Updating your Liana-managed Bitcoin node."
 => "Atualizando seu nó Bitcoin gerenciado pela Liana.";;
@@ -38,6 +72,8 @@ btn-apply => "Apply" => "Aplicar"
 btn-approve => "Approve" => "Aprovar"
 
 btn-back => "Back" => "Voltar"
+
+btn-back-to-request => "Back to the request" => NONE
 
 btn-back-up-descriptor => "Back up descriptor" => "Fazer backup do descritor"
 
@@ -148,6 +184,8 @@ btn-reset-timelock => "Reset timelock" => "Redefinir timelock"
 btn-retry => "Retry" => "Repetir"
 
 btn-save => "Save" => "Salvar"
+
+btn-scan-response => "Scan the response" => NONE
 
 btn-see-more-details => "See more details" => "Ver mais detalhes"
 
@@ -901,6 +939,8 @@ device-hot-key-test-only
 => "We recommend using this option only for test purposes"
 => "Recomendamos usar esta opção apenas para testes";;
 
+device-import-xpub-qr => "Import xpub by QR Code" => NONE
+
 device-install-firmware-version-or-later
 => "Install firmware version {$version} \nor later"
 => "Instale a versão de firmware {$version} \nou posterior";;
@@ -1140,6 +1180,10 @@ installer-accepted-wallet-not-found
 installer-add-key => "Add key" => "Adicionar chave"
 
 installer-add-safety-net-key => "Add Safety Net key" => "Adicionar chave Safety Net"
+
+installer-airgapped-key-added-another-way
+=> "This signer's key is already in the wallet as {$name}, added another way."
+=> NONE;;
 
 installer-already-have-node => "I already have a node" => "Já tenho um nó"
 
@@ -1392,6 +1436,8 @@ installer-expanding-multisig-wallet
 installer-export-backup-failed
 => "Failed to export backup"
 => "Falha ao exportar o backup";;
+
+installer-extended-public-key => "Extended public key:" => NONE
 
 installer-finalize-installation => "Finalize installation" => "Finalizar instalação"
 
@@ -2159,6 +2205,8 @@ psbt-select-signing-device
 => "Select signing device to sign with:"
 => "Selecione o dispositivo de assinatura para assinar:";;
 
+psbt-sign-qr => "Sign by QR code with any signing device" => NONE
+
 psbt-sign-save-before-export
 => "Sign or save the transaction first to enable export"
 => "Assine ou salve a transação primeiro para habilitar a exportação";;
@@ -2181,6 +2229,16 @@ psbts-signatures-collected
 => "{ $threshold ->\n    [one] {$count}/{$threshold} signature collected\n   *[other] {$count}/{$threshold} signatures collected\n}"
 => "{ $threshold ->\n    [one] {$count}/{$threshold} assinatura coletada\n   *[other] {$count}/{$threshold} assinaturas coletadas\n}";;
 
+qr-brightness => "Brightness: {$percent}%" => NONE
+
+qr-camera => "Camera" => NONE
+
+qr-density => "Density" => NONE
+
+qr-frame-rate => "Speed" => NONE
+
+qr-settings => "QR code settings" => NONE
+
 receive-address-label-placeholder
 => "Enter an address label"
 => "Digite um rótulo de endereço";;
@@ -2198,6 +2256,8 @@ receive-generating-address-title => "Generating address" => "Gerando endereço"
 receive-previous-addresses
 => "Previously generated addresses still awaiting deposit"
 => "Endereços gerados anteriormente ainda aguardando depósito";;
+
+receive-qr-unavailable => "Cannot show the QR code" => NONE
 
 receive-select-device
 => "Select device to verify address on:"
@@ -2228,6 +2288,8 @@ recovery-paths-available
 recovery-signatures-from
 => "{ $count ->\n    [one] 1 signature from\n   *[other] {$count} signatures from\n}"
 => "{ $count ->\n    [one] 1 assinatura de\n   *[other] {$count} assinaturas de\n}";;
+
+settings-add-qr-signer => "Add a signing device by QR code" => NONE
 
 settings-alias => "Alias" => "Apelido"
 
@@ -2309,6 +2371,8 @@ settings-export-wallet-description
 => "File (not encrypted) with wallet info useful to sync labels and data on other devices."
 => "Arquivo (não criptografado) com informações da carteira, útil para sincronizar rótulos e dados em outros dispositivos.";;
 
+settings-export-wallet-encrypt => "Encrypt with the wallet's keys (BIP-138)" => NONE
+
 settings-fiat-price => "Fiat price:" => "Preço fiat:"
 
 settings-fiat-price-tooltip
@@ -2346,6 +2410,10 @@ settings-network => "Network:" => "Rede:"
 settings-not-running => "Not running" => "Não está em execução"
 
 settings-other-formats => "Other formats" => "Outros formatos"
+
+settings-remove-qr-signer
+=> "Remove the signing device #{$fingerprint} from this wallet? It will no longer be offered for QR code exchanges, and its key stays in the wallet."
+=> NONE;;
 
 settings-rescan-success
 => "Successfully rescanned the blockchain"

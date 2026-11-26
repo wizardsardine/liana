@@ -624,6 +624,19 @@ pub fn btn_try_other_paths<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-try-other-paths"), BtnWidth::Auto, msg)
 }
 
+pub fn btn_scan_response<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_primary(
+        Some(icon::qr_icon()),
+        t!("btn-scan-response"),
+        BtnWidth::Auto,
+        msg,
+    )
+}
+
+pub fn btn_back_to_request<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
+    btn_secondary(None, t!("btn-back-to-request"), BtnWidth::Auto, msg)
+}
+
 /// Yes button: primary. Width S.
 pub fn btn_yes<'a, T: Clone + 'a>(msg: Option<T>) -> Button<'a, T> {
     btn_primary(None, t!("btn-yes"), BtnWidth::S, msg)

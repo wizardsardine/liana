@@ -6,7 +6,7 @@ use iced::{
 
 use liana_ui::{
     component::{
-        checkbox::derivation_paths_checkbox,
+        checkbox::{derivation_paths_checkbox, labelled_checkbox},
         panels::setting::{
             export_section, export_section_with_footer, header, ImportExportKind, SectionKind,
         },
@@ -35,6 +35,7 @@ pub fn import_export<'a>(
     cache: &'a Cache,
     warning: Option<&'a Error>,
     encrypted_backup_privacy_mode: bool,
+    encrypt_wallet_backup: bool,
 ) -> Element<'a, Message> {
     let header = header(
         Some(SETTING_MSG),
@@ -69,9 +70,15 @@ pub fn import_export<'a>(
         Message::Settings(SettingsMessage::ExportLabels),
     );
 
-    let export_wallet = export_section(
+    let encrypt = labelled_checkbox(
+        new::caption(t!("settings-export-wallet-encrypt")),
+        encrypt_wallet_backup,
+        |encrypt| SettingsMessage::EncryptWalletBackup(encrypt).into(),
+    );
+    let export_wallet = export_section_with_footer(
         ImportExportKind::ExportWallet,
         Message::Settings(SettingsMessage::ExportWallet),
+        encrypt,
     );
 
     let import_wallet = export_section(

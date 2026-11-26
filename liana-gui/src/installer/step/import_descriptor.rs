@@ -97,7 +97,7 @@ impl ImportDescriptorModal {
                         | Decrypt::ShowOptions(_)
                         | Decrypt::TryOtherPaths(_)
                         | Decrypt::SkipOtherPaths(_) => return modal.update(msg),
-                        Decrypt::Backup(_) | Decrypt::Close => {}
+                        Decrypt::Backup(_) | Decrypt::Descriptor(_) | Decrypt::Close => {}
                     }
                 }
             }

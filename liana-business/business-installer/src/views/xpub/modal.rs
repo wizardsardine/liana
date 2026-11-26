@@ -28,9 +28,13 @@ use liana_ui::{
 
 pub fn xpub_modal_view(state: &State) -> Option<Element<'_, Msg>> {
     let modal_state = state.views.xpub.modal.as_ref()?;
+    if let Some(airgap) = &state.modal {
+        return Some(liana_gui::view::airgap::modal(airgap, Msg::XpubAirgap));
+    }
 
     Some(match modal_state.step {
         ModalStep::Select => select_view(state, modal_state),
+        ModalStep::Details if modal_state.airgapped_signer.is_some() => details_view(modal_state),
         ModalStep::Details => {
             let selected_device = modal_state.selected_device?;
             let device_list = state.hw.list();
@@ -209,22 +213,28 @@ fn source_line(input_source: &XpubInputSource) -> Option<Element<'static, Msg>> 
     match input_source {
         XpubInputSource::Device {
             kind, fingerprint, ..
-        } => Some(
-            row![
-                text::new::caption(t!(
-                    "business-fetched-from-device",
-                    kind = kind,
-                    fingerprint = fingerprint
-                ))
-                .style(theme::text::secondary),
-                icon::check_icon().size(13).style(theme::text::success)
-            ]
-            .spacing(HSpacing::S)
-            .align_y(Alignment::Center)
-            .into(),
-        ),
+        } => Some(fetched_line(kind.clone(), fingerprint.clone())),
+        XpubInputSource::Airgapped(device) => Some(fetched_line(
+            format!("{} {}", device.vendor, device.model),
+            device.fingerprint.to_string(),
+        )),
         _ => None,
     }
+}
+
+fn fetched_line(kind: String, fingerprint: String) -> Element<'static, Msg> {
+    row![
+        text::new::caption(t!(
+            "business-fetched-from-device",
+            kind = kind,
+            fingerprint = fingerprint
+        ))
+        .style(theme::text::secondary),
+        icon::check_icon().size(13).style(theme::text::success)
+    ]
+    .spacing(HSpacing::S)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn hw_section(state: &State) -> Element<'_, Msg> {
@@ -423,6 +433,11 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
         Space::fill_width()
     ];
     let expanded_content = (!collapsed).then_some({
+        let qr_entry = modal::import_xpub_qr_entry(
+            modal_state.airgap_error.clone(),
+            Some(|| Msg::XpubSelectScanAirgapped),
+        );
+
         let file_button = list::entry_action(
             Tile::Import,
             t!("business-import-xpub-file"),
@@ -451,7 +466,7 @@ fn other_options(modal_state: &XpubEntryModalState) -> Element<'_, Msg> {
             paste_entry
         };
 
-        column![file_button, paste_block].spacing(modal::V_SPACING)
+        column![qr_entry, file_button, paste_block].spacing(modal::V_SPACING)
     });
 
     if let Some(expanded_content) = expanded_content {

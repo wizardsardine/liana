@@ -1,10 +1,19 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::app::cache::FiatPrice;
-use crate::dir::LianaDirectory;
+use bip377::ll::response::Capabilities;
+
 use crate::{
-    app::settings, daemon::DaemonBackend, hw::HardwareWalletConfig, node::NodeType, signer::Signer,
+    airgap::{
+        self,
+        device::{AirgappedDevice, Registration},
+    },
+    app::{cache::FiatPrice, settings},
+    daemon::DaemonBackend,
+    dir::LianaDirectory,
+    hw::HardwareWalletConfig,
+    node::NodeType,
+    signer::Signer,
 };
 
 use liana::{
@@ -22,11 +31,7 @@ use super::settings::{fiat, WalletId, WalletSettings};
 const DEFAULT_WALLET_NAME: &str = "Liana";
 
 pub fn wallet_name(main_descriptor: &LianaDescriptor) -> String {
-    let desc = main_descriptor.to_string();
-    let checksum = desc
-        .split_once('#')
-        .map(|(_, checksum)| checksum)
-        .unwrap_or("");
+    let checksum = main_descriptor.checksum();
     format!(
         "{}{}{}",
         DEFAULT_WALLET_NAME,
@@ -44,8 +49,9 @@ pub struct Wallet {
     pub pinned_at: Option<i64>,
     // TODO: We could replace these two fields with `keys: HashMap<Fingerprint, settings::KeySetting>`.
     pub keys_aliases: HashMap<Fingerprint, String>,
-    pub provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
+    pub provider_keys: HashSet<Fingerprint>,
     pub hardware_wallets: Vec<HardwareWalletConfig>,
+    pub airgapped_signers: Vec<AirgappedDevice>,
     pub signer: Option<Arc<Signer>>,
     pub fiat_price_setting: Option<fiat::PriceSetting>,
     pub encrypted_backup_privacy_mode: bool,
@@ -57,17 +63,13 @@ impl Wallet {
         Self {
             name: wallet_name(&main_descriptor),
             alias: None,
-            descriptor_checksum: main_descriptor
-                .to_string()
-                .split_once('#')
-                .map(|(_, checksum)| checksum)
-                .unwrap()
-                .to_string(),
+            descriptor_checksum: main_descriptor.checksum(),
             pinned_at: None,
             main_descriptor,
             keys_aliases: HashMap::new(),
-            provider_keys: HashMap::new(),
+            provider_keys: HashSet::new(),
             hardware_wallets: Vec::new(),
+            airgapped_signers: Vec::new(),
             signer: None,
             fiat_price_setting: None,
             encrypted_backup_privacy_mode: false,
@@ -100,16 +102,23 @@ impl Wallet {
         self
     }
 
-    pub fn with_provider_keys(
-        mut self,
-        provider_keys: HashMap<Fingerprint, settings::ProviderKey>,
-    ) -> Self {
+    pub fn with_provider_keys(mut self, provider_keys: HashSet<Fingerprint>) -> Self {
         self.provider_keys = provider_keys;
         self
     }
 
     pub fn with_hardware_wallets(mut self, hardware_wallets: Vec<HardwareWalletConfig>) -> Self {
         self.hardware_wallets = hardware_wallets;
+        self
+    }
+
+    pub fn with_airgapped_signers(mut self, devices: &[AirgappedDevice]) -> Self {
+        let keys = self.descriptor_keys();
+        self.airgapped_signers = devices
+            .iter()
+            .filter(|device| keys.contains(&device.fingerprint))
+            .cloned()
+            .collect();
         self
     }
 
@@ -134,6 +143,37 @@ impl Wallet {
     pub fn with_remote_backend_auth(mut self, auth_cfg: settings::AuthConfig) -> Self {
         self.remote_backend_auth = Some(auth_cfg);
         self
+    }
+
+    pub fn for_airgapped_signer(&self, device: &AirgappedDevice) -> airgap::device::RequestBuilder {
+        airgap::device::RequestBuilder {
+            alias: self.descriptor_alias().to_owned(),
+            descriptor: self.main_descriptor.clone(),
+            registration: device
+                .registration(&self.descriptor_checksum)
+                .cloned()
+                .unwrap_or_default(),
+            capabilities: device.capabilities,
+        }
+    }
+
+    pub fn for_any_airgapped_signer(&self) -> airgap::device::RequestBuilder {
+        airgap::device::RequestBuilder {
+            alias: self.descriptor_alias().to_owned(),
+            descriptor: self.main_descriptor.clone(),
+            registration: Registration::default(),
+            capabilities: Capabilities(0),
+        }
+    }
+
+    pub fn descriptor_alias(&self) -> &str {
+        &self.name
+    }
+
+    pub fn airgapped_signer(&self, fingerprint: Fingerprint) -> Option<&AirgappedDevice> {
+        self.airgapped_signers
+            .iter()
+            .find(|device| device.fingerprint == fingerprint)
     }
 
     pub fn descriptor_keys(&self) -> HashSet<Fingerprint> {
@@ -223,15 +263,9 @@ impl Wallet {
                 settings::KeySetting {
                     name: alias.clone(),
                     master_fingerprint: *fg,
-                    provider_key: None,
+                    provider_key: self.provider_keys.contains(fg),
                 },
             );
-        });
-
-        self.provider_keys.iter().for_each(|(fg, key)| {
-            if let Some(entry) = map.get_mut(fg) {
-                entry.provider_key = Some(key.clone())
-            }
         });
 
         map
@@ -341,4 +375,95 @@ pub fn sync_status(
         return SyncStatus::LatestWalletSync;
     }
     SyncStatus::Synced
+}
+
+#[cfg(test)]
+mod tests {
+    use std::str::FromStr;
+
+    use bip377::ll::response::{Capabilities, FirmwareVersion, ReleaseFlag};
+    use liana::{descriptors::LianaDescriptor, miniscript::bitcoin::bip32::Fingerprint};
+
+    use crate::{
+        airgap::device::{AirgappedDevice, Registration},
+        app::wallet::Wallet,
+    };
+
+    const DESCRIPTOR: &str = include_str!("../../test_assets/airgap/multisig-testnet.descriptor");
+
+    fn wallet() -> Wallet {
+        Wallet::new(LianaDescriptor::from_str(DESCRIPTOR.trim()).unwrap())
+    }
+
+    fn signer() -> AirgappedDevice {
+        AirgappedDevice {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            alias: Some("Cold signer".to_owned()),
+            vendor: "Test".to_owned(),
+            model: "test signer".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                flag: ReleaseFlag::Stable,
+            },
+            capabilities: Capabilities(1),
+            registrations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn airgapped_signer_gets_the_usb_descriptor_alias() {
+        let wallet = wallet();
+        assert_eq!(wallet.descriptor_alias(), "Liana-u768v50p");
+        assert_eq!(
+            wallet.for_airgapped_signer(&signer()).alias,
+            wallet.descriptor_alias()
+        );
+    }
+
+    #[test]
+    fn a_wallet_keeps_its_own_devices_with_its_registration() {
+        let wallet = wallet();
+        let mut ours = signer();
+        ours.record(Registration {
+            descriptor_checksum: Some("another".to_owned()),
+            stored: Some(true),
+            proof: None,
+        });
+        ours.record(Registration {
+            descriptor_checksum: Some(wallet.descriptor_checksum.clone()),
+            stored: Some(false),
+            proof: Some(vec![7; 32]),
+        });
+        let mut other = signer();
+        other.fingerprint = Fingerprint::from_str("00000001").unwrap();
+
+        let wallet = wallet.with_airgapped_signers(&[ours, other]);
+        assert_eq!(wallet.airgapped_signers.len(), 1);
+        let request = wallet.for_airgapped_signer(&wallet.airgapped_signers[0]);
+        assert!(request
+            .registration
+            .is_for_descriptor(&wallet.descriptor_checksum));
+        assert_eq!(request.registration.proof, Some(vec![7; 32]));
+    }
+
+    #[test]
+    fn a_device_not_saved_gets_the_descriptor_and_no_proof() {
+        let wallet = wallet();
+        let request = wallet.for_any_airgapped_signer();
+        assert_eq!(request.alias, wallet.descriptor_alias());
+        assert_eq!(request.registration, Registration::default());
+        assert_eq!(request.capabilities, Capabilities(0));
+    }
+
+    #[test]
+    fn a_renamed_wallet_keeps_one_alias_for_both() {
+        let wallet = wallet().with_name("Named by the backend".to_owned());
+        assert_eq!(wallet.descriptor_alias(), "Named by the backend");
+        assert_eq!(
+            wallet.for_airgapped_signer(&signer()).alias,
+            wallet.descriptor_alias()
+        );
+    }
 }

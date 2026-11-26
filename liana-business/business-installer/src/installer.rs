@@ -109,7 +109,7 @@ impl Installer<'_, Message> for BusinessInstaller {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::event::listen_with(|event, status, _| match (event, status) {
+        let escape = iced::event::listen_with(|event, status, _| match (event, status) {
             (
                 iced::Event::Keyboard(keyboard::Event::KeyPressed {
                     key: keyboard::Key::Named(Named::Escape),
@@ -118,7 +118,13 @@ impl Installer<'_, Message> for BusinessInstaller {
                 event::Status::Ignored,
             ) => Some(Message::EscapePressed),
             _ => None,
-        })
+        });
+        match &self.state.modal {
+            Some(airgap) => {
+                Subscription::batch([escape, airgap.subscription().map(Message::XpubAirgap)])
+            }
+            None => escape,
+        }
     }
 
     fn view(&self) -> Element<'_, Message> {

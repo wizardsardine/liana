@@ -26,6 +26,11 @@ pub enum Msg {
 
     ExportEncryptedDescriptor,
 
+    ExportWallet,
+
+    /// Encrypt the wallet backup with BIP-138.
+    EncryptWalletBackup(bool),
+
     /// Toggle fiat price display.
     FiatEnable(bool),
 

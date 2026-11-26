@@ -1,17 +1,23 @@
 pub mod key;
 pub mod template;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
-use std::str::FromStr;
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    path::PathBuf,
+    str::FromStr,
+    sync::{Arc, Mutex},
+};
 
 use iced::{Subscription, Task};
 use liana::miniscript::bitcoin::bip32::ChildNumber;
 use liana::{
     descriptors::{LianaDescriptor, PathInfo},
     miniscript::{
-        bitcoin::{bip32::Fingerprint, Network},
-        descriptor::DescriptorPublicKey,
+        bitcoin::{
+            bip32::{Fingerprint, Xpub},
+            Network,
+        },
+        descriptor::{DescriptorPublicKey, DescriptorXKey},
     },
 };
 
@@ -22,7 +28,9 @@ use liana_ui::{
 
 use crate::installer::KeySourceKind;
 use crate::{
+    airgap::device::AirgappedDevice,
     app::settings::KeySetting,
+    dir::LianaDirectory,
     hw::HardwareWallets,
     installer::{
         context::{CompileInputs, DescriptorTemplate},
@@ -58,6 +66,7 @@ pub struct DefineDescriptor {
 
     modal: Option<Box<dyn DescriptorEditModal>>,
     signer: Arc<Mutex<Signer>>,
+    liana_directory: LianaDirectory,
 
     keys: HashMap<Fingerprint, Key>,
     paths: Vec<Path>,
@@ -78,6 +87,7 @@ impl DefineDescriptor {
             modal: None,
 
             signer,
+            liana_directory: LianaDirectory::new(PathBuf::new()),
             error: None,
             keys: HashMap::new(),
             descriptor_template: DescriptorTemplate::default(),
@@ -220,6 +230,7 @@ impl DefineDescriptor {
             self.accounts.clone(),
             self.signer.clone(),
             self.use_taproot,
+            self.liana_directory.clone(),
         )
     }
 }
@@ -227,6 +238,7 @@ impl DefineDescriptor {
 impl Step for DefineDescriptor {
     fn load_context(&mut self, ctx: &Context) {
         self.load_template(ctx.descriptor_template);
+        self.liana_directory = ctx.liana_directory.clone();
         // Drop any transient state from a previous visit (failed compile,
         // in-flight task we navigated away from, stale mailbox).
         self.error = None;
@@ -500,6 +512,8 @@ impl Step for DefineDescriptor {
 
         ctx.bitcoin_config.network = self.network;
         ctx.keys = HashMap::new();
+        ctx.provider_keys = HashMap::new();
+        ctx.airgapped_signers = HashMap::new();
         let mut hw_is_used = false;
         let mut spending_keys: Vec<DescriptorPublicKey> = Vec::new();
         let mut key_derivation_index = HashMap::<Fingerprint, usize>::new();
@@ -513,19 +527,7 @@ impl Step for DefineDescriptor {
                 .get(&fingerprint)
                 .expect("Must be present at this step");
             if let DescriptorPublicKey::XPub(xpub) = &key.key {
-                if let Some((master_fingerprint, _)) = xpub.origin {
-                    ctx.keys.insert(
-                        master_fingerprint,
-                        KeySetting {
-                            master_fingerprint,
-                            name: key.name.clone(),
-                            provider_key: key.source.provider_key(),
-                        },
-                    );
-                    if key.source.device_kind().is_some() {
-                        hw_is_used = true;
-                    }
-                }
+                hw_is_used |= record_installer_key(ctx, key, xpub);
                 let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
                 spending_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(
                     xpub.clone(),
@@ -549,19 +551,7 @@ impl Step for DefineDescriptor {
                     .get(&fingerprint)
                     .expect("Must be present at this step");
                 if let DescriptorPublicKey::XPub(xpub) = &key.key {
-                    if let Some((master_fingerprint, _)) = xpub.origin {
-                        ctx.keys.insert(
-                            master_fingerprint,
-                            KeySetting {
-                                master_fingerprint,
-                                name: key.name.clone(),
-                                provider_key: key.source.provider_key(),
-                            },
-                        );
-                        if key.source.device_kind().is_some() {
-                            hw_is_used = true;
-                        }
-                    }
+                    hw_is_used |= record_installer_key(ctx, key, xpub);
 
                     let derivation_index = key_derivation_index.get(&fingerprint).unwrap_or(&0);
                     recovery_keys.push(DescriptorPublicKey::MultiXPub(new_multixkey_from_xpub(
@@ -806,6 +796,33 @@ impl DescriptorEditModal for EditThresholdModal {
     fn view(&self, _hws: &HardwareWallets) -> Element<'_, Message> {
         view::editor::edit_threshold_modal(self.threshold)
     }
+}
+
+fn record_installer_key(ctx: &mut Context, key: &Key, xpub: &DescriptorXKey<Xpub>) -> bool {
+    let Some((master_fingerprint, _)) = xpub.origin else {
+        return false;
+    };
+    ctx.keys.insert(
+        master_fingerprint,
+        KeySetting {
+            master_fingerprint,
+            name: key.name.clone(),
+            provider_key: key.source.provider_key().is_some(),
+        },
+    );
+    if let Some(provider_key) = key.source.provider_key() {
+        ctx.provider_keys.insert(master_fingerprint, provider_key);
+    }
+    if let Some(signer) = key.source.airgapped_signer() {
+        ctx.airgapped_signers.insert(
+            master_fingerprint,
+            AirgappedDevice {
+                alias: Some(key.name.clone()),
+                ..signer.clone()
+            },
+        );
+    }
+    key.source.device_kind().is_some()
 }
 
 #[cfg(test)]

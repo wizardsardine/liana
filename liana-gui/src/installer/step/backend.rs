@@ -11,6 +11,7 @@ use liana_ui::{component::form, widget::Element};
 
 use crate::{
     app::state::export::ExportModal,
+    backup::bip139::Bip139Network,
     daemon::DaemonError,
     dir::NetworkDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
@@ -689,17 +690,21 @@ impl Step for ImportRemoteWallet {
             Message::Decrypt(Decrypt::Backup(mut backup))
                 if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
             {
-                let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
+                let descriptor = backup
+                    .accounts
+                    .first()
+                    .and_then(|acc| acc.liana_descriptor())
+                    .map(|descriptor| descriptor.to_string());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
-                        backup.network == Network::Bitcoin
+                        backup.network == Bip139Network::Bitcoin
                     } else {
-                        backup.network != Network::Bitcoin
+                        backup.network != Bip139Network::Bitcoin
                     };
                     if network_matches {
                         // NOTE: we need to overwrite w/ correct network for testnets
                         // as non Mainnet keys / descriptor are parsed as Signet
-                        backup.network = self.network;
+                        backup.network = self.network.into();
 
                         // NOTE: a check that the descriptor is a valid LianaDescriptor have
                         // already been processed at backup import.
@@ -714,6 +719,20 @@ impl Step for ImportRemoteWallet {
                 } else {
                     self.modal = ImportDescriptorModal::None;
                     self.error = Some(crate::t!("installer-backup-descriptor-missing"));
+                }
+            }
+            Message::Decrypt(Decrypt::Descriptor(descriptor))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
+                self.modal = ImportDescriptorModal::None;
+                if descriptor.all_xpubs_net_is(Network::Bitcoin)
+                    == (self.network == Network::Bitcoin)
+                {
+                    self.imported_descriptor.value = descriptor.to_string();
+                    self.descriptor = Some(descriptor);
+                    return Task::perform(async {}, |_| Message::Next);
+                } else {
+                    self.error = Some(crate::t!("installer-backup-network-mismatch"));
                 }
             }
             Message::Decrypt(m) => {

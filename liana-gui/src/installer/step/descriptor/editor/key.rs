@@ -24,15 +24,28 @@ use liana_ui::{
     component::{
         button, card, form,
         modal::{self, modal_no_devices_placeholder, KeySourceKind},
-        pick_list,
+        pick_list, scrollable,
         text::{p1_bold, p1_regular},
         tooltip,
     },
+    spacing::VSpacing,
+    theme,
     widget::{text_input, ColumnExt, Container, Element, RowExt, SpaceExt},
 };
 
 use crate::{
-    app::{settings::ProviderKey, state::export::ExportModal},
+    airgap::{
+        device::{get_keys, AirgappedDevice, Answer, Signer as AirgapSigner},
+        error::Error as AirgapError,
+    },
+    app::{
+        settings::ProviderKey,
+        state::{
+            airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+            export::ExportModal,
+        },
+    },
+    dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType},
     hw::{HardwareWallet, HardwareWallets, UnsupportedReason},
     installer::{
@@ -63,6 +76,19 @@ pub fn new_multixkey_from_xpub(
         .unwrap(),
         wildcard: Wildcard::Unhardened,
     }
+}
+
+fn xpub_with_origin(
+    fingerprint: Fingerprint,
+    path: &DerivationPath,
+    xpub: &Xpub,
+) -> DescriptorPublicKey {
+    DescriptorPublicKey::XPub(DescriptorXKey {
+        origin: Some((fingerprint, path.clone())),
+        derivation_path: DerivationPath::master(),
+        wildcard: Wildcard::None,
+        xkey: *xpub,
+    })
 }
 
 pub fn check_key_network(key: &DescriptorPublicKey, network: Network) -> bool {
@@ -98,6 +124,7 @@ enum Focus {
     Device(Fingerprint),
     EnterXpub,
     LoadXpubFromFile,
+    ScanAirgapped,
     GenerateHotKey,
     EnterSafetyNetToken,
     EnterCosignerToken,
@@ -110,6 +137,8 @@ pub enum SelectKeySourceMessage {
     FetchFromDevice(Fingerprint, ChildNumber),
     SelectKey(Fingerprint),
     SelectLoadXpub,
+    SelectScanAirgapped,
+    Airgap(AirgapMessage),
     SelectEnterXpub,
     PasteXpub,
     Xpub(String),
@@ -166,9 +195,17 @@ impl SelectedKey {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
+pub enum SelectKeySourceModal {
+    Export(ExportModal),
+    Airgap(AirgapModal),
+    None,
+}
+
 pub struct SelectKeySource {
     // state
     network: Network,
+    liana_directory: LianaDirectory,
     /// List of keys already in use, including metadata about spending
     /// path they are used in.
     keys: HashMap<Fingerprint, (Vec<(usize, usize)>, Key)>,
@@ -183,7 +220,8 @@ pub struct SelectKeySource {
     selected_key: SelectedKey,
     step: Step,
     focus: Focus,
-    modal: Option<ExportModal>,
+    modal: SelectKeySourceModal,
+    airgapped_signer: Option<AirgapSigner>,
     processing: bool,
     error: Option<String>,
     details_error: Option<String>,
@@ -207,9 +245,11 @@ impl SelectKeySource {
         accounts: HashMap<Fingerprint, ChildNumber>,
         hot_signer: Arc<Mutex<Signer>>,
         use_taproot: bool,
+        liana_directory: LianaDirectory,
     ) -> Self {
         Self {
             network,
+            liana_directory,
             keys,
             accounts,
             actual_path,
@@ -218,7 +258,8 @@ impl SelectKeySource {
             selected_key: SelectedKey::None,
             step: Step::Select,
             focus: Focus::None,
-            modal: None,
+            modal: SelectKeySourceModal::None,
+            airgapped_signer: None,
             processing: false,
             error: None,
             details_error: None,
@@ -461,14 +502,114 @@ impl SelectKeySource {
     fn on_select_load_xpub(&mut self) -> Task<Message> {
         self.focus = Focus::LoadXpubFromFile;
         self.import_xpub_error = None;
-        if self.modal.is_none() {
+        if matches!(self.modal, SelectKeySourceModal::None) {
             let modal = ExportModal::new(None, ImportExportType::ImportXpub(self.network));
             let launch = modal.launch(false);
-            self.modal = Some(modal);
+            self.modal = SelectKeySourceModal::Export(modal);
             return launch;
         }
         Task::none()
     }
+    fn on_select_scan_airgapped(&mut self) -> Task<Message> {
+        self.focus = Focus::ScanAirgapped;
+        self.error = None;
+        if matches!(self.modal, SelectKeySourceModal::None) {
+            match AirgapModal::new(
+                None,
+                crate::t!("device-import-xpub-qr"),
+                get_keys(self.network),
+                &self.liana_directory,
+            ) {
+                Ok((modal, task)) => {
+                    self.modal = SelectKeySourceModal::Airgap(modal);
+                    return task.map(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+                }
+                Err(e) => self.error = Some(e.to_string()),
+            }
+        }
+        Task::none()
+    }
+
+    fn on_airgap(&mut self, action: AirgapMessage) -> Task<Message> {
+        let SelectKeySourceModal::Airgap(modal) = &mut self.modal else {
+            return Task::none();
+        };
+        let task = modal
+            .update(action)
+            .map(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+        match modal.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                self.modal = SelectKeySourceModal::None;
+                match *answer {
+                    Answer::Xpubs(signer) => Task::batch([task, self.on_airgapped_signer(signer)]),
+                    _ => task,
+                }
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = SelectKeySourceModal::None;
+                if self.focus == Focus::ScanAirgapped {
+                    self.focus = Focus::None;
+                }
+                task
+            }
+            None => task,
+        }
+    }
+
+    fn on_airgapped_signer(&mut self, signer: AirgapSigner) -> Task<Message> {
+        if signer.keys.iter().any(|(path, xpub)| {
+            !check_key_network(
+                &xpub_with_origin(signer.fingerprint, path, xpub),
+                self.network,
+            )
+        }) {
+            self.error = Some(AirgapError::WrongNetwork.to_string());
+            return Task::none();
+        }
+        if let Some((_, key)) = self.keys.get(&signer.fingerprint) {
+            if !matches!(key.source, KeySource::Airgapped(..)) {
+                self.error = Some(crate::t!(
+                    "installer-airgapped-key-added-another-way",
+                    name = key.name
+                ));
+                return Task::none();
+            }
+            self.selected_key = SelectedKey::Existing(signer.fingerprint);
+            self.airgapped_signer = None;
+            return self.on_next();
+        }
+        self.form_alias.value = format!("{} {}", signer.vendor, signer.model);
+        self.form_alias.valid = true;
+        let account = self
+            .form_account
+            .unwrap_or(ChildNumber::from_hardened_idx(0).expect("hardcoded"));
+        self.airgapped_signer = Some(signer);
+        self.select_airgapped_account(account);
+        self.on_next()
+    }
+
+    fn select_airgapped_account(&mut self, account: ChildNumber) {
+        let Some(signer) = self.airgapped_signer.as_ref() else {
+            log::warn!("account {account} picked with no scanned signing device");
+            return;
+        };
+        let path = derivation_path(self.network, account);
+        let Some((_, xpub)) = signer.keys.iter().find(|(candidate, _)| *candidate == path) else {
+            log::warn!("account {account} is not among the scanned signing device's keys");
+            return;
+        };
+        self.form_account = Some(account);
+        self.details_error = None;
+        let record = AirgappedDevice::new(signer, Some(self.form_alias.value.clone()));
+        self.selected_key = SelectedKey::New(Box::new(Key {
+            source: KeySource::Airgapped(record),
+            name: self.form_alias.value.clone(),
+            fingerprint: signer.fingerprint,
+            key: xpub_with_origin(signer.fingerprint, &path, xpub),
+            account: Some(account),
+        }));
+    }
+
     fn on_select_enter_xpub(&mut self) -> Task<Message> {
         self.focus = Focus::EnterXpub;
         Task::none()
@@ -778,6 +919,10 @@ impl SelectKeySource {
                 fg, index,
             ))),
             Focus::GenerateHotKey => self.on_fetch_from_hotsigner(index),
+            Focus::ScanAirgapped => {
+                self.select_airgapped_account(index);
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -839,20 +984,20 @@ impl SelectKeySource {
     fn on_import_message(&mut self, msg: ImportExportMessage) -> Task<Message> {
         match msg {
             ImportExportMessage::Close => {
-                if self.modal.is_some() {
-                    self.modal = None;
+                if matches!(self.modal, SelectKeySourceModal::Export(_)) {
+                    self.modal = SelectKeySourceModal::None;
                 }
             }
             ImportExportMessage::Xpub(xpub_str) => {
-                if self.modal.is_some() {
-                    self.modal = None;
+                if matches!(self.modal, SelectKeySourceModal::Export(_)) {
+                    self.modal = SelectKeySourceModal::None;
                     return Task::perform(async move { xpub_str }, |xpub_str| {
                         Self::route(SelectKeySourceMessage::Xpub(xpub_str))
                     });
                 }
             }
             m => {
-                if let Some(modal) = self.modal.as_mut() {
+                if let SelectKeySourceModal::Export(modal) = &mut self.modal {
                     return modal.update(m);
                 }
             }
@@ -944,7 +1089,8 @@ impl SelectKeySource {
             .unwrap_or(ChildNumber::Hardened { index: 0 });
         let account = modal::Account::new(child, fingerprint);
 
-        let pick_enabled = !self.processing && matches!(self.focus, Focus::Device(_));
+        let pick_enabled =
+            !self.processing && matches!(self.focus, Focus::Device(_) | Focus::ScanAirgapped);
 
         let pick_account: Container<_> = if pick_enabled {
             container(pick_list::pick_list(
@@ -955,13 +1101,21 @@ impl SelectKeySource {
         } else {
             container(p1_regular(account.to_string()))
         };
-        let edit_account = matches!(self.focus, Focus::Device(_));
+        let edit_account = matches!(self.focus, Focus::Device(_) | Focus::ScanAirgapped);
 
         let pick_account = edit_account.then_some(pick_account);
+
+        let xpub = (self.focus == Focus::ScanAirgapped)
+            .then(|| match &self.selected_key {
+                SelectedKey::New(key) => Some(key.key.to_string()),
+                _ => None,
+            })
+            .flatten();
 
         details_view(
             header,
             pick_account,
+            xpub,
             &self.form_alias,
             self.details_error.clone(),
             |s| Self::route(SelectKeySourceMessage::Alias(s)),
@@ -1065,19 +1219,25 @@ impl SelectKeySource {
             )
         });
 
-        let mut col = Column::new()
-            .push(option_section)
-            .spacing(modal::V_SPACING)
-            .width(modal::BTN_W);
-        if collapsed {
-            col = col
-                .push_maybe(load_key)
-                .push_maybe(paste_xpub)
-                .push_maybe(hot_signer)
-                .push_maybe(cosigner_token)
-                .push_maybe(safety_net_token);
-        }
-        col.into()
+        let import_xpub_qr = safety_net_token.is_none().then(|| {
+            modal::import_xpub_qr_entry(
+                None,
+                Some(|| Self::route(SelectKeySourceMessage::SelectScanAirgapped)),
+            )
+        });
+
+        column![
+            option_section,
+            import_xpub_qr.filter(|_| collapsed),
+            load_key.filter(|_| collapsed),
+            paste_xpub.filter(|_| collapsed),
+            hot_signer.filter(|_| collapsed),
+            cosigner_token.filter(|_| collapsed),
+            safety_net_token.filter(|_| collapsed),
+        ]
+        .spacing(modal::V_SPACING)
+        .width(modal::BTN_W)
+        .into()
     }
     fn widget_signing_device(
         &self,
@@ -1147,6 +1307,7 @@ impl SelectKeySource {
         let (source, alias, fg, available) = key;
         let kind = match source {
             KeySource::Device(..) => KeySourceKind::Device,
+            KeySource::Airgapped(..) => KeySourceKind::Airgapped,
             KeySource::HotSigner => KeySourceKind::HotKey,
             KeySource::Manual => KeySourceKind::Imported,
             KeySource::Token(..) => KeySourceKind::Token,
@@ -1193,18 +1354,18 @@ impl super::DescriptorEditModal for SelectKeySource {
         }
         match message {
             Message::ImportExport(ImportExportMessage::Close) => {
-                self.modal = None;
+                self.modal = SelectKeySourceModal::None;
                 if self.step == Step::Select {
                     self.focus = Focus::None;
                 }
                 Task::none()
             }
             Message::ImportExport(ImportExportMessage::Xpub(xpub)) => {
-                self.modal = None;
+                self.modal = SelectKeySourceModal::None;
                 self.on_import_xpub(xpub)
             }
             Message::ImportExport(iem) => {
-                if let Some(modal) = &mut self.modal {
+                if let SelectKeySourceModal::Export(modal) = &mut self.modal {
                     modal.update(iem)
                 } else {
                     Task::none()
@@ -1219,6 +1380,8 @@ impl super::DescriptorEditModal for SelectKeySource {
                 }
                 SelectKeySourceMessage::SelectKey(fingerprint) => self.on_select_key(fingerprint),
                 SelectKeySourceMessage::SelectLoadXpub => self.on_select_load_xpub(),
+                SelectKeySourceMessage::SelectScanAirgapped => self.on_select_scan_airgapped(),
+                SelectKeySourceMessage::Airgap(action) => self.on_airgap(action),
                 SelectKeySourceMessage::LoadKey(key) => self.on_load_key(key),
                 SelectKeySourceMessage::SelectEnterXpub => self.on_select_enter_xpub(),
                 SelectKeySourceMessage::PasteXpub => self.on_paste_xpub(),
@@ -1253,19 +1416,33 @@ impl super::DescriptorEditModal for SelectKeySource {
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
         let hw = hws.refresh().map(Message::HardwareWallets);
-        if let Some(modal) = self.modal.as_ref() {
-            if let Some(sub) = modal.subscription() {
-                let import = sub.map(|m| {
-                    Self::route(SelectKeySourceMessage::ImportExport(
-                        ImportExportMessage::Progress(m),
-                    ))
-                });
-                return Subscription::batch(vec![hw, import]);
+        match &self.modal {
+            SelectKeySourceModal::Airgap(modal) => {
+                let exchange = modal
+                    .subscription()
+                    .map(|action| Self::route(SelectKeySourceMessage::Airgap(action)));
+                Subscription::batch(vec![hw, exchange])
             }
+            SelectKeySourceModal::Export(modal) => match modal.subscription() {
+                Some(sub) => {
+                    let import = sub.map(|m| {
+                        Self::route(SelectKeySourceMessage::ImportExport(
+                            ImportExportMessage::Progress(m),
+                        ))
+                    });
+                    Subscription::batch(vec![hw, import])
+                }
+                None => hw,
+            },
+            SelectKeySourceModal::None => hw,
         }
-        hw
     }
     fn view<'a>(&'a self, hws: &'a HardwareWallets) -> Element<'a, Message> {
+        if let SelectKeySourceModal::Airgap(modal) = &self.modal {
+            return crate::view::airgap::modal(modal, |action| {
+                Self::route(SelectKeySourceMessage::Airgap(action))
+            });
+        }
         let detected_hws = self.detected_hws(hws);
         let content = match self.step {
             Step::Select => self.main_view(detected_hws),
@@ -1279,7 +1456,7 @@ impl super::DescriptorEditModal for SelectKeySource {
             )
             .push(content)
             .into();
-        if let Some(modal) = &self.modal {
+        if let SelectKeySourceModal::Export(modal) = &self.modal {
             modal.view(content)
         } else {
             content
@@ -1291,6 +1468,7 @@ impl super::DescriptorEditModal for SelectKeySource {
 pub fn details_view<'a, Alias>(
     header: Element<'a, Message>,
     pick_account: Option<Container<'a, Message>>,
+    xpub: Option<String>,
     alias: &'a form::Value<String>,
     error: Option<String>,
     alias_msg: Alias,
@@ -1338,47 +1516,61 @@ where
             .push_maybe(spacer)
             .push(button::primary(None, crate::t!("btn-apply")))
     };
-    let column = Column::new()
-        .spacing(5)
-        .push(header)
-        .push(row![
-            p1_bold(crate::t!("installer-key-name-alias")),
-            Space::with_width(Length::Fill)
-        ])
-        .push(row![
-            p1_regular(crate::t!("installer-key-name-help")),
-            Space::with_width(Length::Fill)
-        ])
-        .push(
-            container(
-                form::Form::new(
-                    &crate::t!("installer-key-alias-placeholder"),
-                    alias,
-                    alias_msg,
-                )
-                .padding(10)
-                .id(ALIAS_INPUT_ID)
-                .on_submit_maybe(submit),
-            )
-            .width(300),
+    let alias_label = row![
+        p1_bold(crate::t!("installer-key-name-alias")),
+        Space::fill_width()
+    ];
+    let alias_help = row![
+        p1_regular(crate::t!("installer-key-name-help")),
+        Space::fill_width()
+    ];
+    let alias_input = container(
+        form::Form::new(
+            &crate::t!("installer-key-alias-placeholder"),
+            alias,
+            alias_msg,
         )
-        .push(Space::with_height(10))
-        .push_maybe(if pick_account.is_some() {
-            Some(
-                row![
-                    p1_bold(crate::t!("installer-key-path-account")),
-                    tooltip(info)
-                ]
-                .align_y(Vertical::Center),
-            )
-        } else {
-            None
-        })
-        .push_maybe(pick_account)
-        .push_maybe(error)
-        .push(btn_row)
-        .width(410);
-    card::modal(column).into()
+        .padding(VSpacing::SM.pixels() as u16)
+        .id(ALIAS_INPUT_ID)
+        .on_submit_maybe(submit),
+    )
+    .width(300);
+    let account_label = pick_account.is_some().then(|| {
+        row![
+            p1_bold(crate::t!("installer-key-path-account")),
+            tooltip(info)
+        ]
+        .align_y(Vertical::Center)
+    });
+    let xpub = xpub.map(|xpub| {
+        column![
+            Space::with_height(VSpacing::SM),
+            row![
+                p1_bold(crate::t!("installer-extended-public-key")),
+                Space::fill_width()
+            ],
+            Container::new(scrollable::horizontal_thin(
+                Container::new(p1_regular(xpub)).padding(VSpacing::SM.pixels() as u16)
+            ))
+            .style(theme::card::simple)
+            .width(Length::Fill),
+        ]
+    });
+    let content = column![
+        header,
+        alias_label,
+        alias_help,
+        alias_input,
+        Space::with_height(VSpacing::SM),
+        account_label,
+        pick_account,
+        xpub,
+        error,
+        btn_row,
+    ]
+    .spacing(VSpacing::XS)
+    .width(410);
+    card::modal(content).into()
 }
 
 #[derive(Debug, Clone)]
@@ -1469,6 +1661,7 @@ impl super::DescriptorEditModal for EditKeyAlias {
         details_view(
             header,
             None,
+            None,
             &self.form_alias,
             None,
             |s| Message::EditKeyAlias(EditKeyAliasMessage::Alias(s)),
@@ -1512,4 +1705,183 @@ pub async fn get_extended_pubkey(
         wildcard: Wildcard::None,
         xkey,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        str::FromStr,
+        sync::{Arc, Mutex},
+    };
+
+    use bip377::ll::response::{Capabilities, FirmwareVersion, ReleaseFlag};
+    use liana::miniscript::{
+        bitcoin::{
+            bip32::{ChildNumber, Fingerprint},
+            Network, NetworkKind,
+        },
+        descriptor::DescriptorPublicKey,
+    };
+
+    use crate::{
+        airgap::device::{AirgappedDevice, Signer as AirgapSigner},
+        dir::LianaDirectory,
+        installer::{
+            descriptor::{Key, KeySource},
+            step::descriptor::editor::key::{Focus, PathData, SelectKeySource, SelectedKey, Step},
+        },
+        signer::Signer,
+    };
+
+    const ACCOUNT_KEYS: [&str; 3] = [
+        "[9f141cf0/48'/1'/0'/2']tpubDFnReAwXvYd6RA46X55HuFpmvZsLanDrwHAUsdYEGEpNGTRnCdbDRXJGLTwDeqKURCPZUDgdkuuu9dYkuBNQHmSNBUu7V2CdLKwpJjx2JuC",
+        "[9f141cf0/48'/1'/1'/2']tpubDDwKEc4i4k8rBgVLGxytHrP13VVYucUGmL2cadux7AfMwMnRHKcw1YZKt9SMB4fWut7ZAiZqPefzm3BBCNXLZMxDrWJ4Q6VA1AFB6b8GzbT",
+        "[9f141cf0/48'/1'/2'/2']tpubDEnYysximqdZkZnW5W9gYc7N3sxizKyqfdJfZ2qRfwNvSv6E11yDgyLTAnWQqDmVJ7oQ3h3ui59RQm1qmGxMm4jinq5wvSzyueKgrLJj5Cy",
+    ];
+
+    fn scanned_signer() -> AirgapSigner {
+        AirgapSigner {
+            fingerprint: Fingerprint::from_str("9f141cf0").unwrap(),
+            vendor: "test vendor".to_owned(),
+            model: "test signer".to_owned(),
+            version: FirmwareVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+                flag: ReleaseFlag::Stable,
+            },
+            capabilities: Capabilities(1),
+            keys: ACCOUNT_KEYS
+                .iter()
+                .map(|key| match DescriptorPublicKey::from_str(key).unwrap() {
+                    DescriptorPublicKey::XPub(key) => (key.origin.unwrap().1, key.xkey),
+                    _ => unreachable!("the fixtures are xpubs"),
+                })
+                .collect(),
+        }
+    }
+
+    fn select_key_source() -> SelectKeySource {
+        SelectKeySource::new(
+            Network::Testnet,
+            PathData {
+                coordinates: vec![(0, 0)],
+                keys: Vec::new(),
+                token_kind: Vec::new(),
+            },
+            HashMap::new(),
+            HashMap::new(),
+            Arc::new(Mutex::new(Signer::generate(Network::Testnet).unwrap())),
+            false,
+            LianaDirectory::new(PathBuf::new()),
+        )
+    }
+
+    fn selected(step: &SelectKeySource) -> &Key {
+        match &step.selected_key {
+            SelectedKey::New(key) => key,
+            _ => panic!("no key selected"),
+        }
+    }
+
+    #[test]
+    fn a_scan_selects_the_first_account_and_shows_the_details() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        assert_eq!(step.step, Step::Details);
+        assert_eq!(step.form_account, Some(ChildNumber::Hardened { index: 0 }));
+        assert_eq!(selected(&step).key.to_string(), ACCOUNT_KEYS[0]);
+        assert_eq!(selected(&step).name, "test vendor test signer");
+    }
+
+    #[test]
+    fn picking_another_account_swaps_the_key_in_place() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        step.select_airgapped_account(ChildNumber::Hardened { index: 2 });
+
+        assert_eq!(step.step, Step::Details, "picking must not commit the key");
+        assert_eq!(step.form_account, Some(ChildNumber::Hardened { index: 2 }));
+        assert_eq!(selected(&step).key.to_string(), ACCOUNT_KEYS[2]);
+        assert_eq!(
+            selected(&step).account,
+            Some(ChildNumber::Hardened { index: 2 })
+        );
+        assert!(step.details_error.is_none());
+    }
+
+    #[test]
+    fn an_account_the_signer_did_not_send_keeps_the_previous_choice() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        step.select_airgapped_account(ChildNumber::Hardened { index: 9 });
+
+        assert!(step.details_error.is_none());
+        assert_eq!(
+            selected(&step).key.to_string(),
+            ACCOUNT_KEYS[0],
+            "the previous choice must stand"
+        );
+    }
+
+    #[test]
+    fn keys_for_another_network_are_refused() {
+        let mut step = select_key_source();
+        step.focus = Focus::ScanAirgapped;
+        let mut signer = scanned_signer();
+        signer.keys[0].1.network = NetworkKind::Main;
+        let _ = step.on_airgapped_signer(signer);
+
+        assert!(step.error.is_some());
+        assert!(matches!(step.selected_key, SelectedKey::None));
+    }
+
+    fn step_with_existing_key(source: KeySource) -> (SelectKeySource, Fingerprint) {
+        let mut step = select_key_source();
+        let fingerprint = Fingerprint::from_str("9f141cf0").unwrap();
+        step.keys.insert(
+            fingerprint,
+            (
+                vec![(0, 0)],
+                Key {
+                    source,
+                    name: "already here".to_owned(),
+                    fingerprint,
+                    key: DescriptorPublicKey::from_str(ACCOUNT_KEYS[0]).unwrap(),
+                    account: None,
+                },
+            ),
+        );
+        step.focus = Focus::ScanAirgapped;
+        (step, fingerprint)
+    }
+
+    #[test]
+    fn a_signer_already_in_the_wallet_reuses_its_key() {
+        let signer = scanned_signer();
+        let record = AirgappedDevice::new(&signer, None);
+        let (mut step, fingerprint) = step_with_existing_key(KeySource::Airgapped(record));
+        let _ = step.on_airgapped_signer(signer);
+
+        assert!(matches!(step.selected_key, SelectedKey::Existing(fg) if fg == fingerprint));
+        assert!(step.airgapped_signer.is_none());
+    }
+
+    #[test]
+    fn a_key_added_another_way_refuses_the_scan() {
+        let (mut step, _) = step_with_existing_key(KeySource::Manual);
+        let _ = step.on_airgapped_signer(scanned_signer());
+
+        assert!(step.error.is_some());
+        assert_eq!(step.step, Step::Select);
+        assert!(!matches!(step.selected_key, SelectedKey::Existing(_)));
+    }
 }

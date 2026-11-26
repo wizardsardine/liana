@@ -17,11 +17,12 @@ pub use ui::BusinessSettingsUI;
 use liana::miniscript::bitcoin;
 use liana::miniscript::bitcoin::bip32::Fingerprint;
 use liana_gui::{
+    airgap::device::AirgappedDevice,
     app::{
         self,
         cache::{Cache, DaemonCache},
         settings::{
-            fiat, AuthConfig, KeySetting, ProviderKey, SettingsError, SettingsTrait, WalletId,
+            fiat, AuthConfig, KeySetting, SettingsError, SettingsTrait, WalletId,
             WalletSettingsTrait, SETTINGS_FILE_NAME,
         },
         wallet::Wallet as AppWallet,
@@ -34,7 +35,10 @@ use liana_gui::{
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Instant;
-use std::{cell::Cell, collections::HashMap};
+use std::{
+    cell::Cell,
+    collections::{HashMap, HashSet},
+};
 
 /// Currencies supported by the business backend.
 ///
@@ -81,7 +85,10 @@ impl TryFrom<liana_gui::services::fiat::Currency> for BackendCurrency {
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct BusinessSettings {
+    #[serde(default)]
     pub wallets: Vec<BusinessWalletSettings>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub airgapped_signers: Vec<AirgappedDevice>,
 }
 
 impl BusinessSettings {
@@ -118,12 +125,21 @@ impl SettingsTrait for BusinessSettings {
         &mut self.wallets
     }
 
+    fn airgapped_signers(&self) -> &[AirgappedDevice] {
+        &self.airgapped_signers
+    }
+
+    fn airgapped_signers_mut(&mut self) -> &mut Vec<AirgappedDevice> {
+        &mut self.airgapped_signers
+    }
+
     fn create_app_for_remote_backend(
         _wallet_id: WalletId,
         remote_backend: BackendWalletClient,
         wallet: api::Wallet,
         coins: ListCoinsResult,
         user_settings: api::UserSettings,
+        remote_settings: Option<serde_json::Value>,
         liana_dir: LianaDirectory,
         network: bitcoin::Network,
         config: app::Config,
@@ -140,6 +156,16 @@ impl SettingsTrait for BusinessSettings {
                 })
                 .collect();
 
+            let airgapped_signers: Vec<AirgappedDevice> = remote_settings
+                .map(serde_json::from_value::<BusinessSettings>)
+                .transpose()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Ignoring the stored settings: {e}");
+                    None
+                })
+                .map(|settings| settings.airgapped_signers)
+                .unwrap_or_default();
+
             let aliases: HashMap<Fingerprint, String> = wallet
                 .metadata
                 .fingerprint_aliases
@@ -153,11 +179,11 @@ impl SettingsTrait for BusinessSettings {
                 })
                 .collect();
 
-            let provider_keys: HashMap<_, _> = wallet
+            let provider_keys: HashSet<_> = wallet
                 .metadata
                 .provider_keys
                 .into_iter()
-                .map(|pk| (pk.fingerprint, pk.into()))
+                .map(|pk| pk.fingerprint)
                 .collect();
 
             let auth_cfg = AuthConfig {
@@ -189,6 +215,7 @@ impl SettingsTrait for BusinessSettings {
                     .with_key_aliases(aliases)
                     .with_provider_keys(provider_keys)
                     .with_hardware_wallets(hws)
+                    .with_airgapped_signers(&airgapped_signers)
                     .with_remote_backend_auth(auth_cfg)
                     .with_fiat_price_setting(fiat_price_setting)
                     .load_hotsigners(&liana_dir, network)
@@ -264,16 +291,12 @@ impl BusinessWalletSettings {
         map
     }
 
-    pub fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
-        let mut map = HashMap::new();
-        for (fingerprint, provider_key) in self
-            .keys
+    pub fn provider_keys(&self) -> HashSet<Fingerprint> {
+        self.keys
             .iter()
-            .filter_map(|k| k.provider_key.as_ref().map(|pk| (k.master_fingerprint, pk)))
-        {
-            map.insert(fingerprint, provider_key.clone());
-        }
-        map
+            .filter(|key| key.provider_key)
+            .map(|key| key.master_fingerprint)
+            .collect()
     }
 
     pub fn wallet_id(&self) -> WalletId {
@@ -322,7 +345,7 @@ impl WalletSettingsTrait for BusinessWalletSettings {
         BusinessWalletSettings::keys_aliases(self)
     }
 
-    fn provider_keys(&self) -> HashMap<Fingerprint, ProviderKey> {
+    fn provider_keys(&self) -> HashSet<Fingerprint> {
         BusinessWalletSettings::provider_keys(self)
     }
 }

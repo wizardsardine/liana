@@ -1,4 +1,9 @@
-use std::{collections::HashMap, marker::PhantomData, sync::Arc, time::Instant};
+use std::{
+    collections::{HashMap, HashSet},
+    marker::PhantomData,
+    sync::Arc,
+    time::Instant,
+};
 
 use iced::{Subscription, Task};
 use tracing::{error, info};
@@ -6,7 +11,7 @@ extern crate serde;
 extern crate serde_json;
 
 use liana::miniscript::bitcoin;
-use liana_ui::{component::panels::home::WalletOrigin, widget::Element};
+use liana_ui::widget::Element;
 use lianad::commands::ListCoinsResult;
 
 use crate::{
@@ -114,6 +119,7 @@ pub struct BusinessConnectResult {
             liana_connect::wallets::api::Wallet,
             lianad::commands::ListCoinsResult,
             liana_connect::wallets::api::UserSettings,
+            Option<serde_json::Value>,
         ),
         login::Error,
     >,
@@ -251,6 +257,7 @@ where
                         wallet,
                         coins,
                         user_settings,
+                        None,
                         l.datadir.clone(),
                         l.network,
                         config,
@@ -298,6 +305,7 @@ where
                             network,
                             internal_bitcoind,
                             backup,
+                            wallet_origin,
                             wallet_settings,
                         } => {
                             let cfg = app::Config::from_file(
@@ -314,6 +322,7 @@ where
                                 network,
                                 internal_bitcoind,
                                 backup,
+                                wallet_origin,
                                 wallet_settings,
                             );
                             self.state = State::Loader(Box::new(loader));
@@ -379,11 +388,7 @@ where
                     if let Some(backup) = backup {
                         let config = loader.gui_config.clone();
                         let datadir = loader.datadir_path.clone();
-                        let origin = if backup.descriptor_only {
-                            WalletOrigin::Descriptor
-                        } else {
-                            WalletOrigin::Backup
-                        };
+                        let origin = loader.wallet_origin;
                         Task::perform(
                             async move {
                                 import_backup_at_launch(
@@ -393,7 +398,7 @@ where
                             },
                             move |r| {
                                 let r = r.map_err(loader::Error::RestoreBackup);
-                                Message::Load(Box::new(loader::Message::App(r, Some(origin))))
+                                Message::Load(Box::new(loader::Message::App(r, origin)))
                             },
                         )
                     } else {
@@ -404,7 +409,7 @@ where
                             daemon,
                             loader.datadir_path.clone(),
                             bitcoind,
-                            None,
+                            loader.wallet_origin,
                         );
                         self.state = State::App(app);
                         command.map(|msg| Message::Run(Box::new(msg)))
@@ -462,7 +467,7 @@ where
                 } = conn_result;
 
                 match result {
-                    Ok((backend_client, wallet, coins, user_settings)) => {
+                    Ok((backend_client, wallet, coins, user_settings, remote_settings)) => {
                         // Success! Create App directly
                         let config_path = datadir
                             .network_directory(network)
@@ -495,6 +500,7 @@ where
                             wallet,
                             coins,
                             user_settings,
+                            remote_settings,
                             datadir.clone(),
                             network,
                             config,
@@ -580,7 +586,8 @@ where
             self.state = State::Login(Box::new(login));
             command.map(|msg| Message::Login(Box::new(msg)))
         } else {
-            let (loader, command) = Loader::new(datadir, config, network, None, None, settings);
+            let (loader, command) =
+                Loader::new(datadir, config, network, None, None, None, settings);
             self.state = State::Loader(Box::new(loader));
             command.map(|msg| Message::Load(Box::new(msg)))
         }
@@ -682,11 +689,11 @@ pub fn create_app_with_remote_backend(
         })
         .collect();
 
-    let provider_keys: HashMap<_, _> = wallet
+    let provider_keys: HashSet<_> = wallet
         .metadata
         .provider_keys
         .into_iter()
-        .map(|pk| (pk.fingerprint, pk.into()))
+        .map(|pk| pk.fingerprint)
         .collect();
 
     Ok(app::App::new(
@@ -717,6 +724,11 @@ pub fn create_app_with_remote_backend(
                 .with_key_aliases(aliases)
                 .with_provider_keys(provider_keys)
                 .with_hardware_wallets(hws)
+                .with_airgapped_signers(
+                    &LianaSettings::from_file(&network_directory)
+                        .map(|settings| settings.airgapped_signers)
+                        .unwrap_or_default(),
+                )
                 .with_remote_backend_auth(
                     wallet_settings
                         .remote_backend_auth
@@ -750,6 +762,7 @@ async fn connect_for_business(
         api::Wallet,
         lianad::commands::ListCoinsResult,
         api::UserSettings,
+        Option<serde_json::Value>,
     ),
     login::Error,
 > {
@@ -834,6 +847,8 @@ async fn connect_for_business(
         tracing::warn!("Failed to stamp Liana-Connect cache: {}", e);
     }
 
+    let remote_settings = client.fetch_settings().await?;
+
     // Create wallet client
     let (wallet_client, wallet) = client.connect_wallet(wallet);
 
@@ -848,5 +863,5 @@ async fn connect_for_business(
         .await
         .map_err(|e| login::Error::Unexpected(e.to_string()))?;
 
-    Ok((wallet_client, wallet, coins, settings))
+    Ok((wallet_client, wallet, coins, settings, remote_settings))
 }

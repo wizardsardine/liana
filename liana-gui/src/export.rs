@@ -9,7 +9,11 @@ use std::{
     time,
 };
 
-use bip138::{descriptor::dpk_to_root_pk, Decrypted, EncryptedBackup};
+use bip138::{
+    backend::{DerivationPath, PublicKey},
+    descriptor::dpk_to_root_pk,
+    Content, Decrypted, EncryptedBackup, ToPayload, Warning,
+};
 use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedReceiver, UnboundedSender};
 
 use async_hwi::bitbox::api::btc::Fingerprint;
@@ -37,14 +41,18 @@ use tokio::{
 use iced::futures::{SinkExt, Stream};
 
 use crate::{
+    airgap::device::save_device,
     app::{
         cache::Cache,
-        settings::{self, update_settings_file, KeySetting, LianaSettings, WalletSettings},
+        settings::{self, update_settings_file, LianaSettings, SettingsError, WalletSettings},
         view,
         wallet::Wallet,
         Config,
     },
-    backup::{self, Backup},
+    backup::{
+        self,
+        bip139::{Bip139Backup, Bip139Network},
+    },
     daemon::{
         model::{HistoryCursor, HistoryTransaction, Labelled},
         Daemon, DaemonBackend, DaemonError,
@@ -126,6 +134,7 @@ pub enum Error {
     ParseDescriptor,
     Bip329Export(String),
     BackupImport(String),
+    ImportDevices(SettingsError),
     Backup(backup::Error),
     EncryptedBackup(bip138::Error),
     EncryptionFailed,
@@ -152,6 +161,7 @@ impl Display for Error {
             Error::ParseDescriptor => write!(f, "ImportExport: fail to parse descriptor"),
             Error::Bip329Export(e) => write!(f, "Bip329Export: {e}"),
             Error::BackupImport(e) => write!(f, "BackupImport: {e}"),
+            Error::ImportDevices(e) => write!(f, "Failed to import the signing devices: {e}"),
             Error::Backup(e) => write!(f, "Backup: {e}"),
             Error::ParseXpub => write!(f, "Failed to parse Xpub from file"),
             Error::XpubNetwork => write!(f, "Xpub is for another network"),
@@ -178,7 +188,12 @@ pub enum ImportExportType {
         descriptor: Box<LianaDescriptor>,
         store_common_paths: bool,
     },
-    ExportProcessBackup(LianaDirectory, Network, Arc<Config>, Arc<Wallet>),
+    ExportProcessBackup {
+        datadir: LianaDirectory,
+        network: Network,
+        wallet: Arc<Wallet>,
+        encrypt: bool,
+    },
     ImportBackup {
         network_dir: NetworkDirectory,
         wallet: Arc<Wallet>,
@@ -200,7 +215,7 @@ impl ImportExportType {
             ImportExportType::Transactions
             | ImportExportType::ExportPsbt(_)
             | ImportExportType::Descriptor(_)
-            | ImportExportType::ExportProcessBackup(..)
+            | ImportExportType::ExportProcessBackup { .. }
             | ImportExportType::ExportXpub(_)
             | ImportExportType::ExportEncryptedDescriptor { .. }
             | ImportExportType::ExportLabels => crate::t!("export-success"),
@@ -252,6 +267,7 @@ pub enum Status {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum Progress {
     Started(Arc<Mutex<JoinHandle<()>>>),
     Progress(f32),
@@ -271,7 +287,7 @@ pub enum Progress {
             LianaDescriptor,
             Option<Network>,
             HashMap<Fingerprint, settings::KeySetting>,
-            Backup,
+            Option<Bip139Backup>,
         ),
     ),
     EncryptedFile(Vec<u8>),
@@ -329,12 +345,17 @@ impl Export {
                 store_common_paths,
             } => export_encrypted_descriptor(&sender, path, *descriptor, store_common_paths).await,
             ImportExportType::ExportXpub(xpub_str) => export_string(&sender, path, xpub_str).await,
-            ImportExportType::ExportProcessBackup(datadir, network, config, wallet) => {
+            ImportExportType::ExportProcessBackup {
+                datadir,
+                network,
+                wallet,
+                encrypt,
+            } => {
                 app_backup_export(
                     datadir,
                     network,
-                    config,
                     wallet,
+                    encrypt,
                     daemon.clone().expect("cannot fail"),
                     path,
                     &sender,
@@ -705,10 +726,9 @@ pub async fn import_descriptor(
     let descriptor = if let Ok(d) = LianaDescriptor::from_str(descr_str) {
         Some(d)
     } else {
-        let backup: Result<Backup, _> = serde_json::from_str(descr_str);
-        backup.ok().and_then(|b| {
+        backup::read(descr_str).ok().and_then(|(b, _)| {
             if b.accounts.len() == 1 {
-                LianaDescriptor::from_str(&b.accounts[0].descriptor).ok()
+                b.accounts[0].liana_descriptor()
             } else {
                 None
             }
@@ -906,16 +926,24 @@ pub async fn import_backup(
 
     // Load backup from file
     let mut file = File::open(&path)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let backup_str = if EncryptedBackup::new().set_encrypted_payload(&bytes).is_ok() {
+        decrypt_wallet_backup(&bytes, &wallet.main_descriptor)?
+    } else {
+        String::from_utf8(bytes)
+            .map_err(|_| Error::UnknownFormat)?
+            .trim()
+            .to_string()
+    };
 
-    let mut backup_str = String::new();
-    file.read_to_string(&mut backup_str)?;
-    backup_str = backup_str.trim().to_string();
-
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
-    let backup = match backup {
-        Ok(psbt) => psbt,
+    let backup = match backup::read(&backup_str) {
+        Ok((backup, warnings)) => {
+            warn_unrestored(&warnings);
+            backup
+        }
         Err(e) => {
-            return Err(Error::BackupImport(format!("{e:?}")));
+            return Err(Error::BackupImport(e.to_string()));
         }
     };
 
@@ -929,7 +957,7 @@ pub async fn import_backup(
 
     // check if networks matches
     let network = info.network;
-    if backup.network != network {
+    if Network::from(backup.network) != network {
         return Err(Error::BackupImport(
             "The network of the backup don't match the wallet network!".into(),
         ));
@@ -951,9 +979,9 @@ pub async fn import_backup(
         }
     };
 
-    let backup_descriptor = match LianaDescriptor::from_str(&account.descriptor) {
-        Ok(d) => d,
-        Err(_) => {
+    let backup_descriptor = match account.liana_descriptor() {
+        Some(d) => d,
+        None => {
             return Err(Error::BackupImport(
                 "The backup descriptor is not a valid Liana descriptor!".into(),
             ));
@@ -1027,10 +1055,9 @@ pub async fn import_backup(
 
         let (ack_sender, mut ack_receiver) = channel(1);
         let mut conflict = false;
-        for (fg, key) in &account.keys {
+        for (fg, key) in &account.key_settings() {
             if let Some(k) = settings_aliases.get(fg) {
-                let ks = k.to_backup();
-                if ks != *key {
+                if k.name != key.name || k.provider_key != key.provider_key {
                     send_progress!(sender, KeyAliasesConflict(ack_sender));
                     conflict = true;
                     break;
@@ -1069,7 +1096,7 @@ pub async fn import_backup(
 
     // parse PSBTs
     let mut psbts = Vec::new();
-    for psbt_str in &account.psbts {
+    for psbt_str in backup.psbts_of(account) {
         match Psbt::from_str(psbt_str) {
             Ok(p) => {
                 psbts.push(p);
@@ -1106,16 +1133,11 @@ pub async fn import_backup(
 
     // update aliases if no conflict or user ACK
     if let (true, Some(mut settings_aliases)) = (write_aliases, settings) {
-        for (k, v) in &account.keys {
-            if let Some(ks) = KeySetting::from_backup(
-                v.alias.clone().unwrap_or("".into()),
-                *k,
-                v.role,
-                v.key_type,
-                v.proprietary.clone(),
-            ) {
-                settings_aliases.insert(*k, ks);
+        for (fingerprint, mut key) in account.key_settings() {
+            if let Some(known) = settings_aliases.get(&fingerprint) {
+                key.provider_key |= known.provider_key;
             }
+            settings_aliases.insert(fingerprint, key);
         }
 
         if let Err(e) = update_settings_file(network_dir, |mut settings: LianaSettings| {
@@ -1137,6 +1159,32 @@ pub async fn import_backup(
             // Update wallet state
             send_progress!(sender, UpdateAliases(settings_aliases));
         }
+    }
+
+    let devices = backup.hardware_wallets(account);
+    let airgapped_signers = backup.airgapped_devices(account);
+    if !devices.is_empty() || !airgapped_signers.is_empty() {
+        update_settings_file(network_dir, |mut settings: LianaSettings| {
+            for device in airgapped_signers {
+                save_device(&mut settings.airgapped_signers, device);
+            }
+            if let Some(wallet) = settings
+                .wallets
+                .iter_mut()
+                .find(|w| w.wallet_id() == wallet.id())
+            {
+                for device in &devices {
+                    if !wallet.hardware_wallets.iter().any(|known| {
+                        known.kind == device.kind && known.fingerprint == device.fingerprint
+                    }) {
+                        wallet.hardware_wallets.push(device.clone());
+                    }
+                }
+            }
+            settings
+        })
+        .await
+        .map_err(Error::ImportDevices)?;
     }
 
     send_progress!(sender, Progress(100.0));
@@ -1229,9 +1277,11 @@ pub async fn from_backup(
     };
 
     // try to parse as plaintext descriptor or backup file
-    let backup: Result<Backup, _> = serde_json::from_str(&backup_str);
-    let backup = match backup {
-        Ok(b) => b,
+    let backup = match backup::read(&backup_str) {
+        Ok((b, warnings)) => {
+            warn_unrestored(&warnings);
+            b
+        }
         Err(e) => {
             // try to import as bare descriptor
             let descr = LianaDescriptor::from_str(&backup_str);
@@ -1244,12 +1294,18 @@ pub async fn from_backup(
                             "Descriptor is for wrong network".to_string(),
                         ));
                     }
-                    let network = if mainnet {
-                        Network::Bitcoin
-                    } else {
-                        Network::Signet
-                    };
-                    Backup::from_descriptor(descr, network)
+                    send_progress!(
+                        sender,
+                        WalletFromBackup((
+                            descr,
+                            mainnet.then_some(Network::Bitcoin),
+                            HashMap::new(),
+                            None
+                        ))
+                    );
+                    send_progress!(sender, Progress(100.0));
+                    send_progress!(sender, Ended);
+                    return Ok(());
                 }
                 Err(e2) => {
                     return Err(Error::BackupImport(format!(
@@ -1260,11 +1316,7 @@ pub async fn from_backup(
         }
     };
 
-    let network = if backup.network == Network::Bitcoin {
-        Some(backup.network)
-    } else {
-        None
-    };
+    let network = (backup.network == Bip139Network::Bitcoin).then_some(Network::Bitcoin);
 
     let account = match backup.accounts.len() {
         0 => {
@@ -1280,31 +1332,20 @@ pub async fn from_backup(
         }
     };
 
-    let descriptor = match LianaDescriptor::from_str(&account.descriptor) {
-        Ok(d) => d,
-        Err(_) => {
+    let descriptor = match account.liana_descriptor() {
+        Some(d) => d,
+        None => {
             return Err(Error::BackupImport(
                 "The backup descriptor is not a valid Liana descriptor!".into(),
             ));
         }
     };
 
-    let mut aliases: HashMap<Fingerprint, settings::KeySetting> = HashMap::new();
-    for (k, v) in &account.keys {
-        if let Some(ks) = KeySetting::from_backup(
-            v.alias.clone().unwrap_or("".into()),
-            *k,
-            v.role,
-            v.key_type,
-            v.proprietary.clone(),
-        ) {
-            aliases.insert(*k, ks);
-        }
-    }
+    let aliases = account.key_settings();
 
     send_progress!(
         sender,
-        WalletFromBackup((descriptor, network, aliases, backup))
+        WalletFromBackup((descriptor, network, aliases, Some(backup)))
     );
     send_progress!(sender, Progress(100.0));
     send_progress!(sender, Ended);
@@ -1327,7 +1368,7 @@ pub async fn import_backup_at_launch(
     daemon: Arc<dyn Daemon + Sync + Send>,
     datadir: LianaDirectory,
     internal_bitcoind: Option<Bitcoind>,
-    backup: Backup,
+    backup: Bip139Backup,
 ) -> Result<
     (
         Cache,
@@ -1349,7 +1390,7 @@ pub async fn import_backup_at_launch(
 
     // check if networks matches
     let network = info.network;
-    if backup.network != network {
+    if Network::from(backup.network) != network {
         return Err(RestoreBackupError::Network);
     }
 
@@ -1361,8 +1402,9 @@ pub async fn import_backup_at_launch(
         _ => return Err(RestoreBackupError::SeveralAccounts),
     };
 
-    let backup_descriptor = LianaDescriptor::from_str(&account.descriptor)
-        .map_err(|_| RestoreBackupError::InvalidDescriptor)?;
+    let backup_descriptor = account
+        .liana_descriptor()
+        .ok_or(RestoreBackupError::InvalidDescriptor)?;
 
     if backup_descriptor != descriptor {
         return Err(RestoreBackupError::WrongDescriptor);
@@ -1382,7 +1424,7 @@ pub async fn import_backup_at_launch(
 
     // parse PSBTs
     let mut psbts = Vec::new();
-    for psbt_str in &account.psbts {
+    for psbt_str in backup.psbts_of(account) {
         psbts.push(Psbt::from_str(psbt_str).map_err(|_| RestoreBackupError::InvalidPsbt)?);
     }
 
@@ -1470,31 +1512,124 @@ pub async fn get_path(filename: String, write: bool) -> Option<PathBuf> {
     }
 }
 
+fn warn_unrestored(warnings: &[String]) {
+    for warning in warnings {
+        log::warn!("{warning}");
+    }
+}
+
 pub async fn app_backup(
     datadir: LianaDirectory,
     network: Network,
-    config: Arc<Config>,
     wallet: Arc<Wallet>,
     daemon: Arc<dyn Daemon + Sync + Send>,
     sender: &UnboundedSender<Progress>,
 ) -> Result<String, backup::Error> {
-    let backup = Backup::from_app(datadir, network, config, wallet, daemon, sender).await?;
+    let backup = Bip139Backup::from_app(datadir, network, wallet, daemon, sender).await?;
     serde_json::to_string_pretty(&backup).map_err(|_| backup::Error::Json)
 }
 
 pub async fn app_backup_export(
     datadir: LianaDirectory,
     network: Network,
-    config: Arc<Config>,
     wallet: Arc<Wallet>,
+    encrypt: bool,
     daemon: Arc<dyn Daemon + Sync + Send>,
     path: PathBuf,
     sender: &UnboundedSender<Progress>,
 ) -> Result<(), Error> {
-    let backup = app_backup(datadir.clone(), network, config, wallet, daemon, sender)
+    let backup = app_backup(datadir.clone(), network, wallet.clone(), daemon, sender)
         .await
         .map_err(Error::Backup)?;
-    export_string(sender, path, backup).await
+    if !encrypt {
+        return export_string(sender, path, backup).await;
+    }
+    let bytes = encrypt_wallet_backup(
+        &backup,
+        &wallet.main_descriptor,
+        !wallet.encrypted_backup_privacy_mode,
+    )?;
+    let mut file = open_file_write(&path).await?;
+    file.write_all(&bytes)?;
+    send_progress!(sender, Progress(100.0));
+    send_progress!(sender, Ended);
+    Ok(())
+}
+
+pub struct WalletBackupPayload<'a> {
+    json: &'a str,
+    descriptor: &'a LianaDescriptor,
+}
+
+impl ToPayload for WalletBackupPayload<'_> {
+    fn to_payload(&self) -> Result<Vec<u8>, bip138::Error> {
+        Ok(self.json.as_bytes().to_vec())
+    }
+
+    fn content_type(&self) -> Content {
+        Content::Bip139
+    }
+
+    fn key_derivation_paths(&self) -> Result<Vec<(PublicKey, DerivationPath)>, bip138::Error> {
+        self.descriptor.descriptor().key_derivation_paths()
+    }
+
+    fn keys(&self) -> Result<Vec<PublicKey>, bip138::Error> {
+        self.descriptor.descriptor().keys()
+    }
+
+    fn warnings(&self) -> Result<Vec<Warning>, bip138::Error> {
+        self.descriptor.descriptor().warnings()
+    }
+
+    fn exposed_keys(&self) -> Vec<[u8; 32]> {
+        self.descriptor.descriptor().exposed_keys()
+    }
+}
+
+pub fn encrypt_wallet_backup(
+    json: &str,
+    descriptor: &LianaDescriptor,
+    store_common_paths: bool,
+) -> Result<Vec<u8>, Error> {
+    let bytes = EncryptedBackup::new()
+        .set_payload(&WalletBackupPayload { json, descriptor })?
+        .set_store_common_paths(store_common_paths)
+        .encrypt()?
+        .bytes;
+    for key in descriptor.spendable_keys() {
+        let key = dpk_to_root_pk(&key).map_err(|_| Error::EncryptionFailed)?;
+        if decrypt_wallet_backup_with(&bytes, key).as_deref() != Some(json) {
+            return Err(Error::EncryptionFailed);
+        }
+    }
+    Ok(bytes)
+}
+
+fn decrypt_wallet_backup_with(bytes: &[u8], key: PublicKey) -> Option<String> {
+    let decrypted = EncryptedBackup::new()
+        .set_encrypted_payload(bytes)
+        .ok()?
+        .set_keys(vec![key])
+        .decrypt()
+        .ok()?;
+    decrypted.into_iter().find_map(|item| match item {
+        Decrypted::WalletBackup(bytes) => String::from_utf8(bytes).ok(),
+        _ => None,
+    })
+}
+
+pub fn decrypt_wallet_backup(bytes: &[u8], descriptor: &LianaDescriptor) -> Result<String, Error> {
+    descriptor
+        .spendable_keys()
+        .iter()
+        .filter_map(|key| dpk_to_root_pk(key).ok())
+        .find_map(|key| decrypt_wallet_backup_with(bytes, key))
+        .ok_or_else(|| {
+            Error::BackupImport(
+                "This encrypted file holds no wallet backup this wallet's keys can open".into(),
+            )
+        })
 }
 
 #[cfg(test)]
@@ -1905,5 +2040,38 @@ pub mod tests {
                 .set_encrypted_payload(&test_asset(name))
                 .is_err());
         }
+    }
+
+    fn wallet_backup() -> String {
+        String::from_utf8(test_asset("backup/liana.bip139")).unwrap()
+    }
+
+    fn wallet_descriptor() -> LianaDescriptor {
+        let descriptor = test_asset("backup/wallet.descriptor");
+        LianaDescriptor::from_str(String::from_utf8(descriptor).unwrap().trim()).unwrap()
+    }
+
+    #[test]
+    fn an_encrypted_wallet_backup_opens_with_each_key_of_the_descriptor() {
+        let json = wallet_backup();
+        let descriptor = wallet_descriptor();
+        let bytes = encrypt_wallet_backup(&json, &descriptor, true).unwrap();
+        for key in descriptor.spendable_keys() {
+            let key = dpk_to_root_pk(&key).unwrap();
+            assert_eq!(
+                decrypt_wallet_backup_with(&bytes, key).as_deref(),
+                Some(json.as_str())
+            );
+        }
+        let decrypted = decrypt_wallet_backup(&bytes, &descriptor).unwrap();
+        let (backup, _) = backup::read(&decrypted).unwrap();
+        assert_eq!(backup.accounts[0].liana_descriptor(), Some(descriptor));
+    }
+
+    #[test]
+    fn a_wallet_backup_encrypted_to_other_keys_is_refused() {
+        let bytes = encrypt_wallet_backup(&wallet_backup(), &wallet_descriptor(), true).unwrap();
+        let other = LianaDescriptor::from_str(ENCRYPTED_ASSETS_DESCRIPTOR).unwrap();
+        assert!(decrypt_wallet_backup(&bytes, &other).is_err());
     }
 }

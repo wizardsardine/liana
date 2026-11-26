@@ -323,6 +323,7 @@ where
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeySourceKind {
     Device,
+    Airgapped,
     HotKey,
     Imported,
     Token,
@@ -332,6 +333,7 @@ impl From<KeySourceKind> for Tile {
     fn from(kind: KeySourceKind) -> Self {
         match kind {
             KeySourceKind::Device => Tile::Device,
+            KeySourceKind::Airgapped => Tile::Qr,
             KeySourceKind::HotKey => Tile::KeyHot,
             KeySourceKind::Imported => Tile::KeyImported,
             KeySourceKind::Token => Tile::KeyService,
@@ -443,7 +445,76 @@ where
     K: Display + 'a,
     A: Display + 'a,
 {
-    let tile = device_tile(kind.is_some());
+    signer_entry(
+        device_tile(kind.is_some()),
+        fingerprint,
+        kind,
+        alias,
+        status,
+        on_press,
+    )
+}
+
+pub fn airgapped_signer_entry<'a, M, F, K, A>(
+    fingerprint: Option<F>,
+    model: Option<K>,
+    alias: Option<A>,
+    status: DeviceStatus,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
+    signer_entry(Tile::Qr, fingerprint, model, alias, status, on_press)
+}
+
+pub fn add_qr_signer_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("settings-add-qr-signer"),
+        None::<String>,
+        None,
+        None,
+        on_press,
+    )
+}
+
+pub fn sign_qr_entry<'a, Message, M>(on_press: Option<M>) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("psbt-sign-qr"),
+        None::<String>,
+        None,
+        None,
+        on_press,
+    )
+}
+
+fn signer_entry<'a, M, F, K, A>(
+    tile: Tile,
+    fingerprint: Option<F>,
+    kind: Option<K>,
+    alias: Option<A>,
+    status: DeviceStatus,
+    on_press: Option<M>,
+) -> Element<'a, M>
+where
+    M: 'static + Clone,
+    F: Display + 'a,
+    K: Display + 'a,
+    A: Display + 'a,
+{
     let designation = device_designation(kind, alias, fingerprint);
     let trailing = Option::<Element<'a, M>>::from(status).map(|status| {
         Container::new(status)
@@ -554,6 +625,24 @@ where
 
     let msg = on_press.map(|f| f());
     button::list_entry(col, None, button::EntryWidth::Fill, msg)
+}
+
+pub fn import_xpub_qr_entry<'a, Message, M>(
+    error: Option<String>,
+    on_press: Option<M>,
+) -> Element<'a, Message>
+where
+    M: 'static + Fn() -> Message,
+    Message: Clone + 'static,
+{
+    button_entry(
+        Tile::Qr,
+        t!("device-import-xpub-qr"),
+        None::<String>,
+        error,
+        None,
+        on_press,
+    )
 }
 
 /// Entry loading an extended public key from a file. `taproot_note` carries the

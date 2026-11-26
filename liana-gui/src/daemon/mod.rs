@@ -454,6 +454,14 @@ pub trait Daemon: Debug {
     ) -> Result<(), DaemonError> {
         Ok(())
     }
+
+    async fn fetch_settings(&self) -> Result<Option<serde_json::Value>, DaemonError> {
+        Ok(None)
+    }
+
+    async fn store_settings(&self, _settings: &serde_json::Value) -> Result<(), DaemonError> {
+        Ok(())
+    }
 }
 
 fn history_tx(

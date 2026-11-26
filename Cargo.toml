@@ -79,9 +79,14 @@ fern = "0.6"
 bip329 = { git = "https://github.com/wizardsardine/bip329", rev = "77c9d91" }
 async-trait = "0.1"
 async-hwi = { version = "0.0.35", default-features = false, features = ["ledger", "specter", "coldcard", "bitbox", "jade", "service", "rustls-no-provider" ] }
+bwk-qr = { git = "https://github.com/bwk-bitcoin/bwk", rev = "ecf590eff78c4d23b782817ff378aa09fa7f8628", default-features = false, features = ["gen", "scan", "serde"] }
+bwk-bbqr = { git = "https://github.com/bwk-bitcoin/bwk", rev = "ecf590eff78c4d23b782817ff378aa09fa7f8628" }
+bip377 = { git = "https://github.com/pythcoiner/bip377", rev = "67941ba1afbef939ec5214746d3a72f6d50b10e6", default-features = false, features = ["bitcoin_latest", "coordinator", "serde"] }
+bwk-camera = { git = "https://github.com/bwk-bitcoin/bwk", rev = "ecf590eff78c4d23b782817ff378aa09fa7f8628", default-features = false }
 hex = "0.4.3"
 email_address = "0.2.7"
 tokio = "1.21.0"
+crossbeam = "0.8.4"
 async-fd-lock = "0.2.0"
 tracing = "0.1.37"
 tracing-subscriber = "0.3.16"
@@ -93,7 +98,7 @@ rust-ini = "0.19.0"
 rfd = "0.15.1"
 fs2 = "0.4.3"
 open = "5.3"
-bip138 = { version = "=0.2.0", default-features = false, features = ["miniscript_12", "rand", "base64", "v0", "descriptor_backup"] }
+bip138 = { version = "=0.2.2", default-features = false, features = ["miniscript_12", "rand", "base64", "v0", "descriptor_backup"] }
 zip = { version = "0.6", default-features = false }
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.0", default-features = false }

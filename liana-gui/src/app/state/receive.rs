@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use iced::{widget::qr_code, Length, Subscription, Task};
+use iced::{Length, Subscription, Task};
 use liana::miniscript::bitcoin::{
     bip32::{ChildNumber, Fingerprint},
     Address, Network,
@@ -11,12 +11,17 @@ use liana_ui::{component::form, widget::modal, widget::*};
 use crate::daemon::model::LabelsLoader;
 use crate::dir::LianaDirectory;
 use crate::{
+    airgap::device::Answer,
     app::{
         cache::Cache,
         error::Error,
         menu::Menu,
         message::Message,
-        state::{label::LabelsEdited, State},
+        state::{
+            airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+            label::LabelsEdited,
+            State,
+        },
         view,
         wallet::Wallet,
     },
@@ -296,7 +301,7 @@ impl State for ReceivePanel {
                 view::NewAddressMessage::ShowQr => {
                     let qr = if let Modal::NewAddress(m) = &self.modal {
                         m.shown()
-                            .and_then(|(address, _)| ShowQrCodeModal::new(address, None))
+                            .map(|(address, _)| ShowQrCodeModal::new(address, None))
                     } else {
                         None
                     };
@@ -415,9 +420,7 @@ impl State for ReceivePanel {
             Message::View(view::Message::ShowAddressQrCode(view::AddressQrSource::Row(i))) => {
                 // The address QR code does not encode the derivation index.
                 if let Some(address) = self.address(i) {
-                    if let Some(modal) = ShowQrCodeModal::new(address, None) {
-                        self.modal = Modal::ShowQrCode(modal);
-                    }
+                    self.modal = Modal::ShowQrCode(ShowQrCodeModal::new(address, None));
                 }
                 Task::none()
             }
@@ -426,14 +429,11 @@ impl State for ReceivePanel {
                 i,
             ))) => {
                 // Specter DIY devices need the derivation index in the QR code.
-                if let Some(qr) = ShowQrCodeModal::new(&address, Some(i)) {
-                    // From the generate flow's verify sub-modal, stack the QR so closing it
-                    // returns to the show-address step. From a standalone verify modal, replace.
-                    if let Modal::NewAddress(m) = &mut self.modal {
-                        m.set_sub(NewAddressSubModal::Qr(qr));
-                    } else {
-                        self.modal = Modal::ShowQrCode(qr);
-                    }
+                let qr = ShowQrCodeModal::new(&address, Some(i));
+                if let Modal::NewAddress(m) = &mut self.modal {
+                    m.set_sub(NewAddressSubModal::Qr(qr));
+                } else {
+                    self.modal = Modal::ShowQrCode(qr);
                 }
                 Task::none()
             }
@@ -489,10 +489,13 @@ pub struct VerifyAddressModal {
     warning: Option<Error>,
     chosen_hws: HashSet<Fingerprint>,
     hws: HardwareWallets,
+    wallet: Arc<Wallet>,
     address: Address,
     derivation_index: ChildNumber,
     /// Whether the "Other options" (specter DIY QR code) section is open.
     qr_section_open: bool,
+    verified: HashSet<Fingerprint>,
+    modal: Option<AirgapModal>,
 }
 
 impl VerifyAddressModal {
@@ -506,37 +509,118 @@ impl VerifyAddressModal {
         Self {
             warning: None,
             chosen_hws: HashSet::new(),
-            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet),
+            hws: HardwareWallets::new(data_dir, network).with_wallet(wallet.clone()),
+            wallet,
             address,
             derivation_index,
             qr_section_open: false,
+            verified: HashSet::new(),
+            modal: None,
         }
     }
 }
 
 impl VerifyAddressModal {
+    fn on_verify_airgapped_signer(
+        &mut self,
+        fingerprint: Fingerprint,
+        cache: &Cache,
+    ) -> Task<Message> {
+        let Some(signer) = self.wallet.airgapped_signer(fingerprint) else {
+            log::warn!("no signing device {fingerprint} in this wallet");
+            return Task::none();
+        };
+        match self
+            .wallet
+            .for_airgapped_signer(signer)
+            .verify_address(&self.address, self.derivation_index)
+            .and_then(|request| {
+                AirgapModal::new(
+                    Some(fingerprint),
+                    crate::t!("airgap-verify-address-title"),
+                    request,
+                    &cache.datadir_path,
+                )
+            }) {
+            Ok((modal, task)) => {
+                self.warning = None;
+                self.modal = Some(modal);
+                task.map(view::Message::Airgap).map(Message::View)
+            }
+            Err(e) => {
+                self.warning = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_airgap(&mut self, action: AirgapMessage) -> Task<Message> {
+        let Some(modal) = self.modal.as_mut() else {
+            return Task::none();
+        };
+        let task = modal
+            .update(action)
+            .map(view::Message::Airgap)
+            .map(Message::View);
+        match modal.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                let fingerprint = modal.fingerprint;
+                self.modal = None;
+                if let (Answer::AddressVerified, Some(fingerprint)) = (*answer, fingerprint) {
+                    self.verified.insert(fingerprint);
+                }
+                task
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = None;
+                task
+            }
+            None => task,
+        }
+    }
+
     fn view(&self) -> Element<'_, view::Message> {
-        view::receive::verify_address_modal(
-            self.warning.as_ref(),
-            &self.hws.list,
-            &self.chosen_hws,
-            &self.address,
-            self.derivation_index,
-            self.qr_section_open,
-        )
+        match &self.modal {
+            Some(modal) => crate::view::airgap::modal(modal, view::Message::Airgap),
+            None => view::receive::verify_address_modal(
+                self.warning.as_ref(),
+                &self.hws.list,
+                &self.wallet.airgapped_signers,
+                &self.wallet.keys_aliases,
+                &self.chosen_hws,
+                &self.verified,
+                &self.address,
+                self.derivation_index,
+                self.qr_section_open,
+            ),
+        }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match &self.modal {
+            Some(modal) => Subscription::batch([
+                hws,
+                modal
+                    .subscription()
+                    .map(view::Message::Airgap)
+                    .map(Message::View),
+            ]),
+            None => hws,
+        }
     }
 
     fn update(
         &mut self,
         _daemon: Arc<dyn Daemon + Sync + Send>,
-        _cache: &Cache,
+        cache: &Cache,
         message: Message,
     ) -> Task<Message> {
         match message {
+            Message::View(view::Message::VerifyAirgappedSigner(fingerprint)) => {
+                self.on_verify_airgapped_signer(fingerprint, cache)
+            }
+            Message::View(view::Message::Airgap(action)) => self.on_airgap(action),
             Message::HardwareWallets(msg) => match self.hws.update(msg) {
                 Ok(cmd) => cmd.map(Message::HardwareWallets),
                 Err(e) => {
@@ -575,23 +659,21 @@ impl VerifyAddressModal {
 }
 
 pub struct ShowQrCodeModal {
-    qr_code: qr_code::Data,
+    uri: String,
     address: String,
 }
 
 impl ShowQrCodeModal {
-    pub fn new(address: &Address, index: Option<ChildNumber>) -> Option<Self> {
+    pub fn new(address: &Address, index: Option<ChildNumber>) -> Self {
         let index = index.map(|i| format!("?index={i}")).unwrap_or_default();
-        qr_code::Data::new(format!("bitcoin:{address}{index}"))
-            .ok()
-            .map(|qr_code| Self {
-                qr_code,
-                address: address.to_string(),
-            })
+        Self {
+            uri: format!("bitcoin:{address}{index}"),
+            address: address.to_string(),
+        }
     }
 
     fn view(&self) -> Element<'_, view::Message> {
-        view::receive::qr_modal(&self.qr_code, &self.address)
+        view::receive::qr_modal(&self.uri, &self.address)
     }
 }
 

@@ -324,6 +324,21 @@ impl BackendClient {
         Ok(())
     }
 
+    pub async fn fetch_settings(&self) -> Result<Option<serde_json::Value>, DaemonError> {
+        // match self.request(Method::GET, "/v1/settings", |r| r).await {
+        //     Ok(settings) => Ok(Some(settings)),
+        //     Err(DaemonError::Http(Some(404), _)) => Ok(None),
+        //     Err(e) => Err(e),
+        // }
+        Ok(None)
+    }
+
+    pub async fn store_settings(&self, _settings: &serde_json::Value) -> Result<(), DaemonError> {
+        // self.exec_request(Method::PUT, "/v1/settings", |r| r.json(_settings))
+        //     .await
+        Ok(())
+    }
+
     pub async fn get_wallet_invitation(
         &self,
         invitation_id: &str,
@@ -1129,6 +1144,14 @@ impl Daemon for BackendWalletClient {
         self.inner
             .update_wallet_metadata(&self.wallet_uuid, wallet_alias, fingerprint_aliases, hws)
             .await
+    }
+
+    async fn fetch_settings(&self) -> Result<Option<serde_json::Value>, DaemonError> {
+        self.inner.fetch_settings().await
+    }
+
+    async fn store_settings(&self, settings: &serde_json::Value) -> Result<(), DaemonError> {
+        self.inner.store_settings(settings).await
     }
 
     async fn send_wallet_invitation(&self, email: &str) -> Result<(), DaemonError> {

@@ -2,6 +2,7 @@ pub mod editor;
 
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -11,13 +12,25 @@ use liana::{
     miniscript::bitcoin::{bip32::Fingerprint, Network},
 };
 
-use liana_ui::{component::form, widget::Element};
+use liana_ui::{
+    component::{form, panels::home::WalletOrigin},
+    widget::{modal::Modal, Element},
+};
 
 use async_hwi::DeviceKind;
 
 use crate::{
-    app::{settings::KeySetting, state::export::ExportModal, wallet::wallet_name},
-    backup::Backup,
+    airgap::device::{AirgappedDevice, Answer, Registration, RequestBuilder},
+    app::{
+        settings::KeySetting,
+        state::{
+            airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+            export::ExportModal,
+        },
+        wallet::wallet_name,
+    },
+    backup::bip139::{Bip139Backup, Bip139Network},
+    dir::LianaDirectory,
     export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
     installer::{
@@ -35,7 +48,7 @@ pub struct ImportDescriptor {
     error: Option<String>,
     modal: ImportDescriptorModal,
     imported_descriptor: form::Value<String>,
-    imported_backup: Option<Backup>,
+    imported_backup: Option<Bip139Backup>,
     imported_aliases: Option<HashMap<Fingerprint, KeySetting>>,
     paste_descriptor_expanded: bool,
 }
@@ -126,7 +139,7 @@ impl Step for ImportDescriptor {
                 let (descriptor, network, aliases, backup) = r;
                 if let Some(n) = network {
                     if self.network == n {
-                        self.imported_backup = Some(backup);
+                        self.imported_backup = backup;
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
@@ -136,7 +149,7 @@ impl Step for ImportDescriptor {
                     // The backup have been inferred from a bare descriptor, we check whether
                     // the descriptor match any test network
                     if self.network != Network::Bitcoin {
-                        self.imported_backup = Some(backup);
+                        self.imported_backup = backup;
                         self.imported_descriptor.value = descriptor.to_string();
                         self.imported_aliases = Some(aliases);
                     } else {
@@ -168,17 +181,21 @@ impl Step for ImportDescriptor {
             Message::Decrypt(Decrypt::Backup(mut backup))
                 if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
             {
-                let descriptor = backup.accounts.first().map(|acc| acc.descriptor.clone());
+                let descriptor = backup
+                    .accounts
+                    .first()
+                    .and_then(|acc| acc.liana_descriptor())
+                    .map(|descriptor| descriptor.to_string());
                 if let Some(desc) = descriptor {
                     let network_matches = if self.network == Network::Bitcoin {
-                        backup.network == Network::Bitcoin
+                        backup.network == Bip139Network::Bitcoin
                     } else {
-                        backup.network != Network::Bitcoin
+                        backup.network != Bip139Network::Bitcoin
                     };
                     if network_matches {
                         // NOTE: we need to overwrite w/ correct network for testnets
                         // as non Mainnet keys / descriptor are parsed as Signet
-                        backup.network = self.network;
+                        backup.network = self.network.into();
 
                         self.imported_descriptor.value = desc;
                         self.imported_backup = Some(backup);
@@ -191,6 +208,21 @@ impl Step for ImportDescriptor {
                 } else {
                     self.modal = ImportDescriptorModal::None;
                     self.error = Some(crate::t!("installer-backup-descriptor-missing"));
+                }
+                None
+            }
+            Message::Decrypt(Decrypt::Descriptor(descriptor))
+                if matches!(self.modal, ImportDescriptorModal::Decrypt(_)) =>
+            {
+                self.modal = ImportDescriptorModal::None;
+                if descriptor.all_xpubs_net_is(Network::Bitcoin)
+                    == (self.network == Network::Bitcoin)
+                {
+                    self.imported_descriptor.value = descriptor.to_string();
+                    self.imported_backup = None;
+                    self.imported_aliases = None;
+                } else {
+                    self.error = Some(crate::t!("installer-backup-network-mismatch"));
                 }
                 None
             }
@@ -207,9 +239,11 @@ impl Step for ImportDescriptor {
         // descriptor forms for import or creation cannot be both empty or filled.
         if let Some(desc) = self.check_descriptor(self.network) {
             ctx.descriptor = Some(desc.clone());
-            ctx.backup = Some(match &self.imported_backup {
-                Some(backup) => backup.clone(),
-                None => Backup::from_descriptor(desc, self.network),
+            ctx.backup = self.imported_backup.clone();
+            ctx.wallet_origin = Some(if self.imported_backup.is_some() {
+                WalletOrigin::Backup
+            } else {
+                WalletOrigin::Descriptor
             });
         } else {
             return false;
@@ -217,17 +251,26 @@ impl Step for ImportDescriptor {
 
         if let Some(aliases) = &self.imported_aliases {
             ctx.keys = aliases.clone();
+            ctx.provider_keys = HashMap::new();
         }
 
-        if let Some(wallet_alias) = self.imported_backup.as_ref().and_then(|b| b.alias.clone()) {
-            ctx.wallet_alias = wallet_alias;
+        if let (Some(backup), Some(descriptor)) = (&self.imported_backup, &ctx.descriptor) {
+            if let Some(name) = backup
+                .name
+                .clone()
+                .filter(|name| *name != wallet_name(descriptor))
+            {
+                ctx.wallet_alias = name;
+            }
         }
         true
     }
 
     fn revert(&self, ctx: &mut Context) {
         ctx.keys = HashMap::new();
+        ctx.provider_keys = HashMap::new();
         ctx.backup = None;
+        ctx.wallet_origin = None;
         ctx.descriptor = None;
         ctx.wallet_alias = String::new();
     }
@@ -265,6 +308,9 @@ pub struct RegisterDescriptor {
     chosen_hw: Option<usize>,
     hmacs: Vec<(Fingerprint, DeviceKind, Option<[u8; 32]>)>,
     registered: HashSet<Fingerprint>,
+    airgapped_signers: Vec<AirgappedDevice>,
+    modal: Option<AirgapModal>,
+    liana_directory: LianaDirectory,
     error: Option<Error>,
     done: bool,
     /// Whether this step is part of the descriptor creation process. This is used to detect when
@@ -283,6 +329,9 @@ impl RegisterDescriptor {
             chosen_hw: Default::default(),
             hmacs: Default::default(),
             registered: Default::default(),
+            airgapped_signers: Default::default(),
+            modal: None,
+            liana_directory: LianaDirectory::new(PathBuf::new()),
             error: Default::default(),
             done: Default::default(),
         }
@@ -295,6 +344,82 @@ impl RegisterDescriptor {
     pub fn new_import_wallet() -> Self {
         Self::new(false)
     }
+
+    fn on_select_airgapped_signer(&mut self, fingerprint: Fingerprint) -> Task<Message> {
+        let (Some(descriptor), Some(signer)) = (
+            self.descriptor.as_ref(),
+            self.airgapped_signers
+                .iter()
+                .find(|signer| signer.fingerprint == fingerprint),
+        ) else {
+            log::warn!("no descriptor or no signing device {fingerprint} to register with");
+            return Task::none();
+        };
+        let builder = RequestBuilder {
+            alias: wallet_name(descriptor),
+            descriptor: descriptor.clone(),
+            registration: signer
+                .registration(&descriptor.checksum())
+                .cloned()
+                .unwrap_or_default(),
+            capabilities: signer.capabilities,
+        };
+        match builder.register().and_then(|request| {
+            AirgapModal::new(
+                Some(fingerprint),
+                crate::t!("airgap-register-title"),
+                request,
+                &self.liana_directory,
+            )
+        }) {
+            Ok((modal, task)) => {
+                self.error = None;
+                self.modal = Some(modal);
+                task.map(Message::Airgap)
+            }
+            Err(e) => {
+                self.error = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_airgap(&mut self, action: AirgapMessage) -> Task<Message> {
+        let Some(modal) = self.modal.as_mut() else {
+            return Task::none();
+        };
+        let task = modal.update(action).map(Message::Airgap);
+        match modal.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                let fingerprint = modal.fingerprint;
+                self.modal = None;
+                let (Some(fingerprint), Answer::Registered(registration)) = (fingerprint, *answer)
+                else {
+                    return task;
+                };
+                if let Some(signer) = self
+                    .airgapped_signers
+                    .iter_mut()
+                    .find(|signer| signer.fingerprint == fingerprint)
+                {
+                    signer.record(Registration {
+                        descriptor_checksum: self
+                            .descriptor
+                            .as_ref()
+                            .map(LianaDescriptor::checksum),
+                        ..registration
+                    });
+                    self.registered.insert(fingerprint);
+                }
+                task
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = None;
+                task
+            }
+            None => task,
+        }
+    }
 }
 
 impl Step for RegisterDescriptor {
@@ -305,6 +430,8 @@ impl Step for RegisterDescriptor {
             self.done = false;
         }
         self.descriptor.clone_from(&ctx.descriptor);
+        self.airgapped_signers = ctx.airgapped_signers.values().cloned().collect();
+        self.liana_directory = ctx.liana_directory.clone();
         let mut map = HashMap::new();
         for key in ctx.keys.values().filter(|k| !k.name.is_empty()) {
             map.insert(key.master_fingerprint, key.name.clone());
@@ -312,6 +439,10 @@ impl Step for RegisterDescriptor {
     }
     fn update(&mut self, hws: &mut HardwareWallets, message: Message) -> Task<Message> {
         match message {
+            Message::SelectAirgappedSigner(fingerprint) => {
+                return self.on_select_airgapped_signer(fingerprint);
+            }
+            Message::Airgap(action) => return self.on_airgap(action),
             Message::Select(i) => {
                 if let Some(HardwareWallet::Supported {
                     device,
@@ -369,16 +500,24 @@ impl Step for RegisterDescriptor {
         Task::none()
     }
     fn skip(&self, ctx: &Context) -> bool {
-        !ctx.hw_is_used
+        !ctx.hw_is_used && ctx.airgapped_signers.is_empty()
     }
     fn apply(&mut self, ctx: &mut Context) -> bool {
         for (fingerprint, kind, token) in &self.hmacs {
             ctx.hws.push((*kind, *fingerprint, *token));
         }
+        for signer in &self.airgapped_signers {
+            ctx.airgapped_signers
+                .insert(signer.fingerprint, signer.clone());
+        }
         true
     }
     fn subscription(&self, hws: &HardwareWallets) -> Subscription<Message> {
-        hws.refresh().map(Message::HardwareWallets)
+        let hw = hws.refresh().map(Message::HardwareWallets);
+        match &self.modal {
+            Some(modal) => Subscription::batch([hw, modal.subscription().map(Message::Airgap)]),
+            None => hw,
+        }
     }
     fn load(&self) -> Task<Message> {
         Task::none()
@@ -392,19 +531,26 @@ impl Step for RegisterDescriptor {
     ) -> Element<'a, Message> {
         let desc = self.descriptor.as_ref().unwrap();
 
-        view::register_descriptor(
+        let content = view::register_descriptor(
             progress,
             network,
             email,
             desc,
             &hws.list,
+            &self.airgapped_signers,
             &self.registered,
             self.error.as_ref(),
             self.processing,
             self.chosen_hw,
             self.done,
             self.created_desc,
-        )
+        );
+        match &self.modal {
+            Some(modal) => Modal::new(content, crate::view::airgap::modal(modal, Message::Airgap))
+                .on_blur(Some(Message::Airgap(AirgapMessage::Cancel)))
+                .into(),
+            None => content,
+        }
     }
 }
 

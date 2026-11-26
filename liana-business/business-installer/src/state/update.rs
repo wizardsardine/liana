@@ -16,9 +16,21 @@ use liana_connect::ws_business::{
     self, Key, KeyIdentity, PolicyTemplate, SecondaryPath, SpendingPath, Timelock, UserRole,
     Wallet, WalletStatus, BLOCKS_PER_DAY,
 };
+use liana_gui::{
+    airgap::{
+        device::{get_keys, AirgappedDevice, Answer, Signer as AirgapSigner},
+        error::Error as AirgapError,
+    },
+    app::state::airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+    backup::bip139::firmware_version,
+};
 use liana_i18n::t;
 use liana_ui::widget::text_input;
-use miniscript::bitcoin::bip32::Fingerprint;
+use miniscript::{
+    bitcoin::bip32::{DerivationPath, Fingerprint},
+    descriptor::{DescriptorXKey, Wildcard},
+    DescriptorPublicKey,
+};
 use tracing::{debug, error, trace};
 use url::form_urlencoded::Serializer;
 use uuid::Uuid;
@@ -153,6 +165,8 @@ impl State {
             Msg::XpubClear => return self.on_xpub_clear(),
             Msg::XpubCancelModal => self.on_xpub_cancel_modal(),
             Msg::XpubToggleOptions => self.on_xpub_toggle_options(),
+            Msg::XpubSelectScanAirgapped => return self.on_xpub_select_scan_airgapped(),
+            Msg::XpubAirgap(action) => return self.on_xpub_airgap(action),
 
             // Registration
             Msg::RegistrationSelectDevice(fingerprint) => return self.on_registration_select_device(fingerprint),
@@ -2037,6 +2051,10 @@ impl State {
             if modal.processing {
                 return Task::none();
             }
+            if modal.airgapped_signer.is_some() {
+                modal.select_airgapped_account(account);
+                return Task::none();
+            }
             modal.update_account(account);
             // If in Details step with a selected device, trigger re-fetch
             if modal.step == crate::state::views::ModalStep::Details {
@@ -2054,6 +2072,7 @@ impl State {
         use liana_connect::ws_business::{DeviceKind, Xpub, XpubSource};
         use std::str::FromStr;
 
+        let mut task = Task::none();
         // Validate and save xpub
         if let Some(modal) = &mut self.views.xpub.modal {
             match modal.validate() {
@@ -2073,6 +2092,15 @@ impl State {
                                     let dk = DeviceKind::from_str(kind).ok();
                                     (XpubSource::Device, dk, version.clone(), None)
                                 }
+                                Some(views::XpubInputSource::Airgapped(device)) => (
+                                    XpubSource::Device,
+                                    Some(DeviceKind::Other(format!(
+                                        "{} {}",
+                                        device.vendor, device.model
+                                    ))),
+                                    Some(firmware_version(&device.version)),
+                                    None,
+                                ),
                                 Some(views::XpubInputSource::File { name }) => {
                                     (XpubSource::File, None, None, Some(name.clone()))
                                 }
@@ -2109,8 +2137,20 @@ impl State {
                         self.backend.edit_xpub(wallet_id, Some(xpub_data), key_id);
                     }
 
+                    if let Some(views::XpubInputSource::Airgapped(device)) = &modal.input_source {
+                        let mut device = device.clone();
+                        device.alias = self
+                            .app
+                            .keys()
+                            .get(&key_id)
+                            .map(|key| key.alias.clone())
+                            .filter(|alias| !alias.is_empty());
+                        task = self.store_airgapped_device(device);
+                    }
+
                     // Close modal on success and stop HW listening
                     self.views.xpub.close_modal();
+                    self.modal = None;
                     self.stop_hw();
                 }
                 Err(error) => {
@@ -2119,7 +2159,26 @@ impl State {
                 }
             }
         }
-        Task::none()
+        task
+    }
+
+    fn store_airgapped_device(&self, device: AirgappedDevice) -> Task<Msg> {
+        let store = crate::settings::store_airgapped_device(
+            self.network,
+            self.datadir.network_directory(self.network),
+            self.views.login.email.form.value.clone(),
+            device,
+        );
+        Task::future(store).then(|result| match result {
+            Ok(()) => Task::none(),
+            Err(e) => {
+                error!("Failed to store the QR signing device: {e}");
+                Task::done(Msg::WarningShowModal(
+                    t!("airgap-error-title"),
+                    e.to_string(),
+                ))
+            }
+        })
     }
 
     /// Clear xpub (set to null)
@@ -2134,6 +2193,7 @@ impl State {
 
             // Close modal and stop HW listening
             self.views.xpub.close_modal();
+            self.modal = None;
             self.stop_hw();
         }
         Task::none()
@@ -2142,7 +2202,95 @@ impl State {
     /// Close xpub modal
     fn on_xpub_cancel_modal(&mut self) {
         self.views.xpub.close_modal();
+        self.modal = None;
         self.stop_hw();
+    }
+
+    fn on_xpub_select_scan_airgapped(&mut self) -> Task<Msg> {
+        if self.modal.is_some() {
+            return Task::none();
+        }
+        let Some(modal) = self.views.xpub.modal_mut() else {
+            return Task::none();
+        };
+        modal.airgap_error = None;
+        match AirgapModal::new(
+            None,
+            t!("device-import-xpub-qr"),
+            get_keys(self.network),
+            &self.datadir,
+        ) {
+            Ok((airgap, task)) => {
+                self.modal = Some(airgap);
+                task.map(Msg::XpubAirgap)
+            }
+            Err(e) => {
+                modal.airgap_error = Some(e.to_string());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_xpub_airgap(&mut self, action: AirgapMessage) -> Task<Msg> {
+        let Some(airgap) = self.modal.as_mut() else {
+            return Task::none();
+        };
+        let task = airgap.update(action).map(Msg::XpubAirgap);
+        match airgap.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                self.modal = None;
+                if let Answer::Xpubs(signer) = *answer {
+                    self.on_xpub_airgapped_signer(signer);
+                }
+                task
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = None;
+                task
+            }
+            None => task,
+        }
+    }
+
+    fn on_xpub_airgapped_signer(&mut self, signer: AirgapSigner) {
+        let network = self.network;
+        let fingerprint = signer.fingerprint;
+        let Some(key_id) = self.views.xpub.modal.as_ref().map(|modal| modal.key_id) else {
+            return;
+        };
+        let in_use = self
+            .app
+            .keys()
+            .iter()
+            .any(|(id, key)| *id != key_id && key.fingerprint() == Some(fingerprint));
+        let wrong_network = signer.keys.iter().any(|(_, xpub)| {
+            !views::xpub::check_key_network(
+                &DescriptorPublicKey::XPub(DescriptorXKey {
+                    origin: None,
+                    derivation_path: DerivationPath::master(),
+                    wildcard: Wildcard::None,
+                    xkey: *xpub,
+                }),
+                network,
+            )
+        });
+        let Some(modal) = self.views.xpub.modal_mut() else {
+            return;
+        };
+        if wrong_network {
+            modal.airgap_error = Some(AirgapError::WrongNetwork.to_string());
+        } else if in_use {
+            modal.airgap_error = Some(t!("device-already-used"));
+        } else {
+            debug!(
+                source = "airgapped",
+                fingerprint = %fingerprint,
+                vendor = %signer.vendor,
+                model = %signer.model,
+                "Scanned xpubs from QR signing device"
+            );
+            modal.select_airgapped_signer(signer);
+        }
     }
 
     fn on_xpub_toggle_options(&mut self) {

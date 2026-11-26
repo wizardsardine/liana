@@ -44,7 +44,7 @@ use liana_ui::{
 
 use crate::{
     app::state::export::ExportModal,
-    backup::Backup,
+    backup::{self, bip139::Bip139Backup},
     export::ImportExportType,
     hw::{HardwareWallet, HardwareWallets},
     installer,
@@ -113,7 +113,8 @@ impl Debug for DecryptModal {
 #[derive(Debug, Clone)]
 pub enum Decrypt {
     Fetched(Fingerprint, String /* name */),
-    Backup(Backup),
+    Backup(Bip139Backup),
+    Descriptor(LianaDescriptor),
     Xpub(String),
     Xpubs(Vec<bip32::Xpub>),
     PasteXpub,
@@ -172,7 +173,7 @@ pub fn decrypt_descriptor_with_pk(bytes: &[u8], pk: secp256k1::PublicKey) -> Opt
     let (backups, unexpected): (Vec<_>, Vec<_>) = items
         .into_iter()
         .filter_map(decrypted_to_decrypt)
-        .partition(|d| matches!(d, Decrypt::Backup(_)));
+        .partition(|d| matches!(d, Decrypt::Backup(_) | Decrypt::Descriptor(_)));
     backups.into_iter().chain(unexpected).next()
 }
 
@@ -198,19 +199,18 @@ fn decrypted_to_decrypt(decrypted: Decrypted) -> Option<Decrypt> {
         }
         Decrypted::WalletBackup(backup_bytes) => {
             let backup_str = String::from_utf8(backup_bytes.clone()).ok()?;
-            let backup: Backup = serde_json::from_str(&backup_str).ok()?;
+            let (backup, warnings) = backup::read(&backup_str).ok()?;
+            for warning in warnings {
+                log::warn!("{warning}");
+            }
             if backup.accounts.len() != 1 {
                 return None;
             }
-            let descriptor_str = &backup.accounts.first().expect("checked").descriptor;
-            let _ = match LianaDescriptor::from_str(descriptor_str) {
-                Ok(descr) => descr,
-                Err(_) => {
-                    return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
-                        backup_bytes,
-                    )))
-                }
-            };
+            if backup.accounts[0].liana_descriptor().is_none() {
+                return Some(Decrypt::UnexpectedPayload(Decrypted::WalletBackup(
+                    backup_bytes,
+                )));
+            }
             Some(Decrypt::Backup(backup))
         }
         decrypted => Some(Decrypt::UnexpectedPayload(decrypted)),
@@ -218,16 +218,10 @@ fn decrypted_to_decrypt(decrypted: Decrypted) -> Option<Decrypt> {
 }
 
 fn descriptor_to_decrypt(descriptor: &str, decrypted: Decrypted) -> Decrypt {
-    let descr = match LianaDescriptor::from_str(descriptor) {
-        Ok(descr) => descr,
-        Err(_) => return Decrypt::UnexpectedPayload(decrypted),
-    };
-    let network = if descr.all_xpubs_net_is(Network::Bitcoin) {
-        Network::Bitcoin
-    } else {
-        Network::Signet
-    };
-    Decrypt::Backup(Backup::from_descriptor(descr, network))
+    match LianaDescriptor::from_str(descriptor) {
+        Ok(descr) => Decrypt::Descriptor(descr),
+        Err(_) => Decrypt::UnexpectedPayload(decrypted),
+    }
 }
 
 /// As in the bip138 binary: a Ledger refuses a path it does not consider standard unless it shows
@@ -257,8 +251,10 @@ fn decrypt_with_seed(
             .expect("cannot fail")
             .private_key
             .public_key(&secp);
-        if let Some(backup @ Decrypt::Backup(_)) = decrypt_descriptor_with_pk(bytes, pk) {
-            return backup;
+        if let Some(found @ (Decrypt::Backup(_) | Decrypt::Descriptor(_))) =
+            decrypt_descriptor_with_pk(bytes, pk)
+        {
+            return found;
         }
     }
     Decrypt::MnemonicStatus(
@@ -368,7 +364,7 @@ impl DecryptModal {
                 self.skip_other_paths(fg);
                 Task::none()
             }
-            Decrypt::Backup(_) => {
+            Decrypt::Backup(_) | Decrypt::Descriptor(_) => {
                 tracing::error!(
                     "DecryptModal::update(Backup), this message must have been caught early"
                 );
@@ -505,7 +501,10 @@ impl DecryptModal {
                     if let Ok(xpub) = device.get_extended_pubkey(&path).await {
                         let pk = xpub.public_key;
                         if let Some(d) = decrypt_descriptor_with_pk(&bytes, pk) {
-                            if let d @ Decrypt::Backup(_) | d @ Decrypt::UnexpectedPayload(_) = d {
+                            if let d @ (Decrypt::Backup(_)
+                            | Decrypt::Descriptor(_)
+                            | Decrypt::UnexpectedPayload(_)) = d
+                            {
                                 return d;
                             }
                         }
@@ -979,11 +978,10 @@ mod tests {
 
     fn assert_backup_of_descriptor(decrypt: Option<Decrypt>) {
         match decrypt {
-            Some(Decrypt::Backup(backup)) => {
-                assert_eq!(backup.accounts.len(), 1);
-                assert_eq!(backup.accounts[0].descriptor, ENCRYPTED_ASSETS_DESCRIPTOR);
+            Some(Decrypt::Descriptor(descriptor)) => {
+                assert_eq!(descriptor.to_string(), ENCRYPTED_ASSETS_DESCRIPTOR);
             }
-            other => panic!("not a backup: {:?}", other),
+            other => panic!("not a descriptor: {:?}", other),
         }
     }
 
@@ -1353,10 +1351,8 @@ mod tests {
             Decrypt::MnemonicStatus(Some(DecryptWarning::MnemonicCannotDecrypt), Some(_))
         ));
         match decrypt_with_seed(&bytes, &seed, Network::Signet, modal.mnemonic_paths()) {
-            Decrypt::Backup(backup) => {
-                assert_eq!(backup.accounts[0].descriptor, descriptor.to_string())
-            }
-            other => panic!("not a backup: {:?}", other),
+            Decrypt::Descriptor(found) => assert_eq!(found.to_string(), descriptor.to_string()),
+            other => panic!("not a descriptor: {:?}", other),
         }
     }
 }

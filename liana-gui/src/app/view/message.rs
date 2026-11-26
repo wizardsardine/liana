@@ -1,8 +1,7 @@
 use liana_ui::component::panels::spend::FeeLevel;
 
 use crate::{
-    app::menu::Menu,
-    app::view::FiatAmountConverter,
+    app::{menu::Menu, state::airgap::Message as AirgapMessage, view::FiatAmountConverter},
     export::ImportExportMessage,
     node::bitcoind::RpcAuthType,
     services::fiat::{Currency, PriceSource},
@@ -41,6 +40,8 @@ pub enum Message {
     ShowAddressQrCode(AddressQrSource),
     ShowQrOptSection(bool),
     ImportExport(ImportExportMessage),
+    Airgap(AirgapMessage),
+    VerifyAirgappedSigner(Fingerprint),
     HideRescanWarning,
     ExportPsbt,
     ImportPsbt,
@@ -104,6 +105,9 @@ pub enum SpendTxMessage {
     Confirm,
     Cancel,
     SelectHotSigner,
+    SelectAirgappedSigner(Fingerprint),
+    SelectAnyAirgappedSigner,
+    ShowSignOptions(bool),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -124,9 +128,15 @@ pub enum SettingsMessage {
     ExportTransactions,
     ExportLabels,
     ExportWallet,
+    EncryptWalletBackup(bool),
     ImportWallet,
     AboutSection,
     RegisterWallet,
+    RegisterAirgappedSigner(Fingerprint),
+    AddAirgappedSigner,
+    RemoveAirgappedSigner(Fingerprint),
+    CancelRemoveAirgappedSigner,
+    ConfirmRemoveAirgappedSigner,
     FingerprintAliasEdited(Fingerprint, String),
     WalletAliasEdited(String),
     Save,

@@ -25,8 +25,10 @@ use liana_gui::{
 use liana_i18n as i18n;
 use liana_ui::widget::{modal, Element};
 
-use super::message::{Msg, Section};
-use super::views;
+use super::{
+    message::{Msg, Section},
+    views, BusinessSettings,
+};
 
 /// Business-specific settings UI.
 pub struct BusinessSettingsUI {
@@ -36,8 +38,9 @@ pub struct BusinessSettingsUI {
     fiat_setting: PriceSetting,
     #[allow(dead_code)]
     processing: bool,
-    register_modal: Option<RegisterWalletModal>,
+    register_modal: Option<RegisterWalletModal<BusinessSettings>>,
     export_modal: Option<ExportModal>,
+    pub(crate) encrypt_wallet_backup: bool,
 }
 
 fn wallet_fiat_setting_or_default(wallet: &Wallet) -> PriceSetting {
@@ -66,6 +69,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             processing: false,
             register_modal: None,
             export_modal: None,
+            encrypt_wallet_backup: true,
         };
         (ui, Task::none())
     }
@@ -84,6 +88,8 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
             Msg::SelectSection(section) => self.on_select_section(section),
             Msg::RegisterWallet
             | Msg::ExportEncryptedDescriptor
+            | Msg::ExportWallet
+            | Msg::EncryptWalletBackup(_)
             | Msg::FiatEnable(_)
             | Msg::FiatCurrencyEdited(_)
             | Msg::LanguageEdited(_) => Task::none(), // Handled in State::update()
@@ -111,6 +117,7 @@ impl SettingsUI<Msg> for BusinessSettingsUI {
         self.current_section = None;
         self.register_modal = None;
         self.export_modal = None;
+        self.encrypt_wallet_backup = true;
     }
 
     fn reload(&mut self, _daemon: Arc<dyn Daemon + Sync + Send>, wallet: Arc<Wallet>) -> Task<Msg> {
@@ -184,6 +191,10 @@ impl State for BusinessSettingsUI {
             Msg::ExportEncryptedDescriptor => {
                 view::Message::Settings(view::SettingsMessage::ExportEncryptedDescriptor)
             }
+            Msg::ExportWallet => view::Message::Settings(view::SettingsMessage::ExportWallet),
+            Msg::EncryptWalletBackup(encrypt) => {
+                view::Message::Settings(view::SettingsMessage::EncryptWalletBackup(encrypt))
+            }
             Msg::FiatEnable(b) => {
                 view::Message::Settings(view::SettingsMessage::Fiat(view::FiatMessage::Enable(b)))
             }
@@ -215,11 +226,14 @@ impl State for BusinessSettingsUI {
     ) -> Task<Message> {
         match message {
             Message::View(view::Message::Settings(view::SettingsMessage::RegisterWallet)) => {
-                self.register_modal = Some(RegisterWalletModal::new(
-                    self.data_dir.clone(),
-                    self.wallet.clone(),
-                    cache.network,
-                ));
+                self.register_modal = Some(
+                    RegisterWalletModal::new(
+                        self.data_dir.clone(),
+                        self.wallet.clone(),
+                        cache.network,
+                    )
+                    .with_backend_signers(),
+                );
                 Task::none()
             }
             Message::View(view::Message::Close) => {
@@ -243,6 +257,29 @@ impl State for BusinessSettingsUI {
                 let launch = modal.launch(true);
                 self.export_modal = Some(modal);
                 launch
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::ExportWallet)) => {
+                if self.register_modal.is_some() || self.export_modal.is_some() {
+                    return Task::none();
+                }
+                let modal = ExportModal::new(
+                    Some(daemon),
+                    ImportExportType::ExportProcessBackup {
+                        datadir: cache.datadir_path.clone(),
+                        network: cache.network,
+                        wallet: self.wallet.clone(),
+                        encrypt: self.encrypt_wallet_backup,
+                    },
+                );
+                let launch = modal.launch(true);
+                self.export_modal = Some(modal);
+                launch
+            }
+            Message::View(view::Message::Settings(view::SettingsMessage::EncryptWalletBackup(
+                encrypt,
+            ))) => {
+                self.encrypt_wallet_backup = encrypt;
+                Task::none()
             }
             Message::View(view::Message::ImportExport(ImportExportMessage::Close)) => {
                 self.export_modal = None;
@@ -269,7 +306,15 @@ impl State for BusinessSettingsUI {
             }
             Message::HardwareWallets(_)
             | Message::View(view::Message::SelectHardwareWallet(_))
-            | Message::View(view::Message::Reload) => {
+            | Message::View(view::Message::Reload)
+            | Message::View(view::Message::Airgap(_))
+            | Message::View(view::Message::Settings(
+                view::SettingsMessage::RegisterAirgappedSigner(_)
+                | view::SettingsMessage::AddAirgappedSigner
+                | view::SettingsMessage::RemoveAirgappedSigner(_)
+                | view::SettingsMessage::CancelRemoveAirgappedSigner
+                | view::SettingsMessage::ConfirmRemoveAirgappedSigner,
+            )) => {
                 if let Some(modal) = &mut self.register_modal {
                     modal.update(daemon, cache, message)
                 } else {

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use iced::{
     widget::{column, row, tooltip::Position, Column, Space},
@@ -11,9 +11,10 @@ use liana::{
 };
 use liana_ui::{
     component::{
-        button::btn_update,
+        button::{self, btn_update},
         card, form,
-        list::STANDARD_ENTRY_WIDTH,
+        list::{DeviceStatus, STANDARD_ENTRY_WIDTH},
+        modal,
         panels::setting::{descriptor_card, header, SectionKind},
         scrollable,
         text::new,
@@ -30,13 +31,13 @@ use crate::{
         cache::Cache,
         error::Error,
         menu::Menu,
-        settings::ProviderKey,
         view::{
             dashboard,
             message::{Message, SettingsMessage},
             settings::SETTING_MSG,
             warning::warn,
         },
+        wallet::Wallet,
     },
     hw::HardwareWallet,
     t,
@@ -50,7 +51,7 @@ pub fn wallet_settings<'a>(
     descriptor: &'a LianaDescriptor,
     wallet_alias: &'a form::Value<String>,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
-    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+    provider_keys: &'a HashSet<Fingerprint>,
     encrypted_backup_privacy_mode: bool,
     processing: bool,
     updated: bool,
@@ -143,7 +144,7 @@ pub fn wallet_settings<'a>(
 fn display_policy<'a>(
     policy: LianaPolicy,
     keys_aliases: &'a [(Fingerprint, form::Value<String>)],
-    provider_keys: &'a HashMap<Fingerprint, ProviderKey>,
+    provider_keys: &'a HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
     let (primary_threshold, primary_keys) = policy.primary_path().thresh_origins();
     let recovery_paths = policy.recovery_paths();
@@ -189,11 +190,7 @@ fn display_policy<'a>(
         ));
         let path_name = new::caption(
             // If max timelock and all keys are from provider, then it's a safety net path.
-            if *sequence == u16::MAX
-                && recovery_keys
-                    .iter()
-                    .all(|fg| provider_keys.contains_key(fg))
-            {
+            if *sequence == u16::MAX && recovery_keys.iter().all(|fg| provider_keys.contains(fg)) {
                 t!("policy-safety-net-path")
             } else {
                 t!("policy-recovery-path", number = i + 1)
@@ -291,10 +288,12 @@ const REGISTER_DEVICE_CARD_WIDTH: f32 = STANDARD_ENTRY_WIDTH + 2.0 * card::SIMPL
 pub fn register_wallet_modal<'a>(
     warning: Option<&Error>,
     hws: &'a [HardwareWallet],
+    wallet: &'a Wallet,
     processing: bool,
     chosen_hw: Option<usize>,
     registered: &HashSet<Fingerprint>,
 ) -> Element<'a, Message> {
+    let warning = warning.map(|w| warn(Some(w)));
     let signers =
         hws.iter()
             .enumerate()
@@ -320,13 +319,69 @@ pub fn register_wallet_modal<'a>(
                 ))
             });
 
+    let airgapped_signers = &wallet.airgapped_signers;
+    let signers = airgapped_signers.iter().fold(signers, |col, signer| {
+        let fingerprint = signer.fingerprint;
+        let status = if signer.registration(&wallet.descriptor_checksum).is_some() {
+            DeviceStatus::Registered
+        } else {
+            DeviceStatus::None
+        };
+        let entry = modal::airgapped_signer_entry(
+            Some(format!("#{fingerprint}")),
+            Some(&signer.model),
+            wallet
+                .keys_aliases
+                .get(&fingerprint)
+                .or(signer.alias.as_ref()),
+            status,
+            Some(Message::Settings(SettingsMessage::RegisterAirgappedSigner(
+                fingerprint,
+            ))),
+        );
+        let remove = button::btn_remove(Some(Message::Settings(
+            SettingsMessage::RemoveAirgappedSigner(fingerprint),
+        )));
+        col.push(
+            row![entry, remove]
+                .spacing(HSpacing::M)
+                .align_y(Alignment::Center),
+        )
+    });
+
+    let add = modal::add_qr_signer_entry(Some(|| {
+        Message::Settings(SettingsMessage::AddAirgappedSigner)
+    }));
     let title = new::h3_semi(t!("settings-select-device")).width(Length::Fill);
-    let devices = column![title, signers]
+    let devices = column![title, signers, add]
         .spacing(VSpacing::S)
         .width(Length::Fill);
-    let warning = warning.map(|w| warn(Some(w)));
-
     column![warning, card::simple(devices)]
+        .width(REGISTER_DEVICE_CARD_WIDTH)
+        .into()
+}
+
+pub fn remove_qr_signer_modal<'a>(
+    warning: Option<&Error>,
+    fingerprint: Fingerprint,
+) -> Element<'a, Message> {
+    let warning = warning.map(|w| warn(Some(w)));
+    let question = new::b4(t!(
+        "settings-remove-qr-signer",
+        fingerprint = fingerprint.to_string()
+    ));
+    let buttons = row![
+        Space::fill_width(),
+        button::btn_no(Some(Message::Settings(
+            SettingsMessage::CancelRemoveAirgappedSigner
+        ))),
+        button::btn_yes(Some(Message::Settings(
+            SettingsMessage::ConfirmRemoveAirgappedSigner
+        ))),
+    ]
+    .spacing(HSpacing::M);
+    let confirm = column![question, buttons].spacing(VSpacing::M);
+    column![warning, card::simple(confirm)]
         .width(REGISTER_DEVICE_CARD_WIDTH)
         .into()
 }

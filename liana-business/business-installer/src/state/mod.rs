@@ -10,7 +10,10 @@ use crate::{
 use async_hwi::{bitbox::NoiseConfig, service::HwiService};
 use crossbeam::channel;
 use liana_connect::ws_business::{self, KeyIdentity, Wallet};
-use liana_gui::{app::settings::global::PersistedBitboxNoiseConfig, dir::LianaDirectory};
+use liana_gui::{
+    app::{settings::global::PersistedBitboxNoiseConfig, state::airgap::AirgapModal},
+    dir::LianaDirectory,
+};
 use liana_ui::widget::{modal::Modal, Element};
 pub use message::{HardwareWalletRequestId, Message, Msg};
 use miniscript::bitcoin::Network;
@@ -72,6 +75,7 @@ pub struct State {
     /// Error from RunLianaBusiness connection failure
     pub connection_error: Option<String>,
     pending_user_fetches: BTreeSet<Uuid>,
+    pub modal: Option<AirgapModal>,
 }
 
 impl State {
@@ -126,6 +130,7 @@ impl State {
             bitbox_config,
             connection_error: None,
             pending_user_fetches: BTreeSet::new(),
+            modal: None,
         }
     }
 

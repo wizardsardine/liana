@@ -13,14 +13,15 @@ use lianad::commands::CoinStatus;
 use liana_ui::component::toast;
 use liana_ui::{widget::modal, widget::Element};
 
-use crate::daemon::model::LabelsLoader;
-use crate::export::{ImportExportMessage, ImportExportType, Progress};
 use crate::{
+    airgap::{device::Answer, error::Error as AirgapError},
     app::{
         cache::Cache,
         error::Error,
         message::Message,
         state::{
+            airgap::{AirgapModal, AirgapOutcome, Message as AirgapMessage},
+            export::ExportModal,
             fiat_converter_for_wallet,
             label::{label_item_from_str, LabelsEdited},
         },
@@ -28,14 +29,13 @@ use crate::{
         wallet::{Wallet, WalletError},
     },
     daemon::{
-        model::{LabelItem, Labelled, SpendStatus, SpendTx},
+        model::{LabelItem, Labelled, LabelsLoader, SpendStatus, SpendTx},
         Daemon,
     },
     dir::LianaDirectory,
+    export::{ImportExportMessage, ImportExportType, Progress},
     hw::{HardwareWallet, HardwareWallets},
 };
-
-use super::export::ExportModal;
 
 pub trait Modal {
     fn load(&self, _daemon: Arc<dyn Daemon + Sync + Send>) -> Task<Message> {
@@ -472,6 +472,9 @@ pub struct SignModal {
     is_saved: bool,
     display_modal: bool,
     recovery_timelock: Option<u16>,
+    datadir_path: LianaDirectory,
+    modal: Option<AirgapModal>,
+    options_open: bool,
 }
 
 impl SignModal {
@@ -485,24 +488,164 @@ impl SignModal {
     ) -> Self {
         Self {
             signing: HashSet::new(),
-            hws: HardwareWallets::new(datadir_path, network).with_wallet(wallet.clone()),
+            hws: HardwareWallets::new(datadir_path.clone(), network).with_wallet(wallet.clone()),
             wallet,
             error: None,
             signed,
             is_saved,
             display_modal: true,
             recovery_timelock,
+            datadir_path,
+            modal: None,
+            options_open: false,
         }
     }
 
     pub fn is_signing(&self) -> bool {
         !self.signing.is_empty()
     }
+
+    fn on_select_airgapped_signer(
+        &mut self,
+        fingerprint: Fingerprint,
+        tx: &SpendTx,
+    ) -> Task<Message> {
+        let Some(signer) = self.wallet.airgapped_signer(fingerprint) else {
+            log::warn!("no signing device {fingerprint} in this wallet");
+            return Task::none();
+        };
+        match self
+            .wallet
+            .for_airgapped_signer(signer)
+            .sign(&tx.psbt)
+            .and_then(|request| {
+                AirgapModal::new(
+                    Some(fingerprint),
+                    crate::t!("airgap-sign-title"),
+                    request,
+                    &self.datadir_path,
+                )
+            }) {
+            Ok((modal, task)) => {
+                self.modal = Some(modal);
+                task.map(view::Message::Airgap).map(Message::View)
+            }
+            Err(e) => {
+                self.error = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_select_any_airgapped_signer(&mut self, tx: &SpendTx) -> Task<Message> {
+        match self
+            .wallet
+            .for_any_airgapped_signer()
+            .sign(&tx.psbt)
+            .and_then(|request| {
+                AirgapModal::new(
+                    None,
+                    crate::t!("airgap-sign-title"),
+                    request,
+                    &self.datadir_path,
+                )
+            }) {
+            Ok((modal, task)) => {
+                self.modal = Some(modal);
+                task.map(view::Message::Airgap).map(Message::View)
+            }
+            Err(e) => {
+                self.error = Some(e.into());
+                Task::none()
+            }
+        }
+    }
+
+    fn on_airgap(&mut self, action: AirgapMessage, tx: &SpendTx) -> Task<Message> {
+        let Some(modal) = self.modal.as_mut() else {
+            return Task::none();
+        };
+        let task = modal
+            .update(action)
+            .map(view::Message::Airgap)
+            .map(Message::View);
+        match modal.outcome.take() {
+            Some(AirgapOutcome::Answer(answer)) => {
+                let fingerprint = modal.fingerprint;
+                self.modal = None;
+                Task::batch([
+                    task,
+                    self.signed_by_airgapped_signer(fingerprint, &tx.psbt, *answer),
+                ])
+            }
+            Some(AirgapOutcome::Cancelled) => {
+                self.modal = None;
+                task
+            }
+            None => task,
+        }
+    }
+
+    fn signed_by_airgapped_signer(
+        &mut self,
+        fingerprint: Option<Fingerprint>,
+        original: &Psbt,
+        answer: Answer,
+    ) -> Task<Message> {
+        let Answer::Signed(psbt) = answer else {
+            self.error = Some(AirgapError::NotSigned.into());
+            return Task::none();
+        };
+        let signers = new_signers(original, &psbt);
+        let Some(&signer) = signers.iter().next() else {
+            self.error = Some(AirgapError::NoNewSignature.into());
+            return Task::none();
+        };
+        if fingerprint.is_none() {
+            self.signed.extend(&signers);
+        }
+        Task::done(Message::Signed(fingerprint.unwrap_or(signer), Ok(psbt)))
+    }
+}
+
+fn new_signers(before: &Psbt, after: &Psbt) -> HashSet<Fingerprint> {
+    let mut signers = HashSet::new();
+    for (before, after) in before.inputs.iter().zip(&after.inputs) {
+        for key in after.partial_sigs.keys() {
+            if !before.partial_sigs.contains_key(key) {
+                signers.extend(before.bip32_derivation.get(&key.inner).map(|(fg, _)| *fg));
+            }
+        }
+        for (key, leaf) in after.tap_script_sigs.keys() {
+            if !before.tap_script_sigs.contains_key(&(*key, *leaf)) {
+                signers.extend(before.tap_key_origins.get(key).map(|(_, (fg, _))| *fg));
+            }
+        }
+        if after.tap_key_sig.is_some() && before.tap_key_sig.is_none() {
+            signers.extend(
+                before
+                    .tap_internal_key
+                    .and_then(|key| before.tap_key_origins.get(&key))
+                    .map(|(_, (fg, _))| *fg),
+            );
+        }
+    }
+    signers
 }
 
 impl Modal for SignModal {
     fn subscription(&self) -> Subscription<Message> {
-        self.hws.refresh().map(Message::HardwareWallets)
+        let hws = self.hws.refresh().map(Message::HardwareWallets);
+        match &self.modal {
+            Some(modal) => Subscription::batch([
+                hws,
+                modal
+                    .subscription()
+                    .map(view::Message::Airgap)
+                    .map(Message::View),
+            ]),
+            None => hws,
+        }
     }
 
     fn update(
@@ -529,6 +672,16 @@ impl Modal for SignModal {
                     );
                 }
             }
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectAirgappedSigner(
+                fingerprint,
+            ))) => return self.on_select_airgapped_signer(fingerprint, tx),
+            Message::View(view::Message::Spend(view::SpendTxMessage::SelectAnyAirgappedSigner)) => {
+                return self.on_select_any_airgapped_signer(tx)
+            }
+            Message::View(view::Message::Spend(view::SpendTxMessage::ShowSignOptions(open))) => {
+                self.options_open = open;
+            }
+            Message::View(view::Message::Airgap(action)) => return self.on_airgap(action, tx),
             Message::View(view::Message::Spend(view::SpendTxMessage::SelectHotSigner)) => {
                 return Task::perform(
                     sign_psbt_with_hot_signer(self.wallet.clone(), tx.psbt.clone()),
@@ -595,6 +748,14 @@ impl Modal for SignModal {
         Task::none()
     }
     fn view<'a>(&'a self, content: Element<'a, view::Message>) -> Element<'a, view::Message> {
+        if let Some(modal) = &self.modal {
+            return modal::Modal::new(
+                content,
+                crate::view::airgap::modal(modal, view::Message::Airgap),
+            )
+            .on_blur(Some(view::Message::Airgap(AirgapMessage::Cancel)))
+            .into();
+        }
         let content = toast::Manager::new(
             content,
             view::psbt::sign_action_toasts(self.error.as_ref(), &self.hws.list, &self.signing),
@@ -606,6 +767,8 @@ impl Modal for SignModal {
                 view::psbt::sign_action(
                     self.error.as_ref(),
                     &self.hws.list,
+                    &self.wallet.airgapped_signers,
+                    &self.wallet.keys_aliases,
                     &self.wallet.main_descriptor,
                     self.wallet.signer.as_ref().map(|s| s.fingerprint()),
                     self.wallet
@@ -615,6 +778,7 @@ impl Modal for SignModal {
                     &self.signed,
                     &self.signing,
                     self.recovery_timelock,
+                    self.options_open,
                 ),
             )
             .on_blur(Some(view::Message::Spend(view::SpendTxMessage::Cancel)))
@@ -705,6 +869,52 @@ async fn sign_psbt(
         hw.sign_tx(&mut psbt).await.map_err(Error::from)?;
     }
     Ok(psbt)
+}
+
+#[cfg(test)]
+mod new_signature_tests {
+    use liana::miniscript::bitcoin::{
+        base64::{prelude::BASE64_STANDARD, Engine},
+        psbt::Psbt,
+    };
+
+    use crate::app::state::psbt::new_signers;
+
+    fn unsigned() -> Psbt {
+        let base64 = include_str!("../../../test_assets/airgap/taproot-unsigned.psbt.base64");
+        Psbt::deserialize(&BASE64_STANDARD.decode(base64.trim()).unwrap()).unwrap()
+    }
+
+    fn signed() -> Psbt {
+        let base64 =
+            include_str!("../../../test_assets/airgap/taproot-key-path-signed.psbt.base64");
+        let signature = Psbt::deserialize(&BASE64_STANDARD.decode(base64.trim()).unwrap())
+            .unwrap()
+            .inputs[0]
+            .tap_key_sig;
+        let mut psbt = unsigned();
+        psbt.inputs[0].tap_key_sig = signature;
+        psbt
+    }
+
+    #[test]
+    fn a_new_signature_names_its_signer() {
+        let unsigned = unsigned();
+        let internal_key = unsigned.inputs[0].tap_internal_key.unwrap();
+        let (_, (fingerprint, _)) = &unsigned.inputs[0].tap_key_origins[&internal_key];
+        assert_eq!(
+            new_signers(&unsigned, &signed())
+                .into_iter()
+                .collect::<Vec<_>>(),
+            vec![*fingerprint]
+        );
+    }
+
+    #[test]
+    fn an_unchanged_transaction_has_no_signer() {
+        assert!(new_signers(&unsigned(), &unsigned()).is_empty());
+        assert!(new_signers(&signed(), &signed()).is_empty());
+    }
 }
 
 #[cfg(test)]
